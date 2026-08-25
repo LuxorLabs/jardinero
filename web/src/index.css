@@ -1,0 +1,473 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens for the operator dashboard. Values are lifted verbatim from the
+ * original server-rendered stylesheet so the React rebuild is pixel-faithful.
+ * The default dashboard theme is light to preserve the original design.
+ */
+@theme {
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+
+  /* shadcn semantic tokens mapped to the dashboard palette */
+  --color-background: #f0f4f9;
+  --color-foreground: #17202a;
+  --color-card: #ffffff;
+  --color-card-foreground: #17202a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #17202a;
+  --color-primary: #17202a;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #ffffff;
+  --color-secondary-foreground: #17202a;
+  --color-muted: #f1f4f7;
+  --color-muted-foreground: #596677;
+  --color-accent: #f1f4f7;
+  --color-accent-foreground: #17202a;
+  --color-destructive: #9f1d20;
+  --color-destructive-foreground: #ffffff;
+  --color-border: #d8dde5;
+  --color-input: #b9c0c9;
+  --color-ring: #8fc7e8;
+
+  /* dashboard-specific accents */
+  --color-ink: #17202a;
+  --color-slate: #3a4656;
+  --color-tile: #fbfcfd;
+  --color-brand: #2f6f4e;
+  /* Dark mode raises this separately to preserve active-pill contrast. */
+  --color-nav-active: #145eee;
+  --color-link: #2457a6;
+  --color-pulse: #1f9d5f;
+  --color-control: #c8ced8;
+  --color-code: #eef1f4;
+  --color-selected: #e7effd;
+  --color-selected-border: #8fc7e8;
+  --color-table-header: #f0f3f6;
+  --color-progress-track: #e8ecf1;
+  --color-chart-line: #2f6f4e;
+  --color-danger-bg: #fff1f0;
+  --color-danger-border: #ffcbc5;
+  --color-danger-fg: #b42318;
+  --color-warning-bg: #fff8dd;
+  --color-warning-border: #e0c36f;
+  --color-warning-fg: #745400;
+  --color-notice-bg: #fff8ec;
+  --color-notice-border: #ffe2b8;
+  --color-notice-fg: #8a5a00;
+  --color-success-bg: #edf8f0;
+  --color-success-border: #9bd2ad;
+  --color-success-fg: #17613a;
+  --color-info-bg: #eef8ff;
+  --color-info-border: #8fc7e8;
+  --color-info-fg: #155d82;
+  --color-blocked-bg: #f7f0ff;
+  --color-blocked-border: #d0b4ea;
+  --color-blocked-fg: #653399;
+  --color-paused-bg: #fff0f7;
+  --color-paused-border: #e8a0c3;
+  --color-paused-fg: #8a2357;
+  --color-neutral-bg: #eef1f4;
+  --color-neutral-border: #c8ced8;
+  --color-neutral-fg: #5b6675;
+  --color-stage-idle: #dfe4ea;
+  --color-stage-pending: #ffe28a;
+  --color-stage-running: #9ed7f5;
+  --color-stage-success: #a8dfb7;
+  --color-stage-failure: #ffaaa2;
+  --color-stage-blocked: #d8b9f3;
+
+  --radius: 0.5rem;
+}
+
+@layer base {
+  :root,
+  html[data-theme='light'] {
+    color-scheme: light;
+
+    --color-background: #f0f4f9;
+    --color-foreground: #17202a;
+    --color-card: #ffffff;
+    --color-card-foreground: #17202a;
+    --color-popover: #ffffff;
+    --color-popover-foreground: #17202a;
+    --color-primary: #17202a;
+    --color-primary-foreground: #ffffff;
+    --color-secondary: #ffffff;
+    --color-secondary-foreground: #17202a;
+    --color-muted: #f1f4f7;
+    --color-muted-foreground: #596677;
+    --color-accent: #f1f4f7;
+    --color-accent-foreground: #17202a;
+    --color-destructive: #9f1d20;
+    --color-destructive-foreground: #ffffff;
+    --color-border: #d8dde5;
+    --color-input: #b9c0c9;
+    --color-ring: #8fc7e8;
+
+    --color-ink: #17202a;
+    --color-slate: #3a4656;
+    --color-tile: #fbfcfd;
+    --color-brand: #2f6f4e;
+    --color-link: #2457a6;
+    --color-pulse: #1f9d5f;
+    --color-control: #c8ced8;
+    --color-code: #eef1f4;
+    --color-selected: #e7effd;
+    --color-selected-border: #8fc7e8;
+    --color-table-header: #f0f3f6;
+    --color-progress-track: #e8ecf1;
+    --color-chart-line: #2f6f4e;
+    --color-danger-bg: #fff1f0;
+    --color-danger-border: #ffcbc5;
+    --color-danger-fg: #b42318;
+    --color-warning-bg: #fff8dd;
+    --color-warning-border: #e0c36f;
+    --color-warning-fg: #745400;
+    --color-notice-bg: #fff8ec;
+    --color-notice-border: #ffe2b8;
+    --color-notice-fg: #8a5a00;
+    --color-success-bg: #edf8f0;
+    --color-success-border: #9bd2ad;
+    --color-success-fg: #17613a;
+    --color-info-bg: #eef8ff;
+    --color-info-border: #8fc7e8;
+    --color-info-fg: #155d82;
+    --color-blocked-bg: #f7f0ff;
+    --color-blocked-border: #d0b4ea;
+    --color-blocked-fg: #653399;
+    --color-paused-bg: #fff0f7;
+    --color-paused-border: #e8a0c3;
+    --color-paused-fg: #8a2357;
+    --color-neutral-bg: #eef1f4;
+    --color-neutral-border: #c8ced8;
+    --color-neutral-fg: #5b6675;
+    --color-stage-idle: #dfe4ea;
+    --color-stage-pending: #ffe28a;
+    --color-stage-running: #9ed7f5;
+    --color-stage-success: #a8dfb7;
+    --color-stage-failure: #ffaaa2;
+    --color-stage-blocked: #d8b9f3;
+  }
+
+  * {
+    border-color: var(--color-border);
+  }
+
+  html[data-theme='dark'] {
+    color-scheme: dark;
+
+    --color-background: #11161c;
+    --color-foreground: #e7edf5;
+    --color-card: #171e26;
+    --color-card-foreground: #e7edf5;
+    --color-popover: #171e26;
+    --color-popover-foreground: #e7edf5;
+    --color-primary: #e7edf5;
+    --color-primary-foreground: #11161c;
+    --color-secondary: #202936;
+    --color-secondary-foreground: #e7edf5;
+    --color-muted: #202936;
+    --color-muted-foreground: #aeb8c6;
+    --color-accent: #263241;
+    --color-accent-foreground: #e7edf5;
+    --color-destructive: #ff8c83;
+    --color-destructive-foreground: #2c0f0d;
+    --color-border: #354252;
+    --color-input: #4b5a6d;
+    --color-ring: #79bfe9;
+
+    --color-ink: #f3f6fa;
+    --color-slate: #c7d0dc;
+    --color-tile: #131a22;
+    --color-brand: #73c99a;
+    --color-nav-active: #3e73c9;
+    --color-link: #8db7ff;
+    --color-pulse: #57d68e;
+    --color-control: #4b5a6d;
+    --color-code: #202936;
+    --color-selected: #172a44;
+    --color-selected-border: #58c78e;
+    --color-table-header: #202936;
+    --color-progress-track: #293544;
+    --color-chart-line: #73c99a;
+    --color-danger-bg: #3a1715;
+    --color-danger-border: #9b4b45;
+    --color-danger-fg: #ffb8b2;
+    --color-warning-bg: #332911;
+    --color-warning-border: #8b6e24;
+    --color-warning-fg: #f3d06f;
+    --color-notice-bg: #332711;
+    --color-notice-border: #8a6328;
+    --color-notice-fg: #f2c36b;
+    --color-success-bg: #132c20;
+    --color-success-border: #427d5d;
+    --color-success-fg: #9ee3b7;
+    --color-info-bg: #10283a;
+    --color-info-border: #3f789b;
+    --color-info-fg: #a9d8f2;
+    --color-blocked-bg: #271b35;
+    --color-blocked-border: #76529a;
+    --color-blocked-fg: #d8b8f2;
+    --color-paused-bg: #351827;
+    --color-paused-border: #984f75;
+    --color-paused-fg: #f1afd0;
+    --color-neutral-bg: #222c38;
+    --color-neutral-border: #4b5a6d;
+    --color-neutral-fg: #c7d0dc;
+    --color-stage-idle: #354252;
+    --color-stage-pending: #8b6e24;
+    --color-stage-running: #3f789b;
+    --color-stage-success: #427d5d;
+    --color-stage-failure: #9b4b45;
+    --color-stage-blocked: #76529a;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  p {
+    margin: 0;
+  }
+
+  /* Restore UA-default heading sizes that the original stylesheet relied on
+     (Tailwind's preflight resets headings to inherit). */
+  h1 {
+    font-size: 2em;
+    font-weight: 700;
+  }
+  h2 {
+    font-size: 1.5em;
+    font-weight: 700;
+  }
+  h3 {
+    font-size: 1.17em;
+    font-weight: 700;
+  }
+  h4 {
+    font-size: 1em;
+    font-weight: 700;
+  }
+
+  a {
+    color: var(--color-link);
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+}
+
+html[data-theme='dark'] .bg-white {
+  background-color: var(--color-card);
+}
+
+/* Mesh gradient for the featured KPI card, built around the brand blue
+   (--color-nav-active, #145eee). Theme-independent; white text sits on top. */
+.kpi-mesh-blue {
+  background-color: #145eee;
+  background-image:
+    radial-gradient(at 18% 18%, #4f8bff 0px, transparent 55%),
+    radial-gradient(at 85% 12%, #1b4fd8 0px, transparent 50%),
+    radial-gradient(at 12% 92%, #2f6bf0 0px, transparent 55%),
+    radial-gradient(at 92% 88%, #0a34c2 0px, transparent 50%);
+}
+
+/* The logo art is dark ink plus a blue accent tuned for a light surface; on the
+   dark app bar it would be near-invisible, so render it as a white silhouette. */
+html[data-theme='dark'] .app-logo {
+  filter: brightness(0) invert(1);
+}
+
+html[data-theme='dark'] .bg-secondary {
+  background-color: var(--color-secondary);
+}
+
+html[data-theme='dark'] .bg-popover {
+  background-color: var(--color-popover);
+}
+
+html[data-theme='dark'] .bg-\[\#f7f9fb\],
+html[data-theme='dark'] .bg-\[\#fbfcfd\] {
+  background-color: var(--color-tile);
+}
+
+html[data-theme='dark'] .bg-\[\#f0f3f6\],
+html[data-theme='dark'] .bg-\[\#eef1f4\],
+html[data-theme='dark'] .bg-\[\#edf0f3\],
+html[data-theme='dark'] .bg-\[\#f1f4f7\] {
+  background-color: var(--color-muted);
+}
+
+html[data-theme='dark'] .hover\:bg-\[\#f1f4f7\]:hover,
+html[data-theme='dark'] .focus\:bg-\[\#f1f4f7\]:focus {
+  background-color: var(--color-accent);
+}
+
+html[data-theme='dark'] .text-\[\#17202a\],
+html[data-theme='dark'] .text-\[\#3a4656\] {
+  color: var(--color-foreground);
+}
+
+html[data-theme='dark'] .text-\[\#596677\],
+html[data-theme='dark'] .text-\[\#687386\],
+html[data-theme='dark'] .text-\[\#7a8492\] {
+  color: var(--color-muted-foreground);
+}
+
+html[data-theme='dark'] .text-slate {
+  color: var(--color-slate);
+}
+
+html[data-theme='dark'] .text-popover-foreground {
+  color: var(--color-popover-foreground);
+}
+
+html[data-theme='dark'] .border-\[\#b9c0c9\],
+html[data-theme='dark'] .border-\[\#c8ced8\],
+html[data-theme='dark'] .border-\[\#cdd4dd\],
+html[data-theme='dark'] .border-\[\#d8dde5\],
+html[data-theme='dark'] .border-\[\#e3e7ed\] {
+  border-color: var(--color-border);
+}
+
+html[data-theme='dark'] .border-input {
+  border-color: var(--color-input);
+}
+
+html[data-theme='dark'] .border-control {
+  border-color: var(--color-control);
+}
+
+html[data-theme='dark'] .ring-ring,
+html[data-theme='dark'] .focus\:ring-ring:focus,
+html[data-theme='dark'] .focus-visible\:ring-ring:focus-visible {
+  --tw-ring-color: var(--color-ring);
+}
+
+html[data-theme='dark'] .focus-visible\:ring-offset-1:focus-visible {
+  --tw-ring-offset-color: var(--color-background);
+}
+
+/*
+ * Actions table → stacked cards on narrow viewports.
+ *
+ * The desktop table is `table-fixed` with six columns; below ~700px (the same
+ * breakpoint the dashboard grids collapse at) those columns overlap and become
+ * unreadable. Here each row becomes a bordered card and each cell shows its
+ * column name (from the `data-label` attribute) beside its value.
+ */
+@media (max-width: 700px) {
+  table.actions-table {
+    display: block;
+    border: 0;
+    overflow: visible;
+    background: transparent;
+  }
+  table.actions-table thead {
+    display: none;
+  }
+  table.actions-table tbody,
+  table.actions-table tr {
+    display: block;
+    width: 100%;
+  }
+  table.actions-table tr {
+    margin-bottom: 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-tile);
+    overflow: hidden;
+  }
+  table.actions-table td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 8px 14px;
+    border-bottom: 0 !important;
+    text-align: right;
+  }
+  table.actions-table td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-weight: 800;
+    font-size: 12px;
+    line-height: 1.45;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--color-muted-foreground);
+  }
+  /* Full-width empty / no-results cell: no label column, left aligned, and
+     keep its stacked grid (title over description) instead of the flex row. */
+  table.actions-table td[colspan] {
+    display: grid;
+    gap: 4px;
+    text-align: left;
+  }
+  table.actions-table td[colspan]::before {
+    content: none;
+  }
+}
+
+/* Pulsing dot on the live-and-healthy status pills. */
+@keyframes jardinero-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgb(31 157 95 / 45%);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 4px rgb(31 157 95 / 0%);
+  }
+}
+
+/* Scroll/appear reveal: elements start slightly low and transparent, then
+   settle when the Reveal binding flags them in-view. --reveal-delay staggers
+   siblings (KPI cards, table rows, queue cards). */
+@keyframes jardinero-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal {
+  opacity: 0;
+}
+
+.reveal.is-visible {
+  animation: jardinero-reveal 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--reveal-delay, 0ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jardinero-pulse-dot {
+    animation: none !important;
+  }
+  .reveal,
+  .reveal.is-visible {
+    opacity: 1 !important;
+    transform: none !important;
+    animation: none !important;
+  }
+}

@@ -1,0 +1,7 @@
+# No `packages:` key: this repo is a single package, and the file exists only
+# because pnpm reads its settings from here.
+
+# esbuild is the only dependency allowed to run install scripts; its script links
+# the platform binary that tsx and vite exec.
+allowBuilds:
+  esbuild: true

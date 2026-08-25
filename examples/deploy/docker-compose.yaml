@@ -1,0 +1,49 @@
+# One box: the published image, a volume for the SQLite database, and your
+# credentials from a file. What goes in that file is in ../../docs/setup.md.
+#
+#   cp .env.example .env          # and fill it in
+#   cp examples/deploy/kubernetes/config.yaml my-config.yaml   # and edit it
+#   docker compose -f examples/deploy/docker-compose.yaml up -d
+#
+# Put a reverse proxy in front of this. Jardinero terminates no TLS and has no
+# login of its own: it reads the identity an authenticating proxy sets on the
+# request, and everything else it exposes is guarded by ORCHESTRATOR_ADMIN_TOKEN.
+services:
+  jardinero:
+    image: ghcr.io/luxorlabs/jardinero:latest
+    container_name: jardinero
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      # Preview URLs are a Tenki sandbox feature; a host with its own ingress
+      # does not want one.
+      DASHBOARD_EXPOSE_ON_STARTUP: "false"
+      CONFIG_PATH: /etc/jardinero/config.yaml
+    ports:
+      - "3000:3000"
+    volumes:
+      # The database, and the backups it writes beside itself. Losing this volume
+      # loses both, so back it up somewhere else as well.
+      - jardinero-data:/app/data
+      # Lives under kubernetes/ because kustomize refuses a file outside its own
+      # directory, and both examples share the one copy.
+      - ./kubernetes/config.yaml:/etc/jardinero/config.yaml:ro
+      # Only in the default `capsule` Codex auth mode: the login forwarded into
+      # every sandbox. Rotating it is yours; see ../../docs/secrets.md.
+      - ${HOME}/.codex:/home/node/.codex:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  jardinero-data:

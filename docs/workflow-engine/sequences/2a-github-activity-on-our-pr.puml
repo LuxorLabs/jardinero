@@ -1,0 +1,59 @@
+@startuml
+title 2A - GitHub: comment / CI / push on a PR\nThe adapter reports facts; PrMaintainer decides whether the PR is ours
+
+skinparam defaultTextAlignment left
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+
+actor Human
+participant GitHub
+participant "GitHubAdapter" as GA
+participant "Orchestrator" as O
+participant "Store" as S
+participant "SandboxPool" as P
+participant "WorkerRunner\n(sandbox)" as R
+
+Human -> GitHub: comment / push / check_suite
+GitHub -> GA: webhook (signature verified)
+GA -> O: facts{pr:repo#n, author, body, tags us, draft, merged}
+note right of GA
+  The adapter applies no policy: it marks which comments are
+  ours so we never answer ourselves, and reports the rest.
+end note
+
+O -> S: instance for pr:repo#n?
+return instance + state, or none
+
+alt none, and nobody tagged us
+  O -> O: nothing recorded, nothing opened
+  note right of O: no instance, so nothing below happens
+else none, and the comment tags us
+  O -> S: record the ask
+  return rr_resolved (subject came in the event)
+  O -> S: create PrMaintainer instance
+  return prm_pending
+else we already follow it
+  O -> S: record the ask
+  return rr_resolved
+end
+
+alt a pass is already running
+  O -> S: no change
+  return prm_working
+  note right of O: the running pass reads the whole conversation
+else prm_pending or prm_waiting
+  O -> S: state
+  return prm_pending
+  O -> P: enqueue SandboxRun(PrMaintainer)
+  O -> S: state
+  return prm_working
+  P -> R: execute
+  R -> GitHub: reply threads / rerun CI / push
+  return replies, head_sha
+  R -> P: result
+  P -> O: run finished
+  O -> S: close every ask the pass could read
+  O -> S: state
+  return prm_waiting
+end
+@enduml

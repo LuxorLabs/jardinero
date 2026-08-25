@@ -1,0 +1,12 @@
+# The bundled configuration: what Jardinero loads when CONFIG_PATH is unset.
+#
+# It holds only what differs from the per-key defaults in src/config.ts; anything
+# omitted falls back to those. As shipped it overrides nothing, so a fresh clone
+# runs the mock worker with every optional workflow off, and needs no accounts.
+#
+# Every key, what it does and what a real value looks like is in
+# docs/configuration.md. Credentials never belong here: the config names the
+# environment variables, never their values. See docs/secrets.md.
+#
+# A real deployment mounts its own file and points CONFIG_PATH at it rather than
+# editing this one.

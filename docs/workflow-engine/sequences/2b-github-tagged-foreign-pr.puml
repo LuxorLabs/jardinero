@@ -1,0 +1,60 @@
+@startuml
+title 2B - GitHub: the agent is tagged on a foreign PR\nThe tag is the mandate, and it is what the machine sees
+
+skinparam defaultTextAlignment left
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+
+actor Human
+participant GitHub
+participant "GitHubAdapter" as GA
+participant "Orchestrator" as O
+participant "Store" as S
+participant "SandboxPool" as P
+participant "WorkerRunner\n(sandbox)" as R
+
+Human -> GitHub: comment "@<agent_login> ..." on a PR we did not open
+GitHub -> GA: webhook issue_comment/created
+GA -> O: OnPrComment{pr:repo#n, mentionsUs, isDraft, isMerged}
+note right of O
+  The adapter reports the comment and its facts.
+  Whether a tag is a mandate is decided in the machine:
+  it opens an instance when the comment tags us and the
+  PR is not merged.
+end note
+O -> S: create PrMaintainer instance
+return prm_pending
+
+loop while the PR is open
+  O -> P: enqueue SandboxRun(PrMaintainer)
+  O -> S: state
+  return prm_working
+  P -> R: execute
+  R -> GitHub: reply threads / fix CI / push
+  return replies, head_sha
+  R -> P: result
+  P -> O: run finished
+  alt attempts left and work remains
+    O -> S: state
+    return prm_waiting
+  else attempts exhausted
+    O -> S: state
+    return prm_attempts_exhausted
+  end
+  GitHub -> GA: next event (checks, review, push)
+  GA -> O: GitHubRequest
+  note right of O
+    Admitted because the INSTANCE exists, not because
+    each event re-passes the tag test.
+  end note
+end
+GitHub -> GA: pull_request/closed (merged)
+GA -> O: GitHubRequest
+O -> S: state
+return prm_merged
+
+note right of O
+  On OUR PRs none of this needs asking: the sweep already
+  announces them, so following them is the default.
+end note
+@enduml

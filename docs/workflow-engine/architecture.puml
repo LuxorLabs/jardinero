@@ -1,0 +1,93 @@
+@startuml
+title Jardinero — block view\nGREY = external service
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment left
+skinparam linetype ortho
+skinparam nodesep 20
+skinparam ranksep 70
+skinparam ArrowColor Black
+skinparam NoteBackgroundColor White
+skinparam NoteBorderColor Black
+skinparam package {
+  BackgroundColor LightBlue
+}
+skinparam component {
+  BackgroundColor Moccasin
+  BackgroundColor<<external>> LightGray
+  BorderColor Black
+}
+skinparam database {
+  BackgroundColor Moccasin
+  BorderColor Black
+}
+
+package "External" as EXT {
+  component "Discord" as DiscordX <<external>>
+  component "GitHub" as GitHubX <<external>>
+  component "Linear" as LinearX <<external>>
+}
+
+package "Transport + Adapters" as ADP {
+  component "Discord\nadapter" as DA
+  component "GitHub\ndelivery" as GA
+  component "Linear\ndelivery" as LA
+  component "Admin web page\ndashboard" as OA
+  component "Scheduler\ncron + polling" as SCH
+}
+
+package "Orchestrator" as CORE {
+  component "\nEngineCommands\n" as EC
+  component "State machines\n\nRequestRouter\nLinearImplementer\nFixImplementer\nPrMaintainer\nLogReviewer\n\nevents.ts -> engine.ts -> state-handlers.ts" as MC
+  database "Store\nSQLite" as ST
+}
+
+package "Execution" as EXE {
+  component "SandboxPool\n\ncaps, kill\nrun lifecycle" as SP
+  component "WorkerRunner\nTenki | Mock" as RUN
+  component "Tenki\nsandbox + Codex" as TenkiX <<external>>
+}
+
+DiscordX --> DA
+GitHubX --> GA
+LinearX --> LA
+DA --> EC : request
+GA --> EC : pull request event
+LA --> EC : issue event
+OA --> EC : operator\ncommand
+SCH --> EC : scan / poll / periodic check
+
+EC --> MC : entry point
+MC --> ST : instance state + event log
+
+MC --> SP : start sandbox run
+SP --> RUN : execute
+RUN --> TenkiX : sandbox + Codex
+SP --> MC : run succeeded / failed
+
+MC --> ADP : reports
+
+note bottom of MC
+  The only place that decides what happens next. An entry point takes
+  the instance under a lock and switches on its state; the engine then
+  loops the handlers until the instance stops moving.
+end note
+
+note bottom of ST
+  State lives on the instance of each machine. A sandbox run records
+  one execution and points at its instance, which is what makes
+  "everything that happened here" answerable.
+end note
+
+note bottom of SP
+  Executes and rations. Never decides what comes next.
+end note
+
+note bottom of RUN
+  Two classes of write to the world: the orchestrator reports
+  deterministically (Linear activity and issue state, mark PR ready,
+  comment reaction), and the agent writes from inside the sandbox
+  (push, open PR, reply threads).
+end note
+@enduml

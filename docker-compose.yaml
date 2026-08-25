@@ -1,0 +1,39 @@
+# Local development stack for the Jardinero orchestrator.
+#
+#   make up        # build + start, hot reload
+#   make logs      # follow logs
+#   make down      # stop and remove
+#
+# Secrets come from a local .env; copy from .env.example and never commit real
+# values. Worker execution still goes to Tenki via the API, exactly as in prod.
+services:
+  jardinero:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: jardinero
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Tenki-only preview URL exposure; irrelevant outside a Tenki sandbox.
+      DASHBOARD_EXPOSE_ON_STARTUP: "false"
+    ports:
+      - "3000:3000"
+      - "9090:9090"
+    volumes:
+      # Bind-mount source for hot reload, but keep the container's own
+      # node_modules and persist SQLite state across restarts.
+      - .:/app:cached
+      - jardinero-node-modules:/app/node_modules
+      - jardinero-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  jardinero-node-modules:
+  jardinero-data:

@@ -1,0 +1,76 @@
+name: CI release docker images
+
+# On a release tag (v*), runs the full check gate and publishes the orchestrator
+# image tagged with the semver version. That image is the deterministic,
+# rollback-able artifact a deployment pins to.
+#
+# Authentication is the GITHUB_TOKEN GitHub already injects, so a fork that wants
+# its own images needs no credentials of its own.
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    name: Check and publish versioned image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: make install
+      - run: make check CHECK_CHANGESET=false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get image ref and Node version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          # A registry ref has to be lowercase, and neither the tag nor the
+          # owner/name pair is guaranteed to be.
+          IMAGE_TAG=$(echo "$REF_NAME" | tr 'A-Z' 'a-z')
+          IMAGE_NAME=$(echo "$REPOSITORY" | tr 'A-Z' 'a-z')
+          echo "IMAGE_REF=ghcr.io/${IMAGE_NAME}:${IMAGE_TAG}" | tee -a "$GITHUB_ENV"
+          echo "IMAGE_LATEST=ghcr.io/${IMAGE_NAME}:latest" | tee -a "$GITHUB_ENV"
+          # On a release the app version is the semver tag itself.
+          echo "BUILD_VERSION=${IMAGE_TAG}" | tee -a "$GITHUB_ENV"
+          echo "NODE_VERSION=$(cat .nvmrc)-bookworm-slim" | tee -a "$GITHUB_ENV"
+
+      - name: Build and push
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: ./Dockerfile.prod
+          build-args: |
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            BUILD_VERSION=${{ env.BUILD_VERSION }}
+          tags: |
+            ${{ env.IMAGE_REF }}
+            ${{ env.IMAGE_LATEST }}
+          push: true
+
+      - name: Print image info
+        run: |
+          echo "Released image:"
+          echo "- ${{ env.IMAGE_REF }}"

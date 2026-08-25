@@ -1,0 +1,62 @@
+{
+  "name": "jardinero",
+  "version": "0.6.0",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@11.23.0",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm run build:server && pnpm run build:web",
+    "build:server": "pnpm run clean:dist && tsc -p tsconfig.build.json",
+    "build:test": "pnpm run clean:dist && tsc -p tsconfig.json",
+    "build:web": "vite build",
+    "clean:dist": "node -e \"const fs=require('node:fs');for(const d of ['dist/src','dist/test','dist/scripts'])fs.rmSync(d,{recursive:true,force:true})\"",
+    "dev": "tsx src/index.ts",
+    "dev:web": "vite",
+    "codex:refresh": "tsx scripts/refresh-codex-auth.ts",
+    "discord:register": "tsx scripts/discord-register.ts",
+    "smoke:tenki": "tsx scripts/tenki-smoke.ts",
+    "ui:preview": "tsx scripts/ui-preview.ts",
+    "start": "node dist/src/index.js",
+    "type-check": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "lint": "biome lint --error-on-warnings .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check": "biome check .",
+    "changeset": "changeset",
+    "test": "pnpm run build:test && node --test --test-timeout=120000 \"dist/src/**/*.test.js\" \"dist/test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@tenkicloud/sandbox": "0.3.4",
+    "dotenv": "17.4.2",
+    "prom-client": "15.1.3",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16",
+    "@changesets/changelog-github": "0.7.0",
+    "@changesets/cli": "2.31.0",
+    "@radix-ui/react-label": "2.1.10",
+    "@radix-ui/react-select": "2.3.1",
+    "@radix-ui/react-slot": "1.3.0",
+    "@tailwindcss/vite": "4.3.1",
+    "@types/node": "25.9.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "lucide-react": "1.21.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "tailwind-merge": "3.6.0",
+    "tailwindcss": "4.3.1",
+    "tsx": "4.22.3",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "peerDependenciesMeta": {}
+}

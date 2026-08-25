@@ -1,0 +1,93 @@
+@startuml fix-implementer
+title FixImplementer — one log finding, keyed by fingerprint\nSame shape as LinearImplementer, plus the right to refuse
+
+scale 0.8
+skinparam defaultTextAlignment left
+skinparam ArrowColor Black
+skinparam StateBorderColor Black
+skinparam StateFontColor Black
+skinparam NoteBackgroundColor White
+skinparam NoteBorderColor Black
+skinparam state {
+    BackgroundColor LightYellow
+    BackgroundColor<<Package>> LightBlue
+    BackgroundColor<<Final>> LightGreen
+    BackgroundColor<<Error>> LightCoral
+}
+
+state "WORKING" as working <<Package>> {
+
+    state "fi_pending" as Pending
+        Pending: - instance exists, no run dispatched
+        Pending: - fingerprint, repo, service, environment
+
+    state "fi_implementing" as Implementing
+        Implementing: - FixImplementer running
+        Implementing: - validates the finding BEFORE editing
+        Implementing: - dispatched again if no run is alive
+
+    state "fi_verifying" as Verifying
+        Verifying: - FixVerifier: no run yet, nothing claimed verified
+        Verifying: - releases the draft PR: draft -> ready for review
+
+    state "fi_needs_human" as NeedsHuman <<Error>>
+        NeedsHuman: - OPEN, not final
+        NeedsHuman: - the fix run failed
+
+    state "fi_discarded" as Discarded <<Final>>
+        Discarded: - no PR: false_positive, unreproducible,
+        Discarded:   operational_issue, outside_repo,
+        Discarded:   already_fixed, unsafe_to_change,
+        Discarded:   insufficient_evidence
+
+    state "fi_dismissed" as Dismissed <<Final>>
+        Dismissed: - a person stopped it instead of retrying
+}
+
+state "RELEASED — PrMaintainer maintains the PR" as released <<Package>> {
+
+    state "fi_waiting_pr" as WaitingPr
+        WaitingPr: - PR ready for review
+        WaitingPr: - checked hourly until merged or closed
+
+    state "fi_done" as Done <<Final>>
+        Done: - PR merged
+
+    state "fi_abandoned" as Abandoned <<Final>>
+        Abandoned: - PR closed without merging
+}
+
+[*] -r-> Pending: OnFindingReported
+
+Pending -r-> Implementing: handleStateFiPending\nOnPeriodicCheck(dispatch owed)\nOnSystemRecovery(dispatch owed)
+Implementing -r-> Verifying: OnSandboxRunSucceeded(draft PR opened)
+Implementing -d-> Discarded: OnSandboxRunSucceeded(no PR, reason)
+Implementing -[#Red]-> NeedsHuman: OnSandboxRunFailed\nOnPeriodicCheck(run lost)\nOnSystemRecovery(run lost)
+
+NeedsHuman -u-> Implementing: OnOperatorRetry
+NeedsHuman -d-> Dismissed: OnOperatorDismiss
+
+Verifying ---> WaitingPr: OnPeriodicCheck(draft released)
+working -r-> Done: OnPrMerged
+working -d-> Abandoned: OnPrClosed
+WaitingPr -d-> Done: OnPeriodicCheck(PR merged)
+WaitingPr -d-> Abandoned: OnPeriodicCheck(PR closed)
+
+Done -d-> [*]
+Abandoned -d-> [*]
+Discarded -d-> [*]
+Dismissed -d-> [*]
+
+note bottom of Discarded
+  Linear has no equivalent: refusing a human's request
+  means asking the human (li_needs_human). Here refusing
+  is a legitimate outcome, because a machine found the work.
+end note
+
+note bottom of Verifying
+  Until FixVerifier exists, releasing the draft is all this state does.
+  Nothing is recorded as verified: a green that proved nothing is worse
+  than no green.
+end note
+
+@enduml

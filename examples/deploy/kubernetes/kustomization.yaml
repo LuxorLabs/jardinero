@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jardinero
+
+resources:
+  - pvc.yaml
+  - deployment.yaml
+  - ingress.yaml
+
+# The generated name suffix changes whenever config.yaml does, which rolls the
+# Deployment, so a configuration change applies on the next sync without a new
+# image. Copy your own file here first; ../../../docs/configuration.md is the reference.
+configMapGenerator:
+  - name: jardinero-config
+    files:
+      - config.yaml

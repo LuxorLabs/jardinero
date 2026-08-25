@@ -1,0 +1,88 @@
+@startuml linear-implementer
+title "LinearImplementer — ticket delegated to Jardinero"
+
+scale 0.8
+skinparam defaultTextAlignment left
+skinparam ArrowColor Black
+skinparam StateBorderColor Black
+skinparam StateFontColor Black
+skinparam NoteBackgroundColor White
+skinparam NoteBorderColor Black
+skinparam state {
+    BackgroundColor LightYellow
+    BackgroundColor<<Package>> LightBlue
+    BackgroundColor<<Final>> LightGreen
+    BackgroundColor<<Error>> LightCoral
+}
+
+state "OWNED — the PR is a draft, PrMaintainer stays out" as owned <<Package>> {
+
+    state "li_pending" as Pending
+        Pending: - instance exists, no run dispatched
+        Pending: - recovery finds these and dispatches
+
+    state "li_implementing" as Implementing
+        Implementing: - LinearImplementer running
+        Implementing: - iteration, branch
+        Implementing: - dispatched again if no run is alive
+
+    state "li_verifying" as Verifying
+        Verifying: - LinearVerifier running
+        Verifying: - verified_sha, transient_retries
+        Verifying: - dispatched again if no run is alive
+
+    state "li_needs_human" as NeedsHuman <<Error>>
+        NeedsHuman: - OPEN, not final: can be advanced
+        NeedsHuman: - reason, verifier issues
+
+    state "li_dismissed" as Dismissed <<Final>>
+        Dismissed: - a person stopped it instead of retrying
+}
+
+state "RELEASED — PrMaintainer maintains the PR" as released <<Package>> {
+
+    state "li_waiting_pr" as WaitingPr
+        WaitingPr: - PR ready for review
+        WaitingPr: - checked hourly until merged or closed
+
+    state "li_done" as Done <<Final>>
+        Done: - PR merged; Linear closes the ticket
+
+    state "li_abandoned" as Abandoned <<Final>>
+        Abandoned: - PR closed without merging
+}
+
+[*] -r-> Pending: OnIssueAssigned
+
+Pending -r-> Implementing: handleStateLiPending\nOnPeriodicCheck(dispatch owed)\nOnSystemRecovery(dispatch owed)
+Implementing --r-> Verifying: OnSandboxRunSucceeded(draft PR opened)
+
+Implementing -d-> Implementing: OnSandboxRunFailed\nOnPeriodicCheck(run lost)\nOnSystemRecovery(run lost)\n\n\n\n\n\n
+Implementing -u[#Red]-> NeedsHuman: handleStateLiImplementing(no iterations left)\nOnSandboxRunSucceeded(no PR)
+
+NeedsHuman -d-> Implementing: OnOperatorRetry\nOnIssueAssigned\nOnIssueCommented\nOnPrComment
+NeedsHuman -r-> Dismissed: OnOperatorDismiss
+
+Verifying -l-> Implementing: OnSandboxRunSucceeded(reject, iterations left)
+Verifying -u-> Verifying: OnSandboxRunSucceeded(no verdict)\nOnSandboxRunFailed\nOnPeriodicCheck(run lost)\nOnSystemRecovery(run lost)
+Verifying -u[#Red]-> NeedsHuman: handleStateLiVerifying(no iterations left)\nOnSandboxRunSucceeded(accept, release failed)\nOnPeriodicCheck(outcome lost)
+
+Verifying --d-> WaitingPr: OnSandboxRunSucceeded(accept, released)
+WaitingPr -d-> Done: OnPrMerged\nOnPeriodicCheck(PR merged)
+WaitingPr -d-> Abandoned: OnPrClosed\nOnPeriodicCheck(PR closed)
+
+owned -d-> Done: OnPrMerged
+owned -d-> Abandoned: OnPrClosed
+
+Abandoned --l-> Implementing: OnIssueAssigned\n<delegated again>
+
+Done -d-> [*]
+Abandoned -d-> [*]
+Dismissed -d-> [*]
+
+note top of NeedsHuman
+  Open and not final: an operator retry, a re-assignment or a
+  comment sends it back to work with a fresh corrective budget.
+end note
+
+@enduml

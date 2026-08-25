@@ -1,0 +1,29 @@
+# GitHub, Linear and Discord deliver their events over webhooks, so this host has
+# to be reachable from the internet. It is also what the operator opens to reach
+# the dashboard.
+#
+# Jardinero has no login of its own. Put authentication in front of this ingress,
+# and it will read the identity your proxy sets on the request. Without one,
+# anyone who reaches the host can operate it.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jardinero
+  annotations: {}
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - jardinero.example.com
+      secretName: jardinero-tls
+  rules:
+    - host: jardinero.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jardinero
+                port:
+                  name: http

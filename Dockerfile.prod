@@ -1,0 +1,46 @@
+# Production image for the Jardinero HTTP orchestrator. Stage 1 compiles the
+# server and dashboard; stage 2 ships the runtime plus prod dependencies.
+#
+# NODE_VERSION is pinned so builds are reproducible across devs and CI; bump it
+# here and in .nvmrc together.
+ARG NODE_VERSION=24-bookworm-slim
+# Must match `packageManager` in package.json.
+ARG PNPM_VERSION=11.23.0
+
+FROM node:${NODE_VERSION} AS builder
+ARG PNPM_VERSION
+WORKDIR /app
+RUN npm i -g pnpm@${PNPM_VERSION}
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm ci
+COPY . .
+RUN pnpm run build
+
+FROM node:${NODE_VERSION} AS runtime
+ARG PNPM_VERSION
+ENV NODE_ENV=production
+# App version surfaced by the server as the dashboard KPI; passed by CI/Makefile.
+ARG BUILD_VERSION=""
+ENV JARDINERO_BUILD_VERSION=$BUILD_VERSION
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# `pnpm ci` takes no --prod.
+RUN npm i -g pnpm@${PNPM_VERSION} \
+  && pnpm install --frozen-lockfile --prod \
+  && rm -rf "$(pnpm store path)" \
+  && npm rm -g pnpm && npm cache clean --force
+
+COPY --from=builder /app/dist ./dist
+COPY db ./db
+# config/local.yaml is baked in for self-contained/ephemeral runs; real
+# deployments mount their authoritative config and set CONFIG_PATH to override.
+COPY config ./config
+
+# storage.data_dir defaults to ./data; that resolves to /app/data, where the
+# cluster mounts a PersistentVolume. chown so the non-root node user can write it.
+RUN mkdir -p /app/data && chown -R node:node /app
+USER node
+
+EXPOSE 3000 9090
+CMD ["node", "dist/src/index.js"]

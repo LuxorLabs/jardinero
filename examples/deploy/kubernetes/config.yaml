@@ -1,0 +1,122 @@
+# A worked configuration for a real deployment. Copy it, replace every value, and
+# point CONFIG_PATH at the result.
+#
+# This file is the whole configuration: there is no merge across files, so a key
+# it omits takes its code default rather than a value from somewhere else. Every
+# key and what it accepts is in ../../../docs/configuration.md.
+#
+# Credentials never live here. The config names environment variables; their
+# values are injected. See ../../../docs/secrets.md.
+#
+# As written, this turns on pull request maintenance and ticket implementation,
+# and leaves log review and Discord off. Delete what you do not want.
+
+server:
+  # Only used to build dashboard links inside Discord messages. The URL your
+  # webhooks arrive on is configured on GitHub's and Linear's side, not here.
+  public_url: "https://jardinero.example.com"
+
+worker:
+  runner: "tenki"
+
+  # The identity the agent's commits are attributed to. Use your GitHub App's bot
+  # identity, or the commits will not link back to it.
+  git_author_name: "your-app[bot]"
+  git_author_email: "<id>+your-app[bot]@users.noreply.github.com"
+
+  # The image any repository without an entry below runs in. Built with
+  # `make tenki-image`; see ../../../tenki-images/README.md.
+  default:
+    image: "<workspace-slug>/<image>:<tag>"
+
+  # A repository that needs anything different from the default gets an entry. Every
+  # key is optional on its own; what is omitted falls back to `worker.default`.
+  repos:
+    # A repository whose gate exhausts the default box. A suite that runs out of
+    # memory wedges the sandbox rather than failing, so this is worth getting right.
+    your-org/repo2:
+      image: "<workspace-slug>/repo2:<tag>"
+      resources: { cpu_cores: 8, memory_mb: 16384 }
+
+    # A repository whose image is older than the default generation has to pin its
+    # own: the generation a repository can run is fixed by the Codex CLI baked into
+    # its image. max_effort caps every seat working in it.
+    your-org/repo3:
+      image: "<workspace-slug>/repo3:<tag>"
+      model:
+        generation: "gpt-5.5"
+        max_effort: "high"
+
+    # A repository whose own checks need a credential names the variables here.
+    # Jardinero reads each name from its own environment and sets it in that
+    # repository's sandboxes; this holds names, never values. A name whose value is
+    # missing is left unset rather than passed through empty, and preflight warns.
+    your-org/repo1:
+      secret_envs:
+        - "REPO1_TEST_DATABASE_URL"
+
+sandboxes:
+  # An agent that has not finished by here is not going to. Raise it for a
+  # repository whose gate is slow, and pay for it on every run that hangs.
+  max_wall_clock_min: 60
+
+store:
+  # Backups land beside the database on the same volume, so this bounds disk
+  # rather than protecting you from losing it.
+  backup_retention_count: 6
+
+workflows:
+  pr_maintainer:
+    max_replies_per_thread: 10
+    poll_interval_min: 15
+
+  linear_implementer:
+    enabled: true
+    # Which repository a team's tickets are implemented in. Boot refuses an
+    # enabled Linear with no mapping.
+    team_repos:
+      # A team that works in one repository maps straight to it.
+      ENG: "your-org/repo1"
+
+      # A team that spans several takes an object. Routing tries them in this
+      # order: an explicit GitHub reference in the ticket, if it names exactly one
+      # repository from `repos`; then the Linear project; then `default`. An
+      # unknown or ambiguous reference falls through rather than failing.
+      PLATFORM:
+        default: "your-org/repo2"
+        repos:
+          - "your-org/repo3"
+          - "your-org/repo4"
+        projects:
+          "Billing": "your-org/repo5"
+
+  # Off here. Turning it on means Grafana plus Loki plus Kubernetes, and the
+  # `services` have to match your Loki labels. See ../../../docs/setup.md step 9.
+  # log_reviewer:
+  #   enabled: true
+  #   repos:
+  #     - repo: "your-org/repo1"
+  #       namespace: "production"
+  #       clusters: ["your-cluster"]
+  #       services: ["api", "worker"]
+
+# mcp:
+#   grafana:
+#     enabled: true
+#     url: "https://<your-grafana-mcp-host>/mcp"
+
+# discord:
+#   enabled: true
+#   allowed_role_ids: ["<role id>"]
+#   default_channel_id: "<channel id>"
+#   alerts_channel_id: "<channel id>"
+#   repo_channels:
+#     your-org/repo1: "<channel id>"
+
+# Who is the same person across Discord, GitHub and Linear. Only needed for the
+# Discord commands, so that a ticket opened from chat is assigned to whoever asked.
+# people:
+#   - discord_user_id: "<id>"
+#     discord_username: "<handle>"
+#     github_login: "<handle>"
+#     linear_user_id: "<uuid>"

@@ -1,0 +1,42 @@
+@startuml
+title 1A - Discord: "/jardinero-ticket JAR-58"\nThe command starts nothing itself: it delegates the ticket in Linear
+
+skinparam defaultTextAlignment left
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+
+actor User
+participant "DiscordAdapter" as DA
+participant "Store" as S
+participant Discord
+participant Linear
+participant "LinearAdapter" as LA
+participant "Orchestrator" as O
+
+User -> DA: /jardinero-ticket ticket:JAR-58
+DA -> DA: infer the repository: the one named, the ticket's team, the channel's
+return repo
+DA -> DA: read the identifier; a bare number is numbered by the repository's team
+return JAR-58
+DA -> Discord: open the thread the work is followed in
+return thread_id
+DA -> S: save the ticket's conversation -> thread
+DA -> S: create RequestRouter instance
+return rr_resolved, subject=linear:JAR-58
+note right of DA: born resolved: the subject came with the command
+
+DA -> Linear: delegate JAR-58 to Jardinero\n(delegate=us, owner=whoever asked)
+note right of DA
+  a ticket already delegated to us is handed back first:
+  Linear opens no session for a delegation that does not change
+end note
+DA -> User: "Received JAR-58. Follow it in #thread" (ephemeral)
+
+Linear -> LA: AgentSessionEvent/created
+note right of LA
+  the work starts here and nowhere else, see 3A.
+  The delivery answers the ask this command wrote, and
+  decides which repository the work opens in.
+end note
+LA -> O: continues in 3A
+@enduml

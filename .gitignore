@@ -1,0 +1,29 @@
+node_modules/
+dist/
+tmp/
+!vendor/tenki-sandbox/dist/
+!vendor/tenki-sandbox/dist/**
+data/
+.env
+.env.*
+!.env.example
+*.log
+*.sqlite
+*.sqlite-*
+*state.db*
+
+# Local planning / scratch notes — kept out of git per contributor preference
+.claude/
+
+# IDE
+.idea/
+.vscode/
+*.local.json
+*.local.toml
+*.local.sh
+
+# Test coverage
+coverage/
+
+# OS
+.DS_Store

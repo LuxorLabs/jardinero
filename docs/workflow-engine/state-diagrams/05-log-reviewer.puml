@@ -1,0 +1,60 @@
+@startuml log-reviewer
+title LogReviewer — one scan of one target\nEnds when the findings exist; it does not wait for the fixes
+
+scale 0.9
+skinparam defaultTextAlignment left
+skinparam ArrowColor Black
+skinparam StateBorderColor Black
+skinparam StateFontColor Black
+skinparam NoteBackgroundColor White
+skinparam NoteBorderColor Black
+skinparam state {
+    BackgroundColor LightYellow
+    BackgroundColor<<Package>> LightBlue
+    BackgroundColor<<Final>> LightGreen
+    BackgroundColor<<Error>> LightCoral
+}
+
+state "lr_pending" as Pending
+    Pending: - tick received, no run dispatched
+    Pending: - target: repo, service, environment
+
+state "lr_working" as Working
+    Working: - LogReviewer running
+    Working: - queries Grafana / Loki
+
+state "lr_done" as Done <<Final>>
+    Done: - produced N findings, or none
+    Done: - each NEW fingerprint opens a FixImplementer
+
+state "lr_failed" as Failed <<Error>>
+    Failed: - the scan failed
+    Failed: - nothing to remember, it runs again next tick
+
+[*] -d-> Pending: OnScheduledScan
+
+Pending -d-> Working: handleStateLrPending\nOnPeriodicCheck(dispatch owed)\nOnSystemRecovery(dispatch owed)
+Working -d-> Done: OnSandboxRunSucceeded\nOnPeriodicCheck(run finished)\nOnSystemRecovery(run finished)
+Working -d[#Red]-> Failed: OnSandboxRunFailed\nOnPeriodicCheck(run died)\nOnSystemRecovery(run died)
+
+Done -d-> [*]
+Failed -d-> [*]
+
+note left of Done
+  The fan-out (1 scan -> N findings) is why this cannot be
+  one machine with FixImplementer: a single instance cannot
+  be in five states at once. Compare with Linear, which is
+  1:1:1 and therefore holds two agents in one machine.
+
+  A scan "still open because 2 of 5 fixes are running"
+  enables no decision. The grouped report is a query by
+  originating scan.
+end note
+
+note right of Failed
+  This machine exists for homogeneity, not for information:
+  its states mirror the run status. Since every SandboxRun
+  hangs off a request (cron included), the scan needed an
+  owner anyway, so the uniform shape costs nothing.
+end note
+@enduml

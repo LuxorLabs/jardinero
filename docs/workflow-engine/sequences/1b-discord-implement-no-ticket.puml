@@ -1,0 +1,56 @@
+@startuml
+title 1B - Discord: "/jardinero-code request:add retries to failed actions"\nThe command writes the ticket and hands it over; no routing agent runs
+
+skinparam defaultTextAlignment left
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+
+actor User
+participant "DiscordAdapter" as DA
+participant "Orchestrator" as O
+participant "Store" as S
+participant "LinearAdapter" as LA
+participant Linear
+
+User -> DA: /jardinero-code request:"..." [repo:...]
+DA -> DA: resolve identity + repository
+return actor, repo
+
+alt the repository maps to exactly one Linear team
+  DA -> Linear: create issue\ntitle = first line, description = the whole text
+  return JAR-nn
+  DA -> DA: open the Discord thread for JAR-nn
+  DA -> O: create Request{subject=linear:JAR-nn, reply=thread}
+  O -> S: create RequestRouter instance
+  return rr_pending
+  note right of O
+    The subject is known, so the router resolves it without an
+    agent: rr_pending sees subjectType set and goes straight to
+    rr_resolved. No sandbox run is dispatched.
+  end note
+
+  DA -> Linear: delegate JAR-nn to Jardinero
+  alt delegated
+    Linear --> DA: ok
+    O -> S: state
+    return rr_resolved
+    DA -> User: "Opened JAR-nn and started on it"
+    note right of O
+      The request machine ENDS here. It did not open the work.
+      Work starts through the single door: the Linear webhook.
+    end note
+    Linear -> LA: AgentSessionEvent/created
+    LA -> O: LinearRequest{subject=linear:JAR-nn}
+    O -> S: create LinearImplementer instance
+    return li_pending
+    note right of O: continues exactly as 1A
+  else Linear refused
+    Linear --> DA: error
+    O -> S: state
+    return rr_unresolvable
+    DA -> User: "Opened JAR-nn, but it could not be started.\nAsk again with /jardinero-ticket ticket:JAR-nn"
+  end
+else no team, or more than one
+  DA -> User: refused, nothing is written
+end
+@enduml

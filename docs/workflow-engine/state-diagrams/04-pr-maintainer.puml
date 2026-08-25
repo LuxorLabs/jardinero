@@ -1,0 +1,79 @@
+@startuml pr-maintainer
+title PrMaintainer — one pull request\nEvery arrow here exists in events.ts or state-handlers.ts
+
+scale 0.8
+skinparam defaultTextAlignment left
+skinparam ArrowColor Black
+skinparam StateBorderColor Black
+skinparam StateFontColor Black
+skinparam NoteBackgroundColor White
+skinparam NoteBorderColor Black
+skinparam state {
+    BackgroundColor LightYellow
+    BackgroundColor<<Package>> LightBlue
+    BackgroundColor<<Final>> LightGreen
+    BackgroundColor<<Error>> LightCoral
+}
+
+state "open — a pull request we are following" as Open <<Package>> {
+
+state "prm_pending" as Pending
+    Pending: - there is work, no sandbox run dispatched
+
+state "prm_working" as Working
+    Working: - a PrMaintainer sandbox run is in flight
+
+state "prm_waiting" as Waiting
+    Waiting: - the agent finished a pass
+    Waiting: - waiting for the world to move
+
+state "prm_attempts_exhausted" as Exhausted <<Error>>
+    Exhausted: - we tried and could not fix it
+    Exhausted: - OPEN: only a person moves it
+
+state "prm_dismissed" as Dismissed <<Final>>
+    Dismissed: - a person stopped it; the PR is still open
+
+note bottom of Exhausted
+  A red CI is a red CI: the machine works it whoever broke it,
+  and after max attempts it stops and waits for a person. Why
+  it is red does not change what an operator has to do.
+end note
+
+note left of Pending
+  A ticket or a finding that still owns the PR keeps working
+  it, and tagging the agent here opens this instance anyway:
+  two agents on one PR conflict and resolve, the same as a
+  person pushing to a PR a ticket is working on.
+end note
+
+}
+
+state "prm_merged" as Merged <<Final>>
+state "prm_closed" as Closed <<Final>>
+
+[*] -d-> Pending: OnPrReadyForReview\nOnPrComment(mentions us, not merged)\nOnPrToFollow\nOnPrDiscovered\nOnPrReopened
+
+Pending -d-> Working: handleStatePrmPending(attempts left)
+Working -r-> Waiting: OnSandboxRunSucceeded\nOnPeriodicCheck(run finished)\nOnSystemRecovery(run finished)
+
+Pending -[#Red]-> Exhausted: handleStatePrmPending(max attempts)
+
+Working -l-> Pending: OnSandboxRunFailed(attempts left)\nOnPeriodicCheck(run died)\nOnSystemRecovery(run died)
+Working -[#Red]-> Exhausted: OnSandboxRunFailed(max attempts)
+
+Waiting -l-> Pending: OnPrComment\nOnPrCICompleted(red)\nOnPrSynchronize\nOnPeriodicCheck(work to do)\nhandleStatePrmWaiting(request pending)
+
+Exhausted -u-> Pending: OnOperatorRetry\nOnPrComment(mentions us)
+Exhausted -d-> Dismissed: OnOperatorDismiss
+
+Open -d-> Merged: OnPrMerged\nOnPeriodicCheck(merged)\n<from all states>
+Open -d-> Closed: OnPrClosed\nOnPeriodicCheck(closed)\n<from all states>
+
+Closed -u-> Pending: OnPrReopened\n<same number, fresh budget>
+
+Merged -d-> [*]
+Closed -d-> [*]
+Dismissed -d-> [*]
+
+@enduml

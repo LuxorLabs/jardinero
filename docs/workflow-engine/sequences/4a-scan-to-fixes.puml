@@ -1,0 +1,76 @@
+@startuml
+title 4A - Log scan: one scan, N fixes\nOne scan opening N fixes is why LogReviewer and FixImplementer are two machines
+
+skinparam defaultTextAlignment left
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+
+participant "Scheduler" as SCH
+participant "Orchestrator" as O
+participant "Store" as S
+participant "SandboxPool" as P
+participant "WorkerRunner\n(sandbox)" as R
+participant Grafana
+participant GitHub
+
+SCH -> O: tick
+O -> S: create RequestRouter instance (source=cron)
+return rr_resolved
+note right of O
+  A cron request, so every SandboxRun hangs off a request.
+  No exceptions, including the scan.
+end note
+O -> S: create LogReviewer instance
+return lr_pending
+O -> P: enqueue SandboxRun(LogReviewer)
+O -> S: state
+return lr_working
+P -> R: execute
+R -> Grafana: query logs (MCP)
+return log evidence
+R -> P: result{findings[0..N]}
+P -> O: run finished
+O -> S: state
+return lr_done
+
+note right of O
+  The scan ENDS when the findings exist. It does not wait
+  for the fixes: a scan "open because 2 of 5 fixes are
+  running" enables no decision, and the grouped report is
+  a query by originating scan.
+end note
+
+loop for each NEW fingerprint
+  O -> S: create FixImplementer instance
+  return fi_pending
+  O -> P: enqueue SandboxRun(FixImplementer)
+  O -> S: state
+  return fi_implementing
+  P -> R: execute
+  R -> R: validate the finding first
+  alt a code change is warranted
+    R -> GitHub: push branch + open DRAFT PR
+    return pr_url
+    R -> P: result{pr_url}
+    P -> O: run finished
+    O -> S: state
+    return fi_verifying
+    note right of O
+      FixVerifier is wired and empty: the release is all this state does.
+    end note
+    O -> GitHub: mark ready for review
+    O -> S: state
+    return fi_waiting_pr
+    O -> S: create PrMaintainer instance
+    return prm_pending
+    note right of O
+      Hourly: read the PR. Merged -> fi_done, closed -> fi_abandoned.
+    end note
+  else false positive / unreproducible / outside repo / ...
+    R -> P: result{no_pr, reason}
+    P -> O: run finished
+    O -> S: state
+    return fi_discarded
+  end
+end
+@enduml

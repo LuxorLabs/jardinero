@@ -1,0 +1,25 @@
+name: CI push-main
+
+# The same gate the pull-request workflow runs, on whatever lands on main. Direct
+# pushes and squashed merges both reach main without a pull request check, so this
+# is what catches them.
+on:
+  push:
+    branches: ["main"]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: make install
+      - run: make check CHECK_CHANGESET=false

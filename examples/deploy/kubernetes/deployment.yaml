@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jardinero
+spec:
+  # One writer, always. The database is SQLite on a single ReadWriteOnce volume,
+  # and Recreate is what stops a second pod mounting it during a rollout. Scaling
+  # this past 1 corrupts the database rather than sharing the load.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: jardinero
+  template:
+    metadata:
+      labels:
+        app: jardinero
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        # Without this the mounted volume is not writable by the image's user and
+        # the process dies on the first write.
+        fsGroup: 1000
+      containers:
+        - name: jardinero
+          image: ghcr.io/luxorlabs/jardinero:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            # Preview URLs are a Tenki sandbox feature; a cluster has its own ingress.
+            - name: DASHBOARD_EXPOSE_ON_STARTUP
+              value: "false"
+            - name: CONFIG_PATH
+              value: /etc/jardinero/config.yaml
+            # Identifiers, not secrets. The private key and every token come from
+            # the secret below.
+            - name: JARDINERO_AGENT_APP_ID
+              value: "<your github app id>"
+            - name: JARDINERO_AGENT_INSTALL_ID
+              value: "<your installation id>"
+          envFrom:
+            # Whatever fills this is yours: a sealed secret, an ExternalSecret, or
+            # kubectl create secret. See ../../../docs/secrets.md for the keys.
+            - secretRef:
+                name: jardinero-secrets
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: config
+              mountPath: /etc/jardinero
+              readOnly: true
+            # Only in the default `capsule` Codex auth mode.
+            - name: codex-auth
+              mountPath: /home/node/.codex
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            # First boot creates the database and applies the schema; give it room.
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: jardinero-data
+        - name: config
+          configMap:
+            name: jardinero-config
+        - name: codex-auth
+          secret:
+            secretName: jardinero-codex-auth
+            # Group-readable, not 0400: the file is owned by root:fsGroup, so an
+            # owner-only mode is unreadable by the uid the container runs as.
+            defaultMode: 0440
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jardinero
+  labels:
+    app: jardinero
+spec:
+  type: ClusterIP
+  selector:
+    app: jardinero
+  ports:
+    - port: 3000
+      targetPort: http
+      name: http
+      protocol: TCP

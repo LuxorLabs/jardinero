@@ -1,0 +1,43 @@
+name: CI pull-request
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@v4
+        with:
+          # Pinned via .nvmrc so local and CI use the same Node line.
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: make install
+      # Changeset is verified by the dedicated job below; skip here as we
+      # should skip it for some branches like release ones.
+      - run: make check CHECK_CHANGESET=false
+
+  check-changeset:
+    name: Check changeset
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      # Skip on release PRs (they carry no changeset) and dependency bumps.
+      SKIP: ${{ startsWith(github.head_ref, 'release/') || startsWith(github.head_ref, 'renovate/') || contains(github.event.pull_request.title, '[skip changeset]') }}
+    steps:
+      - if: env.SKIP == 'true'
+        run: echo "::notice::Changeset check skipped (release/renovate branch or [skip changeset] in title)."
+
+      - if: env.SKIP != 'true'
+        uses: actions/checkout@v4
+      - if: env.SKIP != 'true'
+        run: make check-changeset

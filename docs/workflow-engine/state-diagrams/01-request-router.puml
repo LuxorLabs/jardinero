@@ -1,0 +1,58 @@
+@startuml request-router
+title RequestRouter — every inbound request, from any source
+
+scale 0.85
+skinparam defaultTextAlignment left
+skinparam ArrowColor Black
+skinparam StateBorderColor Black
+skinparam StateFontColor Black
+skinparam NoteBackgroundColor White
+skinparam NoteBorderColor Black
+skinparam state {
+    BackgroundColor LightYellow
+    BackgroundColor<<Package>> LightBlue
+    BackgroundColor<<Final>> LightGreen
+    BackgroundColor<<Error>> LightCoral
+}
+
+state "rr_pending" as Pending
+    Pending: - source: discord | github | linear | cron | operator
+    Pending: - actor, channel, raw text or payload
+
+state "rr_routing" as Routing
+    Routing: - RequestRouter agent running
+    Routing: - only reached for free text
+
+state "rr_resolved" as Resolved <<Final>>
+    Resolved: - subject_type + subject_key
+    Resolved: - intent
+
+state "rr_unresolvable" as Unresolvable <<Error>>
+    Unresolvable: - questions answered to the asker
+    Unresolvable: - no work opened
+
+[*] -d-> Pending: OnRequestReceived
+
+Pending -d-> Resolved: handleStateRrPending(subject in the event)
+Pending -d-> Routing: handleStateRrPending(free text)\nOnPeriodicCheck(dispatch owed)\nOnSystemRecovery(dispatch owed)
+
+Routing -d-> Resolved: OnSandboxRunSucceeded(subject, intent)
+Routing -u-> Pending: OnPeriodicCheck(run died)\nOnSystemRecovery(run died)
+Routing -d[#Red]-> Unresolvable: OnSandboxRunSucceeded(needs clarification)\nOnSandboxRunFailed\nOnPeriodicCheck(outcome lost)\nOnSystemRecovery(outcome lost)
+
+Resolved -d-> [*]
+Unresolvable -d-> [*]
+
+note left of Resolved
+  The machine ends here. It never opens work itself:
+  it hands the subject to the machine that owns it,
+  and the Linear webhook stays the single door into
+  the work on a ticket.
+end note
+
+note left of Pending
+  Structured sources (GitHub, Linear, cron, operator,
+  and Discord commands that carry a subject) go straight
+  to rr_resolved with no agent and no cost.
+end note
+@enduml

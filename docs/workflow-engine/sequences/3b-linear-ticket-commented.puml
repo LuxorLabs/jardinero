@@ -1,0 +1,52 @@
+@startuml
+title 3B - Linear: someone comments on an assigned ticket (NOT BUILT)\nWhat happens depends on the state the ticket is in
+
+skinparam defaultTextAlignment left
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+
+actor Human
+participant Linear
+participant "LinearAdapter" as LA
+participant "Orchestrator" as O
+participant "Store" as S
+participant "SandboxPool" as P
+
+Human -> Linear: comment on the assigned issue
+Linear -> LA: AgentSessionEvent/prompted
+note right of LA
+  Not built: a `prompted` session is acknowledged and dropped
+  (`prompted_not_supported`), so nothing answers the human.
+end note
+LA -> O: LinearRequest{subject=linear:<issue>, actor, text}
+O -> S: create RequestRouter instance
+return rr_resolved
+O -> S: which instance owns this issue, and in what state?
+return instance + state
+
+alt li_implementing / li_verifying (a run is live)
+  O -> S: record pending human input
+  return the run is NOT interrupted
+  note right of O
+    A pending human input BLOCKS the handoff: even a
+    verdict_accept will not mark the PR ready until
+    the comment is addressed.
+  end note
+  O -> Linear: post activity
+  return "noted, will address"
+else li_needs_human (open, waiting)
+  O -> P: enqueue SandboxRun(LinearImplementer, feedback)
+  O -> S: state
+  return li_implementing
+  note right of O
+    The SAME instance advances. No new pass, no inherited
+    context: this is the dead end that started the track.
+  end note
+else li_done (already merged)
+  O -> Linear: post activity
+  return "esto ya esta hecho, crea otro ticket"
+else no instance (never delegated)
+  O -> S: nothing to do
+  return recorded on the request only
+end
+@enduml

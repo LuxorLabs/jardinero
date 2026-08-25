@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jardinero-data
+spec:
+  # ReadWriteOnce on purpose: one pod, one writer. See the Deployment.
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Holds the database, the hourly backups it keeps beside it, and the
+      # artifacts of every sandbox run. Growth is driven by how much work you
+      # dispatch, so watch it rather than trusting this number.
+      storage: 20Gi

@@ -1,0 +1,19 @@
+# Development image with hot reload. Source is bind-mounted by docker-compose, so
+# this stage only installs deps; `pnpm run dev` reloads on change. NODE_VERSION is
+# pinned to match Dockerfile.prod and .nvmrc.
+ARG NODE_VERSION=24-bookworm-slim
+# Must match `packageManager` in package.json.
+ARG PNPM_VERSION=11.23.0
+
+FROM node:${NODE_VERSION}
+ARG PNPM_VERSION
+ENV NODE_ENV=development
+WORKDIR /app
+RUN npm i -g pnpm@${PNPM_VERSION}
+
+# Dependencies are cached on their own layer; source arrives via the bind mount.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm ci
+
+EXPOSE 3000 9090
+CMD ["pnpm", "run", "dev"]

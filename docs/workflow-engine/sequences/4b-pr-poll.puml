@@ -1,0 +1,56 @@
+@startuml
+title 4B - The PR sweep: the safety net\nThe Scheduler only ticks; the adapter reads; the machine decides
+
+skinparam defaultTextAlignment left
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+
+participant "Scheduler" as SCH
+participant "GitHubAdapter" as GA
+participant "Orchestrator" as O
+participant "Store" as S
+participant "SandboxPool" as P
+participant GitHub
+
+SCH -> O: tick, per configured repo
+O -> GA: list open PRs
+GA -> GitHub: every open PR
+return number, head branch, draft
+GA -> O: onPrDiscovered per PR
+
+note right of O
+  The sweep only reports facts. Whether a PR is ours is
+  the machine's call, by branch prefix.
+end note
+
+loop per PR
+  O -> S: instance for pr:repo#n?
+  return instance + state, or none
+
+  alt none, our branch, not a draft
+    O -> S: create PrMaintainer instance
+    return prm_pending
+    O -> P: enqueue SandboxRun(PrMaintainer)
+  else none, somebody else's or still a draft
+    O -> O: nothing opened
+  else prm_waiting and there is work (unresolved threads, failed CI)
+    O -> S: state
+    return prm_pending
+    O -> P: enqueue SandboxRun(PrMaintainer)
+  else prm_waiting and nothing to do
+    O -> S: no change
+    return prm_waiting
+  else prm_attempts_exhausted
+    O -> S: no change
+    return prm_attempts_exhausted
+    note right of O: gave up on purpose, the sweep must not nudge it forever
+  else prm_working
+    O -> S: no change
+    return a run is already live
+  end
+end
+
+note right of O
+  This is also how a missed webhook is recovered.
+end note
+@enduml

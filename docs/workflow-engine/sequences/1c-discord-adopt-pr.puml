@@ -1,0 +1,46 @@
+@startuml
+title 1C - Discord: "/jardinero-code request:take over PR #FFF"\nThe ask hands the PR to the machine; from there it is the normal PR path
+
+skinparam defaultTextAlignment left
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+
+actor User
+participant "DiscordAdapter" as DA
+participant "Orchestrator" as O
+participant "Store" as S
+participant GitHub
+
+User -> DA: /jardinero-code request:"take over PR #FFF"
+DA -> DA: resolve identity + channel
+return actor, repo
+DA -> O: DiscordRequest{actor, channel, text}
+O -> S: create RequestRouter instance
+return rr_pending
+O -> O: Router.resolve(request)  ' the subject is what picks the machine
+return subject=pr:repo#FFF
+O -> S: state
+return rr_resolved
+
+O -> O: PrMaintainer.OnPrToFollow{pr:repo#FFF, request}
+O -> S: create PrMaintainer instance
+return prm_pending
+O -> DA: reply @user
+return "on it"
+
+note right of O
+  The request machine ENDS here, and the PrMaintainer
+  instance is the mandate: it lives in our storage and
+  ends when the PR does.
+
+  Tagging the agent on the PR skips Discord entirely and
+  opens the same instance, see 2B.
+end note
+
+note right of O
+  "resolve the conflicts of my own PR" is NOT a case:
+  on our own PRs the PrMaintainer already does it on the
+  next tick. Asking for it only means "do it now",
+  which is priority, not a capability.
+end note
+@enduml

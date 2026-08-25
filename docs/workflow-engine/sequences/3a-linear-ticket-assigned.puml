@@ -1,0 +1,66 @@
+@startuml
+title 3A - Linear: a ticket is assigned to Jardinero\nThe single door through which ticket work starts
+
+skinparam defaultTextAlignment left
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+
+actor Human
+participant Linear
+participant "LinearAdapter" as LA
+participant "Orchestrator" as O
+participant "Store" as S
+participant "SandboxPool" as P
+participant "WorkerRunner\n(sandbox)" as R
+participant GitHub
+
+Human -> Linear: delegate the issue to Jardinero
+Linear -> LA: AgentSessionEvent/created
+LA -> O: LinearRequest{subject=linear:<issue>, actor, session}
+O -> S: take the ask about this ticket, or create one
+return rr_resolved
+note right of O: a ticket delegated from Discord already has one, see 1A
+O -> S: create LinearImplementer instance in the repository this delivery resolves
+return li_pending
+O -> S: consume the ask, stamping the repository the work opened in
+O -> Linear: move issue to in-progress
+
+O -> P: enqueue SandboxRun(LinearImplementer)
+O -> S: state
+return li_implementing
+P -> R: execute
+R -> GitHub: push branch + open DRAFT PR
+return pr_url
+R -> P: result{pr_url, branch, cost}
+P -> O: run finished
+O -> S: store pr_url + branch
+return li_verifying
+O -> Linear: post activity + link PR
+
+O -> P: enqueue SandboxRun(LinearVerifier)
+P -> R: execute
+R -> R: read criteria + branch diff, run the gate and tests
+R -> P: verdict{accept|reject, criteria[], issues[]}
+P -> O: run finished
+
+alt accept, and no pending human input
+  O -> GitHub: mark the PR ready for review
+  O -> Linear: move issue to in-review
+  O -> S: state
+  return li_waiting_pr
+  O -> S: create PrMaintainer instance
+  return prm_pending
+  note right of O
+    internal handoff, no waiting for the poll.
+    Hourly: read the PR. Merged -> li_done, closed -> li_abandoned.
+  end note
+else reject, iterations left
+  O -> P: enqueue SandboxRun(LinearImplementer, revising)
+  O -> S: state
+  return li_implementing
+else reject, no iterations left
+  O -> Linear: post elicitation
+  O -> S: state
+  return li_needs_human (open, resumable)
+end
+@enduml

@@ -1,0 +1,114 @@
+name: Create release
+
+# On-demand release. Consumes the pending changesets to bump the version and
+# rewrite CHANGELOG.md, opens an auto-merging release/vX.Y.Z PR, and cuts the
+# vX.Y.Z tag + GitHub Release on that branch. The tag is what triggers the image
+# build. There is no persistent "Version Packages" bot PR.
+#
+# Auth is a GitHub App rather than the default GITHUB_TOKEN, because a push made
+# with GITHUB_TOKEN does not trigger the downstream tag build. Provide its
+# credentials as the CHANGESET_BOT_APP_ID and CHANGESET_BOT_PRIVATE_KEY secrets.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Create release
+    runs-on: tenki-standard-small-2c-4g
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          client-id: ${{ secrets.CHANGESET_BOT_APP_ID }}
+          private-key: ${{ secrets.CHANGESET_BOT_PRIVATE_KEY }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: make install
+
+      - name: Require pending changesets
+        run: |
+          count=$(find .changeset -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No pending changesets; nothing to release."
+            exit 1
+          fi
+
+      - name: Apply changesets
+        run: pnpm exec changeset version
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Read new version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Verify tag is new
+        run: |
+          if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            echo "::error::Tag ${RELEASE_TAG} already exists. Aborting."
+            exit 1
+          fi
+
+      - name: Date-stamp changelog
+        run: |
+          # changesets writes a bare `## X.Y.Z`; rewrite it to the semver + date
+          # form `## [X.Y.Z] - YYYY-MM-DD`.
+          sed -i "s|^## ${VERSION}$|## [${VERSION}] - $(date +%F)|" CHANGELOG.md
+
+      - name: Extract release notes
+        run: |
+          # The top `## [X.Y.Z] - DATE` block is this release; emit its body
+          # (without the header) as the GitHub Release notes.
+          awk '/^## /{c++} c==1 && !/^## /{print} c==2{exit}' CHANGELOG.md > release_notes.md
+
+      - name: Create release branch
+        run: |
+          git config user.email "github-actions@github.com"
+          git config user.name "GitHub Actions"
+          git checkout -b "release/${RELEASE_TAG}"
+          git add package.json CHANGELOG.md .changeset/
+          git commit -m "release version ${VERSION}"
+          git push origin "release/${RELEASE_TAG}"
+
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh pr create \
+            --title "Release ${RELEASE_TAG}" \
+            --body "Release ${RELEASE_TAG}. Bumps the version and CHANGELOG from the pending changesets." \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "release/${RELEASE_TAG}"
+          gh pr merge --auto --squash "release/${RELEASE_TAG}"
+
+      - name: Create release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          name: ${{ env.RELEASE_TAG }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: release/${{ env.RELEASE_TAG }}
+          body_path: release_notes.md
+          make_latest: true
+          token: ${{ steps.app-token.outputs.token }}

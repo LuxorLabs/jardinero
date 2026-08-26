@@ -90,12 +90,6 @@ Found a bug 🐛, or a job Jardinero should be doing while you are away ✨? The
 
 Found a security problem? Please do not open an issue: a public one hands an attacker the hole before a fix exists. [`SECURITY.md`](SECURITY.md) is the private door.
 
-### The people who built it
-
-<a href="https://github.com/LuxorLabs/jardinero/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=LuxorLabs/jardinero" alt="Contributors" />
-</a>
-
 ## License
 
 MIT. See [`LICENSE`](LICENSE).

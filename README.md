@@ -1,6 +1,6 @@
 <img src="assets/banner.png" alt="Jardinero — tends your codebase while you're away" />
 
-# Jardinero — the always-on AI engineer for your repositories
+# Jardinero: the always-on AI engineer for your repositories
 
 It watches your production logs, implements the tickets you hand it, and keeps your pull requests moving. Every piece of work runs in a throwaway sandbox that you host yourself, and every result comes back as a pull request a person reviews.
 

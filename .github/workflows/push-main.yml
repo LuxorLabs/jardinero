@@ -12,7 +12,8 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-latest
+    # Requires a multi-core runner; node --test concurrency is cores - 1.
+    runs-on: tenki-standard-large-8c-16g
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

@@ -11,7 +11,8 @@ concurrency:
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-latest
+    # Requires a multi-core runner; node --test concurrency is cores - 1.
+    runs-on: tenki-standard-large-8c-16g
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +29,7 @@ jobs:
 
   check-changeset:
     name: Check changeset
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-small-2c-4g
     timeout-minutes: 3
     env:
       # Skip on release PRs (they carry no changeset) and dependency bumps.

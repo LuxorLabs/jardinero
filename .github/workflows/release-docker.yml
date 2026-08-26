@@ -16,7 +16,7 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 jobs:
   release:
     name: Check and publish versioned image
-    runs-on: ubuntu-latest
+    runs-on: tenki-standard-large-8c-16g
     timeout-minutes: 20
     permissions:
       contents: read

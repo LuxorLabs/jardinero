@@ -1,6 +1,6 @@
 {
   "name": "jardinero",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "license": "MIT",
   "packageManager": "pnpm@11.23.0",

@@ -27,8 +27,11 @@ jobs:
       contents: read
       packages: write
       # OIDC token for keyless signing; attestations for the provenance record.
+      # artifact-metadata lets the attestation register a storage record, which
+      # is what lists the image on the organisation's linked artifacts page.
       id-token: write
       attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

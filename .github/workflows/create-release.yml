@@ -6,8 +6,12 @@ name: Create release
 # build. There is no persistent "Version Packages" bot PR.
 #
 # Auth is a GitHub App rather than the default GITHUB_TOKEN, because a push made
-# with GITHUB_TOKEN does not trigger the downstream tag build. Provide its
-# credentials as the CHANGESET_BOT_APP_ID and CHANGESET_BOT_PRIVATE_KEY secrets.
+# with GITHUB_TOKEN does not trigger the downstream tag build. Credentials are
+# the RELEASER_CLIENT_ID and RELEASER_PRIVATE_KEY repo secrets, from an App
+# installed on this repository alone. Keep it that way: an App private key is
+# scoped to the App, not to an installation, so reusing an App that is also
+# installed on other repositories would extend this repository's write access
+# to every one of them.
 
 on:
   workflow_dispatch: {}
@@ -29,8 +33,8 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ secrets.CHANGESET_BOT_APP_ID }}
-          private-key: ${{ secrets.CHANGESET_BOT_PRIVATE_KEY }}
+          client-id: ${{ secrets.RELEASER_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASER_PRIVATE_KEY }}
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

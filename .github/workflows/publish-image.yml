@@ -43,6 +43,12 @@ jobs:
       - run: make install
       - run: make check CHECK_CHANGESET=false
 
+      # Required, not defensive: these runners register binfmt handlers for llvm
+      # and python but not qemu-aarch64, so the arm64 half has nothing to run on
+      # without this.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
@@ -94,6 +100,11 @@ jobs:
             BUILD_VERSION=${{ env.BUILD_VERSION }}
           tags: ${{ env.TAGS }}
           push: true
+          # arm64 is emulated, so the build is slower than the wall-clock cost of
+          # the amd64 one alone. Worth it: a contributor on Apple silicon
+          # otherwise cannot run the published image without emulating it
+          # themselves at every start.
+          platforms: linux/amd64,linux/arm64
           # source is what links the package to this repository and gives anyone
           # holding the image a way back to the code it was built from.
           labels: |

@@ -8,10 +8,10 @@ name: Create release
 # Auth is a GitHub App rather than the default GITHUB_TOKEN, because a push made
 # with GITHUB_TOKEN does not trigger the downstream tag build. Credentials are
 # the RELEASER_CLIENT_ID and RELEASER_PRIVATE_KEY repo secrets, from an App
-# installed on this repository alone. Do not switch to the org-wide changesets
-# bot: an App private key can mint tokens for every repo that App is installed
-# on, so exposing it here would give this public repo write access to private
-# ones.
+# installed on this repository alone. Keep it that way: an App private key is
+# scoped to the App, not to an installation, so reusing an App that is also
+# installed on other repositories would extend this repository's write access
+# to every one of them.
 
 on:
   workflow_dispatch: {}

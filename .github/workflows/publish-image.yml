@@ -26,6 +26,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # OIDC token for keyless signing; attestations for the provenance record.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -67,6 +70,7 @@ jobs:
               "ghcr.io/${IMAGE_NAME}:${BUILD_VERSION}" \
               "ghcr.io/${IMAGE_NAME}:latest")
           fi
+          echo "IMAGE_NAME=ghcr.io/${IMAGE_NAME}" | tee -a "$GITHUB_ENV"
           echo "BUILD_VERSION=${BUILD_VERSION}" | tee -a "$GITHUB_ENV"
           echo "NODE_VERSION=$(cat .nvmrc)-bookworm-slim" | tee -a "$GITHUB_ENV"
           {
@@ -77,6 +81,7 @@ jobs:
           echo "$TAGS"
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -86,6 +91,36 @@ jobs:
             BUILD_VERSION=${{ env.BUILD_VERSION }}
           tags: ${{ env.TAGS }}
           push: true
+          # source is what links the package to this repository and gives anyone
+          # holding the image a way back to the code it was built from.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.BUILD_VERSION }}
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.vendor=Luxor Technology Corporation
+          sbom: true
+
+      # Signed with a short-lived certificate issued to this workflow's OIDC
+      # identity, so a verifier can require that an image came from this
+      # repository and this workflow rather than merely from this org. Nothing
+      # holds a signing key.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign the image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
+
+      # SLSA provenance, verifiable with `gh attestation verify`. Covers the
+      # same claim as the signature through a second, independent path.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
       - name: Print image info
         run: |

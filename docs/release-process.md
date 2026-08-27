@@ -65,7 +65,9 @@ graph TD
 
 ## One-time setup
 
-Releases authenticate as the **CHANGESET_BOT** GitHub App, via `actions/create-github-app-token`. This is what attributes the release PR and tag to a bot instead of a person, and what lets the tag trigger the downstream image build (the default `GITHUB_TOKEN` cannot). Before the first release:
+Releases authenticate as a GitHub App via `actions/create-github-app-token`, rather than the default `GITHUB_TOKEN`. This attributes the release PR and tag to a bot instead of a person, and lets the tag trigger the downstream image build — a push made with `GITHUB_TOKEN` does not. Before the first release:
 
-- Install the **CHANGESET_BOT** app on this repository with `contents` and `pull-requests` write.
-- Make sure the org secrets `CHANGESET_BOT_APP_ID` and `CHANGESET_BOT_PRIVATE_KEY` are visible to this repo (org-level, the way the `CI_GCP_*` secrets already are).
+- Create a GitHub App and install it **on this repository only**, granting `contents: write`, `pull requests: write`, and `metadata: read`.
+- Add its credentials as **repository** secrets: `RELEASER_CLIENT_ID` (the App's Client ID) and `RELEASER_PRIVATE_KEY` (the PEM you download when generating a signing key).
+
+Use an App dedicated to this repository rather than one shared with others. An App private key is scoped to the App, not to an installation: whatever holds the key can mint an installation token for every repository that App is installed on. Sharing one with a public repository therefore extends write access to all of them. Keeping the credentials in repository secrets rather than organization secrets leaves that boundary enforced by GitHub instead of by a visibility setting.

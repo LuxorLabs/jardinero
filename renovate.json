@@ -1,0 +1,75 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "enabled": true,
+  "extends": ["config:recommended"],
+  "schedule": ["every weekend"],
+  "labels": ["dependencies", "renovate"],
+  "configMigration": true,
+  "rebaseWhen": "conflicted",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["every weekend"]
+  },
+  "prConcurrentLimit": 5,
+  "minimumReleaseAge": "14 days",
+  "internalChecksFilter": "strict",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "labels": ["security"]
+  },
+  "packageRules": [
+    {
+      "description": "Manage github-actions SHA pins manually. Renovate opening a digest-bump PR runs CI with the new SHA — if upstream's tag has been hijacked, secrets are exfiltrated before we even review the PR. Same rationale as the other repositories; the pins here need a periodic manual sweep, because nothing will remind you.",
+      "matchManagers": ["github-actions"],
+      "enabled": false
+    },
+    {
+      "description": "Hold Node on major 24. .nvmrc is the single source for both CI and the published image's base tag (publish-image.yml derives NODE_VERSION from it), and Dockerfile.prod carries its own ARG default that has to move with it. A major bump is a deliberate change across all three, not a dependency PR. Widen this when you are ready to move.",
+      "matchPackageNames": ["node"],
+      "allowedVersions": "/^24(\\.|-|$)/"
+    },
+    {
+      "description": "Batch non-major devDependency updates into one PR.",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "devDependencies (non-major)"
+    },
+    {
+      "description": "Batch patch-level production dependency updates.",
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "dependencies (patch)"
+    },
+    {
+      "groupName": "react",
+      "matchPackageNames": [
+        "/^react$/",
+        "/^react-dom$/",
+        "/^@types/react($|-)/",
+        "/^@vitejs/plugin-react$/"
+      ]
+    },
+    {
+      "groupName": "react UI ecosystem",
+      "matchPackageNames": [
+        "/^@radix-ui//",
+        "/^lucide-react$/",
+        "/^clsx$/",
+        "/^class-variance-authority$/",
+        "/^tailwind-merge$/"
+      ]
+    },
+    {
+      "groupName": "tailwind ecosystem",
+      "matchPackageNames": ["/^tailwindcss$/", "/^@tailwindcss//"]
+    },
+    {
+      "groupName": "typescript + node types",
+      "matchPackageNames": ["/^typescript$/", "/^tsx$/", "/^@types/node$/"]
+    },
+    {
+      "groupName": "changesets",
+      "matchPackageNames": ["/^@changesets//"]
+    }
+  ]
+}

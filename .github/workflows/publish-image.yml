@@ -43,9 +43,9 @@ jobs:
       - run: make install
       - run: make check CHECK_CHANGESET=false
 
-      # binfmt handlers for the non-native platform. GitHub-hosted runners carry
-      # these already; the Tenki runners this builds on do not necessarily, and
-      # registering them twice is harmless.
+      # Required, not defensive: these runners register binfmt handlers for llvm
+      # and python but not qemu-aarch64, so the arm64 half has nothing to run on
+      # without this.
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
 

@@ -115,6 +115,15 @@ jobs:
             org.opencontainers.image.vendor=Luxor Technology Corporation
           sbom: true
 
+      # SLSA provenance, verifiable with `gh attestation verify`. Covers the
+      # same claim as the signature through a second, independent path.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
       # Signed with a short-lived certificate issued to this workflow's OIDC
       # identity, so a verifier can require that an image came from this
       # repository and this workflow rather than merely from this org. Nothing
@@ -126,15 +135,6 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --recursive --yes "${IMAGE_NAME}@${DIGEST}"
-
-      # SLSA provenance, verifiable with `gh attestation verify`. Covers the
-      # same claim as the signature through a second, independent path.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
 
       - name: Print image info
         run: |

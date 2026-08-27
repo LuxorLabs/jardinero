@@ -100,7 +100,7 @@ describe('forwardHostCodexAuthToSandbox', () => {
       arrange: writeAuth,
       session: { withoutExec: true },
       wantError:
-        /Tenki session does not expose exec; Codex auth forwarding requires shell execution\./,
+        /Sandbox session does not expose exec; Codex auth forwarding requires shell execution\./,
     },
     {
       name: 'When the install command fails then should return error with its exit code',

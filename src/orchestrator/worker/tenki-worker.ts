@@ -12,7 +12,13 @@ import {
   type CodexEffort,
 } from '../../config.js';
 import { type Logger, logger } from '../../platform/logger.js';
-import type { WorkerResult } from '../../types.js';
+import type {
+  WorkerResult,
+  WorkerSandboxExecOutput,
+  WorkerSandboxExecResult,
+  WorkerSandboxProvider,
+  WorkerSandboxSession,
+} from '../../types.js';
 import type { SandboxRunContext, SandboxRunner } from '../sandbox-pool.js';
 import { parseFixNoPrOutcome } from '../../workflows/pr/fix-result.js';
 import { parseImplementationHandoffs } from '../../workflows/pr/implementation-handoff.js';
@@ -56,9 +62,7 @@ import {
 } from '../../adapters/tenki/tenki-utils.js';
 
 type TenkiSdk = typeof import('@tenkicloud/sandbox');
-type TenkiSession = import('@tenkicloud/sandbox').Session;
-type TenkiExecResult = import('@tenkicloud/sandbox').ExecResult;
-type TenkiExecOutput = import('@tenkicloud/sandbox').Output;
+type TenkiProviderSession = import('@tenkicloud/sandbox').Session;
 type PreCodexRetryStage =
   | 'create'
   | 'wait_ready'
@@ -73,8 +77,8 @@ type PreCodexRetryStage =
 // Human-readable timeline/log line per pre-Codex stage; a stall in the silent
 // gap before the Codex run localizes to whichever stage last announced itself.
 const PRE_CODEX_STAGE_MESSAGES: Record<PreCodexRetryStage, string> = {
-  create: 'Creating Tenki sandbox session',
-  wait_ready: 'Waiting for Tenki sandbox to become ready',
+  create: 'Creating sandbox session',
+  wait_ready: 'Waiting for sandbox to become ready',
   prepare_workspace: 'Preparing workspace and cloning the repo',
   docker_socket_access: 'Configuring Docker socket access',
   prepare_repo_docs: 'Resolving repo AGENTS.md/CLAUDE.md',
@@ -86,12 +90,15 @@ const PRE_CODEX_STAGE_MESSAGES: Record<PreCodexRetryStage, string> = {
 
 // Seams that production leaves at their defaults; tests inject fakes so the run
 // loop can be exercised without a live Tenki sandbox or a child-process close.
-export interface TenkiWorkerRunnerDeps {
+export interface SandboxWorkerRunnerDeps {
   loadSdk?: () => Promise<TenkiSdk>;
   terminateSession?: typeof terminateTenkiSessionInChild;
   sandboxReadyRetryDelayMs?: (attempt: number) => number;
   getPullRequestHead?: typeof getPullRequestHead;
+  provider?: WorkerSandboxProvider;
 }
+
+export type TenkiWorkerRunnerDeps = SandboxWorkerRunnerDeps;
 
 interface CodexRunResult {
   command: string;
@@ -114,21 +121,23 @@ function sandboxReadyRetryDelayMs(config: AppConfig, attempt: number): number {
   return Math.round(exponentialBackoffMs + jitterMs);
 }
 
-export class TenkiWorkerRunner implements SandboxRunner {
+export class SandboxWorkerRunner implements SandboxRunner {
   private readonly loadSdk: () => Promise<TenkiSdk>;
   private readonly terminateSession: typeof terminateTenkiSessionInChild;
   private readonly sandboxReadyRetryDelayMs: (attempt: number) => number;
   private readonly getPullRequestHead: typeof getPullRequestHead;
+  private readonly provider?: WorkerSandboxProvider;
   private readonly log: Logger = logger.child('worker');
 
   constructor(
     private readonly config: AppConfig,
     private readonly env = process.env,
-    deps: TenkiWorkerRunnerDeps = {},
+    deps: SandboxWorkerRunnerDeps = {},
   ) {
     this.loadSdk = deps.loadSdk ?? loadTenkiSdk;
     this.terminateSession = deps.terminateSession ?? terminateTenkiSessionInChild;
     this.getPullRequestHead = deps.getPullRequestHead ?? getPullRequestHead;
+    this.provider = deps.provider;
     this.sandboxReadyRetryDelayMs =
       deps.sandboxReadyRetryDelayMs === undefined
         ? (attempt) => sandboxReadyRetryDelayMs(this.config, attempt)
@@ -149,18 +158,15 @@ export class TenkiWorkerRunner implements SandboxRunner {
 
     if (missingEnv.length > 0) {
       throw new Error(
-        `Tenki runner is missing required environment variables: ${missingEnv.join(', ')}`,
+        `${this.provider?.name ?? 'Tenki'} runner is missing required environment variables: ${missingEnv.join(', ')}`,
       );
     }
 
-    const sdk = await this.loadSdk();
-    const sandbox = new sdk.TenkiSandbox(this.sandboxOptions());
-
     const createOptions = this.createOptions(context);
-    applyTenkiScope(createOptions, await resolveTenkiScope(this.config, this.env, sandbox));
-    let session: TenkiSession | undefined;
+    const provider = this.provider ?? (await this.createTenkiProvider(createOptions));
+    let session: WorkerSandboxSession | undefined;
     let terminatePromise: Promise<void> | undefined;
-    const trackSession = (nextSession: TenkiSession): void => {
+    const trackSession = (nextSession: WorkerSandboxSession): void => {
       session = nextSession;
       terminatePromise = undefined;
     };
@@ -169,14 +175,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
       if (terminatePromise) return terminatePromise;
       const closingSession = session;
       session = undefined;
-      terminatePromise = (async () => {
-        await this.terminateSession(closingSession.id, {
-          authToken: this.env[this.config.worker.tenkiApiKeyEnv],
-          baseUrl: this.env[this.config.worker.tenkiApiUrlEnv],
-          cwd: this.config.rootDir,
-          timeoutMs: this.config.worker.sessionCloseTimeoutMs,
-        });
-      })().catch(async (error: unknown) => {
+      terminatePromise = provider.terminate(closingSession).catch(async (error: unknown) => {
         // Best-effort reporting only: terminate() is fired and forgotten from
         // the abort handler, so a throw here (e.g. an events.jsonl append
         // failing) would otherwise reject the cleanup promise. The orchestrator
@@ -206,7 +205,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
       for (let attempt = 1; attempt <= this.config.worker.maxSandboxReadyAttempts; attempt += 1) {
         await context.publishEvent({
           type: 'sandbox.creating',
-          message: 'Creating Tenki sandbox session',
+          message: `Creating ${provider.name} sandbox`,
           data: {
             ...safeEventData(createOptions),
             attempt,
@@ -217,24 +216,27 @@ export class TenkiWorkerRunner implements SandboxRunner {
         let preCodexStage: PreCodexRetryStage = 'create';
         try {
           throwIfAborted(context.signal);
-          // Wrap the two Tenki API calls most prone to transient TLS/network failures.
+          // Wrap the two provider API calls most prone to transient TLS/network failures.
           // When these fail, the wrapper attaches step + target so Discord shows
-          // "couldn't reach Tenki" instead of a low-level transport blob.
+          // which provider could not be reached instead of a low-level transport blob.
           const created = await withCallContext(
-            { step: 'create Tenki sandbox session', target: 'api.tenki.cloud' },
-            () => sandbox.create(createOptions),
+            { step: `create ${provider.name} sandbox`, target: provider.apiTarget },
+            () => provider.create(createOptions, context.signal),
           );
           trackSession(created);
           preCodexStage = 'wait_ready';
           await withCallContext(
-            { step: 'wait for Tenki sandbox to become ready', target: 'api.tenki.cloud' },
-            () => created.waitReady(undefined, context.signal),
+            {
+              step: `wait for ${provider.name} sandbox to become ready`,
+              target: provider.apiTarget,
+            },
+            () => provider.waitReady(created, context.signal),
           );
           throwIfAborted(context.signal);
 
           await context.publishEvent({
             type: 'sandbox.ready',
-            message: 'Tenki sandbox session is ready',
+            message: `${provider.name} sandbox is ready`,
             data: { sandbox_session_id: created.id },
           });
 
@@ -269,7 +271,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
           throwIfAborted(context.signal);
           break;
         } catch (error) {
-          const retryReason = retryableTenkiSessionStartReason(error);
+          const retryReason = retryableWorkerSandboxSessionStartReason(error);
           if (
             context.signal.aborted ||
             !retryReason ||
@@ -280,7 +282,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
 
           await context.publishEvent({
             type: 'sandbox.create_retried',
-            message: 'Retrying Tenki sandbox setup after a transient failure',
+            message: `Retrying ${provider.name} sandbox setup after a transient failure`,
             data: {
               run_id: context.sandboxRun.id,
               attempt,
@@ -288,7 +290,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
               max_attempts: this.config.worker.maxSandboxReadyAttempts,
               stage: preCodexStage,
               reason: retryReason,
-              error: tenkiSessionStartErrorMessage(error),
+              error: sandboxSessionStartErrorMessage(error),
             },
           });
           await terminate();
@@ -298,7 +300,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
         }
       }
       if (!session) {
-        throw new Error('Tenki sandbox session was not created.');
+        throw new Error(`${provider.name} sandbox was not created.`);
       }
       const sandboxSessionId = session.id;
 
@@ -324,7 +326,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
       }
 
       const codexFailed = typeof result.exitCode === 'number' && result.exitCode !== 0;
-      const summary = summarizeResult(result);
+      const summary = summarizeResult(result, provider.name);
       const artifact = await context.writeSandboxRunArtifact(
         'codex-result.json',
         JSON.stringify(redactUnknown(result), null, 2),
@@ -584,6 +586,28 @@ export class TenkiWorkerRunner implements SandboxRunner {
     return buildTenkiClientOptions(this.config, this.env);
   }
 
+  private async createTenkiProvider(
+    createOptions: Record<string, unknown>,
+  ): Promise<WorkerSandboxProvider> {
+    const sdk = await this.loadSdk();
+    const sandbox = new sdk.TenkiSandbox(this.sandboxOptions());
+    applyTenkiScope(createOptions, await resolveTenkiScope(this.config, this.env, sandbox));
+    return {
+      name: 'Tenki',
+      apiTarget: 'api.tenki.cloud',
+      create: (options) => sandbox.create(options),
+      waitReady: (session, signal) =>
+        (session as TenkiProviderSession).waitReady(undefined, signal),
+      terminate: (session) =>
+        this.terminateSession(session.id, {
+          authToken: this.env[this.config.worker.tenkiApiKeyEnv],
+          baseUrl: this.env[this.config.worker.tenkiApiUrlEnv],
+          cwd: this.config.rootDir,
+          timeoutMs: this.config.worker.sessionCloseTimeoutMs,
+        }),
+    };
+  }
+
   // Announces a pre-Codex stage on the timeline/log and returns it for the
   // caller's retry-context bookkeeping; the event write is best-effort.
   private async beginStage(
@@ -601,7 +625,10 @@ export class TenkiWorkerRunner implements SandboxRunner {
     return stage;
   }
 
-  private async prepareWorkspace(session: TenkiSession, context: SandboxRunContext): Promise<void> {
+  private async prepareWorkspace(
+    session: WorkerSandboxSession,
+    context: SandboxRunContext,
+  ): Promise<void> {
     const contextDir = this.contextDir();
     const repoDir = this.repoDir();
 
@@ -679,7 +706,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
   // Runs after the clone and any branch checkout so a materialized AGENTS.md can
   // be shielded from the agent's commits.
   private async prepareRepoDocs(
-    session: TenkiSession,
+    session: WorkerSandboxSession,
     context: SandboxRunContext,
   ): Promise<string | undefined> {
     const repo =
@@ -709,7 +736,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
     });
   }
 
-  private repoDocsAccess(session: TenkiSession, repoDir: string): RepoDocsAccess {
+  private repoDocsAccess(session: WorkerSandboxSession, repoDir: string): RepoDocsAccess {
     const at = (name: string): string => shellQuote(remoteJoin(repoDir, name));
     return {
       readRegularFile: async (name) => {
@@ -759,7 +786,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
   // grant failure is recorded rather than thrown — Docker-readiness must never
   // be what fails a run.
   private async ensureDockerSocketAccess(
-    session: TenkiSession,
+    session: WorkerSandboxSession,
     context: SandboxRunContext,
   ): Promise<void> {
     try {
@@ -799,7 +826,10 @@ export class TenkiWorkerRunner implements SandboxRunner {
     }
   }
 
-  private async configureGitIdentity(session: TenkiSession, repoDir: string): Promise<void> {
+  private async configureGitIdentity(
+    session: WorkerSandboxSession,
+    repoDir: string,
+  ): Promise<void> {
     const name = this.config.worker.gitAuthorName.trim();
     const email = this.config.worker.gitAuthorEmail.trim();
     if (!name || !email) return;
@@ -811,7 +841,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
     assertExecSucceeded(result, 'configure git identity');
   }
 
-  private async configureGitHubCredentials(session: TenkiSession): Promise<void> {
+  private async configureGitHubCredentials(session: WorkerSandboxSession): Promise<void> {
     const result = await this.execRequired(
       session,
       buildGitHubCredentialHelperCommand({ tokenEnv: 'GITHUB_TOKEN' }),
@@ -819,7 +849,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
     assertExecSucceeded(result, 'configure GitHub credentials');
   }
 
-  private async writeCodexConfig(session: TenkiSession): Promise<void> {
+  private async writeCodexConfig(session: WorkerSandboxSession): Promise<void> {
     const codexConfigPath = remoteJoin(this.contextDir(), 'codex-config.toml');
     await session.writeFile(codexConfigPath, buildCodexConfigToml(this.config));
     const result = await this.execRequired(
@@ -829,7 +859,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
     assertExecSucceeded(result, 'install Codex config');
   }
 
-  private async prepareCodexAuth(session: TenkiSession): Promise<void> {
+  private async prepareCodexAuth(session: WorkerSandboxSession): Promise<void> {
     if (this.config.worker.codexAuthMode === 'capsule') {
       await forwardHostCodexAuthToSandbox(session);
     } else if (this.config.worker.codexAuthMode === 'access_token') {
@@ -852,7 +882,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
   }
 
   private async prepareGrafanaMcpCredentials(
-    session: TenkiSession,
+    session: WorkerSandboxSession,
     context: SandboxRunContext,
   ): Promise<void> {
     if (
@@ -910,7 +940,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
   }
 
   private async verifyLogReviewTelemetryPrerequisites(
-    session: TenkiSession,
+    session: WorkerSandboxSession,
     context: SandboxRunContext,
   ): Promise<void> {
     if (context.task.workflow !== 'log_review' || !this.config.mcp.grafana.enabled) return;
@@ -973,7 +1003,10 @@ export class TenkiWorkerRunner implements SandboxRunner {
   // and a collection failure must never fail the step, only be written down.
   // Streams Codex's --json output to the worker log as it runs, so a stalled tool
   // call shows live, not only in the post-exit result; log-only, no timeline.
-  private codexProgressSink(runId: string, tail: OutputTail): (output: TenkiExecOutput) => void {
+  private codexProgressSink(
+    runId: string,
+    tail: OutputTail,
+  ): (output: WorkerSandboxExecOutput) => void {
     const run = runId.slice(0, 8);
     const stdout = new LineBuffer();
     const stderr = new LineBuffer();
@@ -1011,13 +1044,13 @@ export class TenkiWorkerRunner implements SandboxRunner {
   }
 
   private async execRequired(
-    session: TenkiSession,
+    session: WorkerSandboxSession,
     command: string,
-    onOutput?: (output: TenkiExecOutput) => void,
-  ): Promise<TenkiExecResult | string> {
+    onOutput?: (output: WorkerSandboxExecOutput) => void,
+  ): Promise<WorkerSandboxExecResult | string> {
     if (!session.exec) {
       throw new Error(
-        'Tenki session does not expose exec; Codex worker runner requires shell execution.',
+        'Sandbox session does not expose exec; Codex worker runner requires shell execution.',
       );
     }
     return session.exec('sh', { args: ['-lc', command], onOutput });
@@ -1026,7 +1059,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
   // runCodex runs the agent once per model the seat may use, and retries only when the
   // model refused for capacity: any other failure is the run's answer.
   private async runCodex(
-    session: TenkiSession,
+    session: WorkerSandboxSession,
     context: SandboxRunContext,
   ): Promise<CodexRunResult> {
     const models = this.codexModels(context);
@@ -1042,7 +1075,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
         message: attempt === 0 ? 'Codex run started' : 'Codex run restarted on another model',
         data: { attempt: attempt + 1, max_attempts: models.length, model },
       });
-      let execResult: TenkiExecResult | string;
+      let execResult: WorkerSandboxExecResult | string;
       try {
         execResult = await this.execRequired(
           session,
@@ -1198,6 +1231,8 @@ export class TenkiWorkerRunner implements SandboxRunner {
   }
 }
 
+export class TenkiWorkerRunner extends SandboxWorkerRunner {}
+
 function isCodexEffort(value: unknown): value is CodexEffort {
   return typeof value === 'string' && CODEX_EFFORTS.includes(value as CodexEffort);
 }
@@ -1213,16 +1248,16 @@ export async function loadTenkiSdk(): Promise<TenkiSdk> {
   }
 }
 
-function summarizeResult(result: CodexRunResult): string {
+function summarizeResult(result: CodexRunResult, providerName: string): string {
   const direct = [result.lastMessage, result.stdout, result.stderr].find(
     (value) => typeof value === 'string' && value.trim().length > 0,
   );
   if (typeof direct === 'string' && direct.trim().length > 0) return direct.trim().slice(0, 500);
-  return 'Codex completed in Tenki sandbox.';
+  return `Codex completed in ${providerName} sandbox.`;
 }
 
-function retryableTenkiSessionStartReason(error: unknown): string | undefined {
-  const message = tenkiSessionStartErrorMessage(error);
+function retryableWorkerSandboxSessionStartReason(error: unknown): string | undefined {
+  const message = sandboxSessionStartErrorMessage(error);
   const patterns: Array<{ label: string; matches: string[] }> = [
     { label: 'deadline_exceeded', matches: ['deadline_exceeded'] },
     {
@@ -1254,7 +1289,7 @@ function retryableTenkiSessionStartReason(error: unknown): string | undefined {
   return undefined;
 }
 
-function tenkiSessionStartErrorMessage(error: unknown): string {
+function sandboxSessionStartErrorMessage(error: unknown): string {
   if (error instanceof CallContextError) return error.rawMessage;
   return error instanceof Error ? error.message : String(error);
 }
@@ -1335,7 +1370,7 @@ function safeEventData(value: Record<string, unknown>): Record<string, unknown> 
   };
 }
 
-function commandOutput(result: TenkiExecResult | string): string {
+function commandOutput(result: WorkerSandboxExecResult | string): string {
   return [execString(result, ['stdout', 'output']), execString(result, ['stderr', 'error'])]
     .filter((value) => value.trim().length > 0)
     .join('\n');
@@ -1478,7 +1513,7 @@ const CAPACITY_REFUSAL = /model is at capacity/i;
 
 function normalizeCodexResult(
   command: string,
-  result: TenkiExecResult | string,
+  result: WorkerSandboxExecResult | string,
   lastMessage?: string,
 ): CodexRunResult {
   const stdout = execString(result, ['stdout', 'output']);
@@ -1630,7 +1665,10 @@ export class LineBuffer {
   }
 }
 
-async function readTextFile(session: TenkiSession, path: string): Promise<string | undefined> {
+async function readTextFile(
+  session: WorkerSandboxSession,
+  path: string,
+): Promise<string | undefined> {
   if (!session.readFile) return undefined;
   try {
     const value = await session.readFile(path);
@@ -1640,7 +1678,10 @@ async function readTextFile(session: TenkiSession, path: string): Promise<string
   }
 }
 
-async function readJsonFile(session: TenkiSession, path: string): Promise<Record<string, unknown>> {
+async function readJsonFile(
+  session: WorkerSandboxSession,
+  path: string,
+): Promise<Record<string, unknown>> {
   try {
     const stream = await session.fs.readStream(path);
     const value = await streamToString(stream);

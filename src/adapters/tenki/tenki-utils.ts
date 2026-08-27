@@ -1,11 +1,11 @@
-type TenkiExecResult = import('@tenkicloud/sandbox').ExecResult;
+import type { WorkerSandboxExecResult } from '../../types.js';
 
 // Where the worker template installs Playwright's chromium. The template build
 // runs as root while agents run as the tenki user, so the browsers live in a
 // shared system path instead of a per-user cache.
 export const PLAYWRIGHT_BROWSERS_PATH = '/usr/local/share/ms-playwright';
 
-export function assertExecSucceeded(result: TenkiExecResult | string, label: string): void {
+export function assertExecSucceeded(result: WorkerSandboxExecResult | string, label: string): void {
   const exitCode = execExitCode(result);
   if (typeof exitCode !== 'number' || exitCode === 0) return;
 
@@ -15,7 +15,7 @@ export function assertExecSucceeded(result: TenkiExecResult | string, label: str
   throw new Error(`${label} failed with exit code ${exitCode}${suffix}`);
 }
 
-export function execString(result: TenkiExecResult | string, keys: string[]): string {
+export function execString(result: WorkerSandboxExecResult | string, keys: string[]): string {
   if (typeof result === 'string')
     return keys.includes('stdout') || keys.includes('output') ? result : '';
   const record = result as unknown as Record<string, unknown>;
@@ -28,7 +28,7 @@ export function execString(result: TenkiExecResult | string, keys: string[]): st
   return '';
 }
 
-export function execExitCode(result: TenkiExecResult | string): number | undefined {
+export function execExitCode(result: WorkerSandboxExecResult | string): number | undefined {
   if (typeof result === 'string') return undefined;
   const record = result as unknown as Record<string, unknown>;
   for (const key of ['exitCode', 'code', 'status']) {

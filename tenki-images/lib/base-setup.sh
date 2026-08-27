@@ -9,7 +9,7 @@ if command -v apt-get >/dev/null 2>&1; then
   as_root apt-get update
   as_root apt-get install -y \
     build-essential ca-certificates curl git gnupg jq \
-    openssh-client pkg-config ripgrep unzip xz-utils
+    openssh-client pkg-config ripgrep sudo unzip xz-utils
 else
   echo "apt-get unavailable; relying on base image tooling" >&2
 fi

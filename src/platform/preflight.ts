@@ -135,6 +135,19 @@ export async function runPreflight(config: AppConfig, env = process.env): Promis
     checks.push(await tenkiSdkCheck());
     checks.push(tenkiAuthCheck(config, env));
     checks.push(tenkiProjectCheck(config, env));
+  } else if (config.worker.runner === 'freestyle') {
+    checks.push(await freestyleSdkCheck());
+    checks.push(
+      envCheck(
+        env,
+        config.worker.freestyleApiKeyEnv,
+        'freestyle_auth',
+        `${config.worker.freestyleApiKeyEnv} is configured.`,
+      ),
+    );
+  }
+
+  if (config.worker.runner !== 'mock') {
     checks.push(codexAuthCheck(config, env));
     if (config.workflows.logReviewer.enabled && config.mcp.grafana.enabled) {
       for (const envName of grafanaMcpRequiredEnvNames(config)) {
@@ -273,6 +286,24 @@ async function tenkiSdkCheck(): Promise<PreflightCheck> {
       name: 'tenki_sdk',
       status: 'error',
       detail: `Cannot import @tenkicloud/sandbox: ${message}`,
+    };
+  }
+}
+
+async function freestyleSdkCheck(): Promise<PreflightCheck> {
+  try {
+    await import('freestyle');
+    return {
+      name: 'freestyle_sdk',
+      status: 'ok',
+      detail: 'freestyle is installed and importable.',
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      name: 'freestyle_sdk',
+      status: 'error',
+      detail: `Cannot import freestyle: ${message}`,
     };
   }
 }

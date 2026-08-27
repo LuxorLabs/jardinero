@@ -23,6 +23,60 @@ export interface WorkerResult {
   error?: string;
 }
 
+export interface WorkerSandboxExecOutput {
+  data: Uint8Array;
+  isStderr: boolean;
+  isFinal: boolean;
+}
+
+export interface WorkerSandboxExecResult {
+  sessionId?: string;
+  exitCode?: number;
+  code?: number;
+  status?: number | string;
+  stdout?: string | Uint8Array;
+  stderr?: string | Uint8Array;
+  output?: string | Uint8Array;
+  error?: string | Uint8Array;
+  command?: string;
+  args?: string[];
+  durationMs?: number;
+  outputs?: WorkerSandboxExecOutput[];
+}
+
+export interface WorkerSandboxSession {
+  id: string;
+  exec?(
+    command: string,
+    options?: {
+      args?: string[];
+      onOutput?: (output: WorkerSandboxExecOutput) => void;
+    },
+  ): Promise<WorkerSandboxExecResult | string>;
+  writeFile(path: string, content: string | Uint8Array): Promise<void>;
+  readFile?(path: string): Promise<string | Uint8Array>;
+  fs: {
+    readStream(path: string): Promise<ReadableStream<Uint8Array>>;
+    writeStream(
+      path: string,
+      data: ReadableStream<Uint8Array>,
+      options?: { mode?: number; truncate?: boolean; sync?: boolean },
+    ): Promise<void>;
+    mkdir(path: string): Promise<void>;
+  };
+  git?: {
+    clone(url: string, options: { directory: string }): Promise<unknown>;
+  };
+}
+
+export interface WorkerSandboxProvider {
+  name: string;
+  apiTarget: string;
+  create(options: Record<string, unknown>, signal: AbortSignal): Promise<WorkerSandboxSession>;
+  waitReady(session: WorkerSandboxSession, signal: AbortSignal): Promise<void>;
+  terminate(session: WorkerSandboxSession): Promise<void>;
+}
+
 export type FixNoPrReason =
   | 'false_positive'
   | 'unreproducible'

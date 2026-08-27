@@ -11,7 +11,7 @@ This is the procedure. What every configuration key means is the reference, [`co
 | | What you do | Needed for |
 |---|---|---|
 | 1 | Run it on your machine | everything |
-| 2 | Set up Tenki | everything |
+| 2 | Set up Tenki or Freestyle | everything |
 | 3 | Install Codex | everything |
 | 4 | Build a worker image for your repository | everything |
 | 5 | Put it behind a public URL | everything |
@@ -66,9 +66,11 @@ curl -s localhost:3000/setup | jq
 
 Right now it should report `worker_runner=mock` and `admin_auth` ok. The mock runner dispatches nothing, which is why this step needs no accounts.
 
-## 2. Set up Tenki
+## 2. Set up a sandbox provider
 
-Sign up at [Tenki](https://tenki.cloud), create an API key, and install the CLI; step 4 drives it. Every agent runs in a Tenki sandbox, and there is no way around it: the mock runner is for looking, not for working. This is the meter that runs.
+Every agent runs in a VM from the provider selected by `worker.runner`; the mock runner is for looking, not for working. Choose Tenki or Freestyle, create its API key and install its CLI. Step 4 uses the same provider to prepare a worker image.
+
+### Tenki
 
 | Variable | What to put in it |
 |---|---|
@@ -80,6 +82,21 @@ Sign up at [Tenki](https://tenki.cloud), create an API key, and install the CLI;
 ```bash
 set -a; . ./.env; set +a
 tenki status
+```
+
+### Freestyle
+
+Create a permanent API key in the [Freestyle dashboard](https://dash.freestyle.sh), then install the CLI that is already pinned as Jardinero's `freestyle` dependency.
+
+| Variable | What to put in it |
+|---|---|
+| `FREESTYLE_API_KEY` | Your permanent API key. |
+
+**Check it.** With the variable exported, the CLI lists the VMs the key can reach:
+
+```bash
+set -a; . ./.env; set +a
+pnpm exec freestyle vm list
 ```
 
 ## 3. Install Codex
@@ -107,9 +124,9 @@ On `capsule`, read [Keeping capsule auth alive](secrets.md#keeping-capsule-auth-
 
 Build one worker image per repository: the sandbox the agent works inside, carrying **that repository's** toolchain. There is no image to borrow, and one that lacks it fails after the agent has already done the work and paid for it.
 
-Recipes live in [`../tenki-images/`](../tenki-images/), with three worked examples: `node-repo-example`, `go-repo-example` and `python-repo-example`.
+Recipes live in [`../tenki-images/`](../tenki-images/), with three worked examples: `node-repo-example`, `go-repo-example` and `python-repo-example`. Despite the directory name, the setup recipes themselves are ordinary Linux scripts and can also prepare a Freestyle snapshot.
 
-### Building it
+### Building it on Tenki
 
 1. Copy the example closest to your stack to `tenki-images/recipes/<name>.sh`, and pin every version to your repository's own sources (Dockerfile, Makefile, CI) so the sandbox cannot drift from what your CI runs.
 2. Copy its `.env` and set `IMAGE_NAME` and `REPO_SLUG=<owner>/<repo>`. Raise `SANDBOX_CPU` and `SANDBOX_MEMORY_MB` if your gate is heavy; a suite that exhausts the box wedges the sandbox.
@@ -139,6 +156,32 @@ Recipes live in [`../tenki-images/`](../tenki-images/), with three worked exampl
 ```bash
 pnpm run smoke:tenki
 ```
+
+### Building it on Freestyle
+
+Choose the recipe exactly as above, then render its shared base plus repository toolchain into one setup script. `--no-verify` prevents the Tenki build driver's canary body from being appended; you will verify the resulting snapshot on Freestyle instead.
+
+```bash
+tenki-images/build.sh <name> --dry-run --no-verify > /tmp/jardinero-worker-setup.sh
+vm_id="$(pnpm exec freestyle vm create --snapshot-id freestyle/ubuntu --slug jardinero-image-build --internet --output json | jq -r .id)"
+pnpm exec freestyle vm fs write "$vm_id" /root/jardinero-worker-setup.sh /tmp/jardinero-worker-setup.sh
+pnpm exec freestyle vm ssh "$vm_id" --exec "bash /root/jardinero-worker-setup.sh"
+pnpm exec freestyle vm snapshot create "$vm_id" --slug <snapshot-slug> --output json
+pnpm exec freestyle vm delete "$vm_id"
+```
+
+The snapshot must contain `git`, `gh`, Node 24, Codex, `sudo`, systemd and the repository toolchain. The runner creates the `tenki` user, injects the run credentials, and grows CPU or memory when the configured floor exceeds the snapshot's current size. Freestyle resources are grow-only, so choose `freestyle/ubuntu-sm` as the build base if log-review runs must stay at their 2 vCPU and 4 GiB shape.
+
+Put the snapshot id or slug in the same image field:
+
+```yaml
+worker:
+  runner: "freestyle"
+  default:
+    image: "<snapshot-slug>"
+```
+
+**Check it.** Boot a clean VM from the snapshot and run the recipe's `*.verify.sh` from a fresh clone, then delete the canary VM. With Jardinero running, `/setup` must report `freestyle_sdk`, `freestyle_auth` and `codex_auth` as `ok` before the first paid run.
 
 It creates a real sandbox on your image, writes and reads a file, runs a command, forwards your Codex auth and asks the model for a short answer. If that passes, the expensive half of the setup is done.
 
@@ -210,11 +253,11 @@ workflows:
 gh api '/users/<name>%5Bbot%5D' --jq .id
 ```
 
-Now switch the runner on, which is what makes runs real:
+Now switch the runner on, which is what makes runs real. Use the provider chosen in step 2:
 
 ```yaml
 worker:
-  runner: "tenki"
+  runner: "freestyle" # or "tenki"
 ```
 
 Boot refuses this with no `worker.default.image` from step 4, and with no App credentials above.

@@ -125,7 +125,7 @@ jobs:
       - name: Sign the image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
+        run: cosign sign --recursive --yes "${IMAGE_NAME}@${DIGEST}"
 
       # SLSA provenance, verifiable with `gh attestation verify`. Covers the
       # same claim as the signature through a second, independent path.

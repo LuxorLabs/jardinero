@@ -1,8 +1,12 @@
-name: CI release docker images
+name: CI publish image
 
-# On a release tag (v*), runs the full check gate and publishes the orchestrator
-# image tagged with the semver version. That image is the deterministic,
+# On a release tag (v*), runs the full check gate and publishes the image tagged
+# with the semver version, and as latest. That image is the deterministic,
 # rollback-able artifact a deployment pins to.
+#
+# Run by hand instead to publish the current commit as <date>-<sha>, for a build
+# that is not worth a version. It never moves latest, which stays on the newest
+# release.
 #
 # Authentication is the GITHUB_TOKEN GitHub already injects, so a fork that wants
 # its own images needs no credentials of its own.
@@ -10,12 +14,13 @@ name: CI release docker images
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch: {}
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
   release:
-    name: Check and publish versioned image
+    name: Check and publish image
     runs-on: tenki-standard-large-8c-16g
     timeout-minutes: 20
     permissions:
@@ -42,20 +47,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get image ref and Node version
+      - name: Get image tags and Node version
         env:
           REF_NAME: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}
+          IS_RELEASE: ${{ github.event_name == 'push' }}
         run: |
           # A registry ref has to be lowercase, and neither the tag nor the
           # owner/name pair is guaranteed to be.
-          IMAGE_TAG=$(echo "$REF_NAME" | tr 'A-Z' 'a-z')
           IMAGE_NAME=$(echo "$REPOSITORY" | tr 'A-Z' 'a-z')
-          echo "IMAGE_REF=ghcr.io/${IMAGE_NAME}:${IMAGE_TAG}" | tee -a "$GITHUB_ENV"
-          echo "IMAGE_LATEST=ghcr.io/${IMAGE_NAME}:latest" | tee -a "$GITHUB_ENV"
-          # On a release the app version is the semver tag itself.
-          echo "BUILD_VERSION=${IMAGE_TAG}" | tee -a "$GITHUB_ENV"
+          # Every build carries a <date>-<sha> tag, which is the one a deployment
+          # can follow: it sorts, and it exists whether or not this was a release.
+          STAMP="$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
+          TAGS="ghcr.io/${IMAGE_NAME}:${STAMP}"
+          BUILD_VERSION="$STAMP"
+          if [ "$IS_RELEASE" = "true" ]; then
+            BUILD_VERSION=$(echo "$REF_NAME" | tr 'A-Z' 'a-z')
+            TAGS=$(printf '%s\n%s\n%s' "$TAGS" \
+              "ghcr.io/${IMAGE_NAME}:${BUILD_VERSION}" \
+              "ghcr.io/${IMAGE_NAME}:latest")
+          fi
+          echo "BUILD_VERSION=${BUILD_VERSION}" | tee -a "$GITHUB_ENV"
           echo "NODE_VERSION=$(cat .nvmrc)-bookworm-slim" | tee -a "$GITHUB_ENV"
+          {
+            echo "TAGS<<TAGS_EOF"
+            echo "$TAGS"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_ENV"
+          echo "$TAGS"
 
       - name: Build and push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -65,12 +84,10 @@ jobs:
           build-args: |
             NODE_VERSION=${{ env.NODE_VERSION }}
             BUILD_VERSION=${{ env.BUILD_VERSION }}
-          tags: |
-            ${{ env.IMAGE_REF }}
-            ${{ env.IMAGE_LATEST }}
+          tags: ${{ env.TAGS }}
           push: true
 
       - name: Print image info
         run: |
-          echo "Released image:"
-          echo "- ${{ env.IMAGE_REF }}"
+          echo "Published:"
+          echo "${{ env.TAGS }}"

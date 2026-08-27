@@ -170,7 +170,7 @@ pnpm exec freestyle vm snapshot create "$vm_id" --slug <snapshot-slug> --output 
 pnpm exec freestyle vm delete "$vm_id"
 ```
 
-The snapshot must contain `git`, `gh`, Node 24, Codex, `sudo`, systemd and the repository toolchain. The runner creates the `tenki` user, injects the run credentials, and grows CPU or memory when the configured floor exceeds the snapshot's current size. Freestyle resources are grow-only, so choose `freestyle/ubuntu-sm` as the build base if log-review runs must stay at their 2 vCPU and 4 GiB shape.
+The snapshot must contain `git`, `gh`, Node 24, Codex, `sudo` and the repository toolchain. The runner creates the `tenki` user, injects the run credentials, and grows CPU or memory when the configured floor exceeds the snapshot's current size. Freestyle resources are grow-only, so choose `freestyle/ubuntu-sm` as the build base if log-review runs must stay at their 2 vCPU and 4 GiB shape.
 
 Put the snapshot id or slug in the same image field:
 

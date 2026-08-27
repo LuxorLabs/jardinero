@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
 
-import { Freestyle, type CreateVmOptions, type ExecResult, type Vm } from 'freestyle';
+import {
+  Freestyle,
+  type CreateVmOptions,
+  type ExecResult,
+  type PtySession,
+  type Vm,
+} from 'freestyle';
 
 import type { AppConfig } from '../../config.js';
 import { assertExecSucceeded, shellQuote } from '../../adapters/tenki/tenki-utils.js';
@@ -20,7 +25,6 @@ type WorkerSandboxWriteStreamOptions = NonNullable<
 
 const WORKER_USER = 'tenki';
 const WORKER_HOME = '/home/tenki';
-const STREAM_POLL_INTERVAL_MS = 500;
 
 interface FreestyleClient {
   vms: {
@@ -40,7 +44,6 @@ interface FreestyleClient {
 export interface FreestyleWorkerRunnerDeps
   extends Omit<SandboxWorkerRunnerDeps, 'provider' | 'loadSdk' | 'terminateSession'> {
   createClient?: () => FreestyleClient;
-  pollDelay?: (signal: AbortSignal) => Promise<void>;
 }
 
 export class FreestyleWorkerRunner implements SandboxRunner {
@@ -64,12 +67,11 @@ export class FreestyleSandboxProvider implements WorkerSandboxProvider {
   readonly name = 'Freestyle';
   readonly apiTarget: string;
   private readonly createClient: () => FreestyleClient;
-  private readonly pollDelay: (signal: AbortSignal) => Promise<void>;
 
   constructor(
     private readonly config: AppConfig,
     private readonly env = process.env,
-    deps: Pick<FreestyleWorkerRunnerDeps, 'createClient' | 'pollDelay'> = {},
+    deps: Pick<FreestyleWorkerRunnerDeps, 'createClient'> = {},
   ) {
     const baseUrl = env[config.worker.freestyleApiUrlEnv]?.trim();
     this.apiTarget = freestyleApiTarget(baseUrl);
@@ -82,9 +84,6 @@ export class FreestyleSandboxProvider implements WorkerSandboxProvider {
         }
         return new Freestyle({ apiKey, ...(baseUrl ? { baseUrl } : {}) });
       });
-    this.pollDelay =
-      deps.pollDelay ??
-      ((signal) => delay(STREAM_POLL_INTERVAL_MS, undefined, { signal }).then(() => undefined));
   }
 
   async create(
@@ -115,7 +114,6 @@ export class FreestyleSandboxProvider implements WorkerSandboxProvider {
         created.vmId,
         stringRecord(options.env),
         signal,
-        this.pollDelay,
       ).asWorkerSandboxSession();
     } catch (error) {
       await created.vm.delete().catch(() => undefined);
@@ -170,7 +168,6 @@ class FreestyleSession implements FreestyleSessionHandle {
     readonly id: string,
     private readonly env: Record<string, string>,
     private readonly signal: AbortSignal,
-    private readonly pollDelay: (signal: AbortSignal) => Promise<void>,
   ) {}
 
   asWorkerSandboxSession(): WorkerSandboxSession {
@@ -223,17 +220,13 @@ class FreestyleSession implements FreestyleSessionHandle {
     const startedAt = Date.now();
     const runId = randomUUID().replaceAll('-', '');
     const runDir = `/tmp/jardinero-${runId}`;
-    const stdoutPath = `${runDir}/stdout`;
-    const stderrPath = `${runDir}/stderr`;
-    const statusPath = `${runDir}/status`;
     const scriptPath = `${runDir}/run.sh`;
     const envPath = `${runDir}/env.sh`;
-    const unit = `jardinero-${runId.slice(0, 24)}`;
 
     const prepare = await this.vm.exec(
-      `mkdir -p ${shellQuote(runDir)} && touch ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} && chown -R ${WORKER_USER}:${WORKER_USER} ${shellQuote(runDir)}`,
+      `mkdir -p ${shellQuote(runDir)} && chown -R ${WORKER_USER}:${WORKER_USER} ${shellQuote(runDir)}`,
     );
-    assertFreestyleExecSucceeded(prepare, 'prepare streamed command');
+    assertFreestyleExecSucceeded(prepare, 'prepare PTY command');
     await this.vm.fs.writeFile(envPath, renderShellEnvironment(workerEnvironment(this.env)), {
       mode: 0o600,
     });
@@ -241,12 +234,10 @@ class FreestyleSession implements FreestyleSessionHandle {
       scriptPath,
       [
         '#!/bin/sh',
+        // Preserve pipe-like output despite the PTY: no input echo and no LF-to-CRLF conversion.
+        'stty -echo -onlcr',
         `set -a; . ${shellQuote(envPath)}; set +a`,
-        `sh -lc ${shellQuote(command)} >${shellQuote(stdoutPath)} 2>${shellQuote(stderrPath)}`,
-        'code=$?',
-        `printf '%s' "$code" >${shellQuote(`${statusPath}.tmp`)}`,
-        `mv ${shellQuote(`${statusPath}.tmp`)} ${shellQuote(statusPath)}`,
-        'exit "$code"',
+        `exec sh -lc ${shellQuote(command)}`,
         '',
       ].join('\n'),
       { mode: 0o700 },
@@ -254,50 +245,72 @@ class FreestyleSession implements FreestyleSessionHandle {
     const ownership = await this.vm.exec(
       `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(envPath)} ${shellQuote(scriptPath)}`,
     );
-    assertFreestyleExecSucceeded(ownership, 'prepare streamed command ownership');
+    assertFreestyleExecSucceeded(ownership, 'prepare PTY command ownership');
 
-    const launch = await this.vm.exec({
-      command:
-        `systemd-run --quiet --collect --unit=${shellQuote(unit)} ` +
-        `--uid=${shellQuote(WORKER_USER)} --gid=${shellQuote(WORKER_USER)} ` +
-        `--working-directory=${shellQuote(WORKER_HOME)} /bin/sh ${shellQuote(scriptPath)}`,
-      timeoutMs: 30_000,
-    });
-    assertFreestyleExecSucceeded(launch, 'start streamed command');
-
-    const stdout: Uint8Array[] = [];
-    const stderr: Uint8Array[] = [];
-    let stdoutOffset = 0;
-    let stderrOffset = 0;
-    const pump = async (isFinal: boolean): Promise<void> => {
-      const nextStdout = await readFileGrowth(this.vm, stdoutPath, stdoutOffset);
-      stdoutOffset += nextStdout.byteLength;
-      if (nextStdout.byteLength > 0) stdout.push(nextStdout);
-      if (nextStdout.byteLength > 0 || isFinal) {
-        onOutput?.({ data: nextStdout, isStderr: false, isFinal });
+    type PtyTerminal = { exitCode: number } | { error: Error };
+    const output: Uint8Array[] = [];
+    let terminal: PtyTerminal | undefined;
+    let wakeTerminal: ((value: PtyTerminal) => void) | undefined;
+    const finish = (value: PtyTerminal): void => {
+      if (terminal) return;
+      terminal = value;
+      wakeTerminal?.(value);
+    };
+    const waitForTerminal = (): Promise<PtyTerminal> =>
+      terminal
+        ? Promise.resolve(terminal)
+        : new Promise((resolve) => {
+            wakeTerminal = resolve;
+          });
+    let ptySession: PtySession | undefined;
+    const workerPty = this.vm.linuxUser(WORKER_USER).pty;
+    const abortHandler = (): void => {
+      try {
+        ptySession?.signal('sigkill');
+      } catch {
+        // VM deletion is the outer abort backstop; a closed socket needs no signal.
       }
-
-      const nextStderr = await readFileGrowth(this.vm, stderrPath, stderrOffset);
-      stderrOffset += nextStderr.byteLength;
-      if (nextStderr.byteLength > 0) stderr.push(nextStderr);
-      if (nextStderr.byteLength > 0 || isFinal) {
-        onOutput?.({ data: nextStderr, isStderr: true, isFinal });
-      }
+      finish({ error: new Error('Run aborted.') });
     };
 
-    while (!(await this.vm.fs.exists(statusPath))) {
+    try {
+      ptySession = await workerPty.open({
+        exec: `/bin/sh ${shellQuote(scriptPath)}`,
+        cols: 120,
+        rows: 30,
+        onData: (data) => {
+          // A PTY is one combined terminal stream, so it is exposed as stdout.
+          const chunk = data.slice();
+          output.push(chunk);
+          onOutput?.({ data: chunk, isStderr: false, isFinal: false });
+        },
+        onExit: (exitCode) => finish({ exitCode }),
+        onError: (error) => finish({ error: toError(error) }),
+        onClose: ({ code, reason }) =>
+          finish({
+            error: new Error(
+              `Freestyle PTY closed before command exit (code=${code}${reason ? `, reason=${reason}` : ''}).`,
+            ),
+          }),
+      });
+      this.signal.addEventListener('abort', abortHandler, { once: true });
       throwIfAborted(this.signal);
-      await pump(false);
-      await this.pollDelay(this.signal);
+
+      const completed = await waitForTerminal();
+      if ('error' in completed) throw completed.error;
+      onOutput?.({ data: new Uint8Array(), isStderr: false, isFinal: true });
+      const result: ExecResult = {
+        stdout: new TextDecoder().decode(concatBytes(output)),
+        stderr: '',
+        statusCode: completed.exitCode,
+      };
+      return freestyleExecResult(command, result, Date.now() - startedAt);
+    } finally {
+      this.signal.removeEventListener('abort', abortHandler);
+      if (ptySession) {
+        await workerPty.close(ptySession.sessionId).catch(() => undefined);
+      }
     }
-    await pump(true);
-    const exitCode = Number.parseInt(await this.vm.fs.readTextFile(statusPath), 10);
-    const result: ExecResult = {
-      stdout: new TextDecoder().decode(concatBytes(stdout)),
-      stderr: new TextDecoder().decode(concatBytes(stderr)),
-      statusCode: Number.isFinite(exitCode) ? exitCode : 1,
-    };
-    return freestyleExecResult(command, result, Date.now() - startedAt);
   }
 
   private async chownWorker(path: string): Promise<void> {
@@ -391,12 +404,6 @@ function assertFreestyleExecSucceeded(result: ExecResult, label: string): void {
   );
 }
 
-async function readFileGrowth(vm: Vm, path: string, offset: number): Promise<Uint8Array> {
-  const stat = await vm.fs.stat(path);
-  if (stat.size <= offset) return new Uint8Array();
-  return vm.fs.readFile(path, { offset, length: stat.size - offset });
-}
-
 async function streamToBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
@@ -459,4 +466,8 @@ function workerEnvironment(env: Record<string, string>): Record<string, string> 
 
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw new Error('Run aborted.');
+}
+
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }

@@ -4,7 +4,7 @@ Conventions for whoever edits this repository, human or agent. Codex reads `AGEN
 
 ## What Jardinero is
 
-A TypeScript/Node control plane for autonomous engineering agents. Every piece of work is an instance of one of five workflows, tracked in SQLite and executed in an ephemeral Tenki sandbox or Freestyle VM that runs Codex; Jardinero verifies what the agent produced and shows an operator what happened.
+A TypeScript/Node control plane for autonomous engineering agents. Every piece of work is an instance of one of five workflows, tracked in SQLite and executed in an ephemeral Tenki sandbox or Persistent Freestyle VM that runs Codex; Jardinero verifies what the agent produced and shows an operator what happened.
 
 The two words are not interchangeable: a **workflow** is one of the five state machines (`request_router`, `linear_implementer`, `fix_implementer`, `pr_maintainer`, `log_reviewer`) and the instance it advances; an **agent** is a seat that runs inside a sandbox (`sandbox_run.agent_name`, and the prompt it is given), and one workflow may dispatch several.
 

@@ -176,7 +176,7 @@ describe('FreestyleSandboxProvider.terminate', () => {
 });
 
 describe('Freestyle sandbox session execution', () => {
-  test('When an output sink is supplied then should stream both channels and return their result', async () => {
+  test('When an output sink is supplied then should stream the combined PTY channel and return its result', async () => {
     const fake = fakeVm({
       streamedStdout: '{"type":"thread.started"}\n',
       streamedStderr: 'note\n',
@@ -205,20 +205,21 @@ describe('Freestyle sandbox session execution', () => {
     assert.equal(result.exitCode, 0);
     assert.ok(result.stdout instanceof Uint8Array);
     assert.ok(result.stderr instanceof Uint8Array);
-    assert.equal(new TextDecoder().decode(result.stdout), '{"type":"thread.started"}\n');
-    assert.equal(new TextDecoder().decode(result.stderr), 'note\n');
+    assert.equal(new TextDecoder().decode(result.stdout), '{"type":"thread.started"}\nnote\n');
+    assert.equal(new TextDecoder().decode(result.stderr), '');
     assert.deepEqual(output, [
-      { text: '{"type":"thread.started"}\n', stderr: false, final: true },
-      { text: 'note\n', stderr: true, final: true },
+      { text: '{"type":"thread.started"}\n', stderr: false, final: false },
+      { text: 'note\n', stderr: false, final: false },
+      { text: '', stderr: false, final: true },
     ]);
-    assert.ok(fake.execCommands.some((command) => command.includes('systemd-run')));
+    assert.ok(fake.ptyCommands.some((command) => command.includes('/run.sh')));
+    assert.equal(fake.ptyCloseCalls, 1);
   });
 
   test('When a streamed command is still running then should emit incremental and final chunks', async () => {
     const fake = fakeVm({
       streamedStdout: 'first\n',
       streamedStderr: 'warning\n',
-      streamPollsBeforeComplete: 1,
     });
     const session = await providerWith(fake).create({}, new AbortController().signal);
     const output: Array<{ text: string; stderr: boolean; final: boolean }> = [];
@@ -237,10 +238,66 @@ describe('Freestyle sandbox session execution', () => {
     assert.notEqual(typeof result, 'string');
     assert.deepEqual(output, [
       { text: 'first\n', stderr: false, final: false },
-      { text: 'warning\n', stderr: true, final: false },
+      { text: 'warning\n', stderr: false, final: false },
       { text: '', stderr: false, final: true },
-      { text: '', stderr: true, final: true },
     ]);
+  });
+
+  test('When a PTY command exits unsuccessfully then should return its exit code', async () => {
+    const fake = fakeVm({ streamedStdout: 'failed\n', ptyExitCode: 23 });
+    const session = await providerWith(fake).create({}, new AbortController().signal);
+
+    assert.ok(session.exec);
+    const result = await session.exec('failing-command', { onOutput: () => undefined });
+
+    assert.notEqual(typeof result, 'string');
+    if (typeof result === 'string') return;
+    assert.equal(result.status, 'FAILED');
+    assert.equal(result.exitCode, 23);
+    assert.ok(result.stdout instanceof Uint8Array);
+    assert.equal(new TextDecoder().decode(result.stdout), 'failed\n');
+    assert.equal(fake.ptyCloseCalls, 1);
+  });
+
+  test('When a PTY reports an error then should reject and close the session', async () => {
+    const fake = fakeVm({ ptyError: 'socket lost' });
+    const session = await providerWith(fake).create({}, new AbortController().signal);
+
+    assert.ok(session.exec);
+    await assert.rejects(
+      session.exec('long-command', { onOutput: () => undefined }),
+      /socket lost/,
+    );
+    assert.equal(fake.ptyCloseCalls, 1);
+  });
+
+  test('When a PTY closes before command exit then should reject with the close reason', async () => {
+    const fake = fakeVm({
+      ptyCloseBeforeExit: { code: 1006, reason: 'network lost' },
+    });
+    const session = await providerWith(fake).create({}, new AbortController().signal);
+
+    assert.ok(session.exec);
+    await assert.rejects(
+      session.exec('long-command', { onOutput: () => undefined }),
+      /code=1006, reason=network lost/,
+    );
+    assert.equal(fake.ptyCloseCalls, 1);
+  });
+
+  test('When a run is aborted while its PTY is active then should kill and close the session', async () => {
+    const controller = new AbortController();
+    const fake = fakeVm({ holdPtyOpen: true });
+    const session = await providerWith(fake).create({}, controller.signal);
+
+    assert.ok(session.exec);
+    const running = session.exec('long-command', { onOutput: () => undefined });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+
+    await assert.rejects(running, /Run aborted/);
+    assert.deepEqual(fake.ptySignals, ['sigkill']);
+    assert.equal(fake.ptyCloseCalls, 1);
   });
 
   test('When using the session facade then should execute short commands and preserve worker-owned files', async () => {
@@ -285,7 +342,7 @@ describe('Freestyle sandbox session execution', () => {
       directory: '/home/tenki/workspace/repo',
     });
 
-    const launch = fake.execCommands.find((command) => command.includes('systemd-run'));
+    const launch = fake.ptyCommands[0];
     assert.ok(launch);
     const scriptPath = launch.match(/\/tmp\/jardinero-[a-f0-9]+\/run\.sh/)?.[0];
     assert.ok(scriptPath);
@@ -389,6 +446,9 @@ interface FakeVm extends Vm {
   resizeCalls: Array<Record<string, number>>;
   deleteCalls: number;
   execCommands: string[];
+  ptyCommands: string[];
+  ptySignals: string[];
+  ptyCloseCalls: number;
 }
 
 function providerWith(fake: FakeVm, onCreate: () => void = () => undefined) {
@@ -408,7 +468,6 @@ function providerWith(fake: FakeVm, onCreate: () => void = () => undefined) {
           },
         },
       }),
-      pollDelay: async () => undefined,
     },
   );
 }
@@ -421,7 +480,10 @@ function fakeVm(
     resizeError?: Error;
     streamedStdout?: string;
     streamedStderr?: string;
-    streamPollsBeforeComplete?: number;
+    ptyExitCode?: number;
+    ptyError?: unknown;
+    ptyCloseBeforeExit?: { code: number; reason: string };
+    holdPtyOpen?: boolean;
   } = {},
 ): FakeVm {
   const files = new Map<string, Uint8Array>();
@@ -429,9 +491,10 @@ function fakeVm(
   const decoder = new TextDecoder();
   const resizeCalls: Array<Record<string, number>> = [];
   const execCommands: string[] = [];
+  const ptyCommands: string[] = [];
+  const ptySignals: string[] = [];
   let deleteCalls = 0;
-  let pendingStatusPath: string | undefined;
-  let streamPollsRemaining = options.streamPollsBeforeComplete ?? 0;
+  let ptyCloseCalls = 0;
   const fs = {
     writeFile: async (path: string, content: string | Uint8Array) => {
       files.set(path, typeof content === 'string' ? encoder.encode(content) : content);
@@ -455,22 +518,20 @@ function fakeVm(
       });
     },
     mkdir: async () => undefined,
-    exists: async (path: string) => {
-      if (path === pendingStatusPath && streamPollsRemaining > 0) {
-        streamPollsRemaining -= 1;
-        return false;
-      }
-      if (path === pendingStatusPath && !files.has(path)) files.set(path, encoder.encode('0'));
-      return files.has(path);
-    },
+    exists: async (path: string) => files.has(path),
     stat: async (path: string) => ({ size: files.get(path)?.byteLength ?? 0 }),
   };
   const vm = {
     fs,
     resizeCalls,
     execCommands,
+    ptyCommands,
+    ptySignals,
     get deleteCalls() {
       return deleteCalls;
+    },
+    get ptyCloseCalls() {
+      return ptyCloseCalls;
     },
     resize: async (resize: Record<string, number>) => {
       resizeCalls.push(resize);
@@ -479,17 +540,49 @@ function fakeVm(
     delete: async () => {
       deleteCalls += 1;
     },
+    linuxUser: () => ({
+      pty: {
+        open: async (request: {
+          exec?: string;
+          onData?: (data: Uint8Array) => void;
+          onExit?: (exitCode: number) => void;
+          onError?: (error: unknown) => void;
+          onClose?: (info: { code: number; reason: string }) => void;
+        }) => {
+          ptyCommands.push(request.exec ?? '');
+          if (!options.holdPtyOpen) {
+            queueMicrotask(() => {
+              if (options.ptyError !== undefined) {
+                request.onError?.(options.ptyError);
+                return;
+              }
+              if (options.ptyCloseBeforeExit) {
+                request.onClose?.(options.ptyCloseBeforeExit);
+                return;
+              }
+              const stdout = encoder.encode(options.streamedStdout ?? '');
+              const stderr = encoder.encode(options.streamedStderr ?? '');
+              if (stdout.byteLength > 0) request.onData?.(stdout);
+              if (stderr.byteLength > 0) request.onData?.(stderr);
+              request.onExit?.(options.ptyExitCode ?? 0);
+            });
+          }
+          return {
+            sessionId: 7,
+            signal: (signal: string) => {
+              ptySignals.push(signal);
+            },
+          };
+        },
+        close: async () => {
+          ptyCloseCalls += 1;
+          return { sessionId: 7 };
+        },
+      },
+    }),
     exec: async (request: string | { command: string }) => {
       const command = typeof request === 'string' ? request : request.command;
       execCommands.push(command);
-      if (command.includes('systemd-run')) {
-        const runDir = command.match(/\/tmp\/jardinero-[a-f0-9]+/)?.[0];
-        assert.ok(runDir);
-        files.set(`${runDir}/stdout`, encoder.encode(options.streamedStdout ?? ''));
-        files.set(`${runDir}/stderr`, encoder.encode(options.streamedStderr ?? ''));
-        pendingStatusPath = `${runDir}/status`;
-        if (streamPollsRemaining === 0) files.set(pendingStatusPath, encoder.encode('0'));
-      }
       return { stdout: '', stderr: '', statusCode: 0 };
     },
   } as unknown as FakeVm;

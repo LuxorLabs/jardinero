@@ -300,13 +300,14 @@ function tenkiWorkspaceCheck(config: AppConfig, env: NodeJS.ProcessEnv): Preflig
       detail: `${config.worker.tenkiWorkspaceIdEnv} is configured.`,
     };
   }
-  // Not a warning: a workspace API key carries its workspace as its own identity,
-  // which is the ordinary case. Only a service token spans workspaces and needs
-  // one named.
+  // Not a warning, because the ordinary case is correct without it: a workspace
+  // API key carries its workspace as its own identity. The credential type cannot
+  // be told apart here -- both kinds are prefixed tk_, and only whoAmI() knows --
+  // so the detail names the case that does need it rather than asserting one.
   return {
     name: 'tenki_workspace',
     status: 'ok',
-    detail: `No ${config.worker.tenkiWorkspaceIdEnv}; the Tenki credential's own workspace is used.`,
+    detail: `No ${config.worker.tenkiWorkspaceIdEnv}; a workspace API key resolves its own workspace, but a service token spanning workspaces needs this set.`,
   };
 }
 

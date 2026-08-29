@@ -17,6 +17,8 @@ export const SANDBOX_METADATA = {
 // Workspace scope for the calls that accept one. A workspace API key carries its
 // workspace as its own identity, so the server infers the scope and this stays
 // unset; a service token can span workspaces and has to name the one it means.
+// Which kind the credential is cannot be decided here -- both are prefixed tk_ --
+// so an unset value is passed through as "no scope" rather than guessed at.
 export function resolveWorkspaceScope(
   config: AppConfig,
   env: NodeJS.ProcessEnv,

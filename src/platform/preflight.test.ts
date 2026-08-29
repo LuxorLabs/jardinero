@@ -124,15 +124,16 @@ describe('runPreflight', () => {
       wantChecks: { tenki_sdk: 'ok', tenki_auth: 'ok' },
     },
     {
-      // Both tenki credentials warn rather than error: the SDK can still fall back
-      // to ambient Capsule auth, and to a single-project auth.
-      name: 'When the tenki key and project are missing then should warn on both',
+      // Both tenki checks warn rather than error: the SDK can still fall back to
+      // ambient Capsule auth, and the workspace check cannot reach whoAmI() to
+      // learn whether the credential resolves one on its own.
+      name: 'When the tenki key and workspace are missing then should warn on both',
       configure: (config) => {
         config.worker.runner = 'tenki';
         config.worker.codexAuthMode = 'access_token';
       },
       env: { ORCHESTRATOR_ADMIN_TOKEN: 'admin', CODEX_ACCESS_TOKEN: 'x' },
-      wantChecks: { tenki_auth: 'warning', tenki_workspace: 'ok' },
+      wantChecks: { tenki_auth: 'warning', tenki_workspace: 'warning' },
     },
     {
       name: 'When the tenki workspace is configured then should report it',

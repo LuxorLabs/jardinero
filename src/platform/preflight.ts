@@ -1,6 +1,7 @@
 import type { AppConfig } from '../config.js';
 import { grafanaMcpRequiredEnvNames } from '../adapters/grafana/grafana-mcp-auth.js';
 import { hostCodexAuthExists } from '../adapters/codex/codex-auth.js';
+import { buildTenkiClientOptions } from '../adapters/tenki/tenki-scope.js';
 
 export type PreflightStatus = 'ok' | 'warning' | 'error';
 
@@ -134,7 +135,7 @@ export async function runPreflight(config: AppConfig, env = process.env): Promis
   if (config.worker.runner === 'tenki') {
     checks.push(await tenkiSdkCheck());
     checks.push(tenkiAuthCheck(config, env));
-    checks.push(tenkiWorkspaceCheck(config, env));
+    checks.push(await tenkiWorkspaceCheck(config, env));
     checks.push(codexAuthCheck(config, env));
     if (config.workflows.logReviewer.enabled && config.mcp.grafana.enabled) {
       for (const envName of grafanaMcpRequiredEnvNames(config)) {
@@ -292,23 +293,47 @@ function tenkiAuthCheck(config: AppConfig, env: NodeJS.ProcessEnv): PreflightChe
   };
 }
 
-function tenkiWorkspaceCheck(config: AppConfig, env: NodeJS.ProcessEnv): PreflightCheck {
-  if (env[config.worker.tenkiWorkspaceIdEnv]) {
+async function tenkiWorkspaceCheck(
+  config: AppConfig,
+  env: NodeJS.ProcessEnv,
+): Promise<PreflightCheck> {
+  const name = 'tenki_workspace';
+  const key = config.worker.tenkiWorkspaceIdEnv;
+  if (env[key]) {
+    return { name, status: 'ok', detail: `${key} is configured.` };
+  }
+
+  // Nothing needs configuring when the credential resolves one workspace by
+  // itself, which a workspace API key always does. A service token can span
+  // several and is indistinguishable from here -- both are prefixed tk_ -- so ask
+  // rather than assume, and report counts only: this is served unauthenticated.
+  try {
+    const sdk = await import('@tenkicloud/sandbox');
+    const identity = await new sdk.TenkiSandbox(buildTenkiClientOptions(config, env)).whoAmI();
+    const reachable = identity.workspaces?.length ?? 0;
+    if (reachable === 1) {
+      return {
+        name,
+        status: 'ok',
+        detail: `No ${key}; the credential resolves exactly one workspace.`,
+      };
+    }
     return {
-      name: 'tenki_workspace',
-      status: 'ok',
-      detail: `${config.worker.tenkiWorkspaceIdEnv} is configured.`,
+      name,
+      status: reachable === 0 ? 'error' : 'warning',
+      detail:
+        reachable === 0
+          ? `No ${key}, and the credential reaches no workspace.`
+          : `No ${key}, and the credential reaches ${reachable} workspaces; sandboxes would land in whichever one Tenki picks.`,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      name,
+      status: 'warning',
+      detail: `Could not check which workspaces the credential reaches: ${message}`,
     };
   }
-  // Not a warning, because the ordinary case is correct without it: a workspace
-  // API key carries its workspace as its own identity. The credential type cannot
-  // be told apart here -- both kinds are prefixed tk_, and only whoAmI() knows --
-  // so the detail names the case that does need it rather than asserting one.
-  return {
-    name: 'tenki_workspace',
-    status: 'ok',
-    detail: `No ${config.worker.tenkiWorkspaceIdEnv}; a workspace API key resolves its own workspace, but a service token spanning workspaces needs this set.`,
-  };
 }
 
 function codexAuthCheck(config: AppConfig, env: NodeJS.ProcessEnv): PreflightCheck {

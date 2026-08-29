@@ -19,9 +19,6 @@ describe('TenkiWorkerRunner', () => {
 
     const env: NodeJS.ProcessEnv = {};
     env[config.worker.githubTokenEnv] = 'gh-token';
-    // Set the project id so resolveTenkiScope short-circuits and never calls the
-    // (faked) sandbox's whoAmI.
-    env[config.worker.tenkiProjectIdEnv] = 'project-1';
     env[config.worker.tenkiApiKeyEnv] = 'tenki-key';
     if (config.worker.codexAuthMode === 'access_token') {
       env[config.worker.codexAccessTokenEnv] = 'codex-token';

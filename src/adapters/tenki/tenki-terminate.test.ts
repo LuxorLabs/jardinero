@@ -16,9 +16,10 @@ describe('terminateTenkiSessionInChild', () => {
   }> = [
     {
       // A closed port proves the base url reached the SDK, and getting as far as
-      // connecting proves the token did too; the SDK rejects a missing one first.
+      // connecting proves the token did too; the SDK rejects a missing one first,
+      // and rejects any token not prefixed tk_ before it opens a connection.
       name: 'When the auth token and base url are given then should pass both to the child',
-      options: { authToken: 'token-from-options', baseUrl: 'http://127.0.0.1:1' },
+      options: { authToken: 'tk_token-from-options', baseUrl: 'http://127.0.0.1:1' },
       wantError: /ECONNREFUSED 127\.0\.0\.1:1/,
     },
     {

@@ -175,7 +175,6 @@ export interface AppConfig {
     codexBypassSandbox: boolean;
     tenkiApiKeyEnv: string;
     tenkiApiUrlEnv: string;
-    tenkiProjectIdEnv: string;
     tenkiWorkspaceIdEnv: string;
     githubTokenEnv: string;
     gitAuthorName: string;
@@ -508,7 +507,6 @@ export function loadConfig(
       codexBypassSandbox: booleanAt(raw, ['worker', 'codex_bypass_sandbox'], true),
       tenkiApiKeyEnv: stringAt(raw, ['worker', 'tenki_api_key_env'], 'TENKI_API_KEY'),
       tenkiApiUrlEnv: stringAt(raw, ['worker', 'tenki_api_url_env'], 'TENKI_API_URL'),
-      tenkiProjectIdEnv: stringAt(raw, ['worker', 'tenki_project_id_env'], 'TENKI_PROJECT_ID'),
       tenkiWorkspaceIdEnv: stringAt(
         raw,
         ['worker', 'tenki_workspace_id_env'],

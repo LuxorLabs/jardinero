@@ -5,7 +5,7 @@ import type { SandboxRunState } from '../../store/types.js';
 import {
   buildTenkiClientOptions,
   JARDINERO_SANDBOX_APP,
-  resolveTenkiScope,
+  resolveWorkspaceScope,
   SANDBOX_METADATA,
 } from './tenki-scope.js';
 import { loadTenkiSdk } from '../../orchestrator/worker/tenki-worker.js';
@@ -27,10 +27,6 @@ const TERMINAL_RUN_STATUSES: ReadonlySet<SandboxRunState> = new Set([
 
 // Session states that are already gone or on their way out; nothing left to reap.
 const TERMINAL_SESSION_STATES: ReadonlySet<string> = new Set(['TERMINATING', 'TERMINATED']);
-
-// The page size listProjectSandboxes uses; the SDK does not paginate past it, so
-// a listed count at the cap means there may be more sandboxes we did not see.
-const LIST_PAGE_LIMIT = 100;
 
 export type ReapClassification =
   | 'reap_terminal_run'
@@ -111,15 +107,6 @@ export async function reconcileTenkiSandboxes(
     failed: 0,
     byClass: emptyByClass(),
   };
-
-  if (sessions.length >= LIST_PAGE_LIMIT) {
-    // Do not let a full page read as "swept everything"; the tail waits for the
-    // next cycle. Surface it so a persistent backlog is visible to operators.
-    log.warn('sandbox listing hit the page limit; some sandboxes may be unseen this cycle', {
-      listed: sessions.length,
-      page_limit: LIST_PAGE_LIMIT,
-    });
-  }
 
   const toReap: ReapableSessionHandle[] = [];
   for (const session of sessions) {
@@ -211,8 +198,7 @@ export function createTenkiReaper(
     (async (): Promise<ReapableSessionHandle[]> => {
       const sdk = await loadSdk();
       const sandbox = new sdk.TenkiSandbox(buildTenkiClientOptions(config, env));
-      const scope = await resolveTenkiScope(config, env, sandbox);
-      return sandbox.listProjectSandboxes(scope.projectId);
+      return sandbox.list(resolveWorkspaceScope(config, env));
     });
 
   return {

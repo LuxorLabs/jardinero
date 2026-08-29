@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { loadConfig, resolveSeatModel, resolveWorkerImage } from '../src/config.js';
 import { forwardHostCodexAuthToSandbox } from '../src/adapters/codex/codex-auth.js';
 import { terminateTenkiSessionInChild } from '../src/adapters/tenki/tenki-terminate.js';
-import { applyTenkiScope, resolveTenkiScope } from '../src/adapters/tenki/tenki-scope.js';
+import { resolveWorkspaceScope } from '../src/adapters/tenki/tenki-scope.js';
 import {
   assertExecSucceeded,
   normalizeRemotePath,
@@ -33,7 +33,7 @@ let completed = false;
 
 try {
   const createOptions = createSessionOptions();
-  applyTenkiScope(createOptions, await resolveTenkiScope(config, process.env, sandbox));
+  Object.assign(createOptions, resolveWorkspaceScope(config, process.env));
   console.log('creating Tenki sandbox session');
   console.log(redactedJson(createOptions));
   session = await sandbox.createAndWait(createOptions);

@@ -33,7 +33,7 @@ describe('runPreflight', () => {
       env: { ORCHESTRATOR_ADMIN_TOKEN: 'admin' },
       wantChecks: { worker_runner: 'ok', admin_auth: 'ok', grafana_mcp: 'ok' },
       wantStatus: 'ok',
-      wantAbsent: ['tenki_sdk', 'tenki_auth', 'tenki_project', 'codex_auth'],
+      wantAbsent: ['tenki_sdk', 'tenki_auth', 'tenki_workspace', 'codex_auth'],
     },
     {
       name: 'When the admin token is missing then should return error',
@@ -132,10 +132,10 @@ describe('runPreflight', () => {
         config.worker.codexAuthMode = 'access_token';
       },
       env: { ORCHESTRATOR_ADMIN_TOKEN: 'admin', CODEX_ACCESS_TOKEN: 'x' },
-      wantChecks: { tenki_auth: 'warning', tenki_project: 'warning' },
+      wantChecks: { tenki_auth: 'warning', tenki_workspace: 'ok' },
     },
     {
-      name: 'When the tenki project is configured then should report it',
+      name: 'When the tenki workspace is configured then should report it',
       configure: (config) => {
         config.worker.runner = 'tenki';
         config.worker.codexAuthMode = 'access_token';
@@ -143,10 +143,10 @@ describe('runPreflight', () => {
       env: {
         ORCHESTRATOR_ADMIN_TOKEN: 'admin',
         TENKI_API_KEY: 'tenki',
-        TENKI_PROJECT_ID: 'project-1',
+        TENKI_WORKSPACE_ID: 'workspace-1',
         CODEX_ACCESS_TOKEN: 'x',
       },
-      wantChecks: { tenki_project: 'ok' },
+      wantChecks: { tenki_workspace: 'ok' },
     },
     {
       // Nothing warns when every credential is present, and that is the only path
@@ -461,7 +461,7 @@ describe('what the report is safe to serve', () => {
     const values = {
       ORCHESTRATOR_ADMIN_TOKEN: 'admin-secret',
       TENKI_API_KEY: 'tenki-secret',
-      TENKI_PROJECT_ID: 'project-secret',
+      TENKI_WORKSPACE_ID: 'workspace-secret',
       OPENAI_API_KEY: 'sk-secret',
       LINEAR_CLIENT_ID: 'linear-id-secret',
       LINEAR_CLIENT_SECRET: 'linear-secret',

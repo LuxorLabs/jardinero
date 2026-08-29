@@ -145,7 +145,6 @@ describe('loadConfig', () => {
           codexBypassSandbox: true,
           tenkiApiKeyEnv: 'TENKI_API_KEY',
           tenkiApiUrlEnv: 'TENKI_API_URL',
-          tenkiProjectIdEnv: 'TENKI_PROJECT_ID',
           tenkiWorkspaceIdEnv: 'TENKI_WORKSPACE_ID',
           githubTokenEnv: 'GITHUB_TOKEN',
           gitAuthorName: '',

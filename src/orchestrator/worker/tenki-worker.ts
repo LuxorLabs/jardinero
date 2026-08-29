@@ -40,10 +40,9 @@ import {
 import { extractOpenedPullRequestUrl, verifySideEffects } from '../../workflows/side-effects.js';
 import { terminateTenkiSessionInChild } from '../../adapters/tenki/tenki-terminate.js';
 import {
-  applyTenkiScope,
   buildTenkiClientOptions,
   JARDINERO_SANDBOX_APP,
-  resolveTenkiScope,
+  resolveWorkspaceScope,
   SANDBOX_METADATA,
 } from '../../adapters/tenki/tenki-scope.js';
 import {
@@ -157,7 +156,7 @@ export class TenkiWorkerRunner implements SandboxRunner {
     const sandbox = new sdk.TenkiSandbox(this.sandboxOptions());
 
     const createOptions = this.createOptions(context);
-    applyTenkiScope(createOptions, await resolveTenkiScope(this.config, this.env, sandbox));
+    Object.assign(createOptions, resolveWorkspaceScope(this.config, this.env));
     let session: TenkiSession | undefined;
     let terminatePromise: Promise<void> | undefined;
     const trackSession = (nextSession: TenkiSession): void => {

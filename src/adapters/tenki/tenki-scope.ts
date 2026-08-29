@@ -1,7 +1,7 @@
 import type { AppConfig } from '../../config.js';
 
 // Marks a sandbox as created by Jardinero. The reaper only ever touches sandboxes
-// carrying this so a shared Tenki project's foreign sandboxes are never reaped.
+// carrying this, so foreign sandboxes sharing the workspace are never reaped.
 export const JARDINERO_SANDBOX_APP = 'jardinero';
 
 // Metadata keys stamped on every worker sandbox and read back by the reaper.
@@ -14,74 +14,15 @@ export const SANDBOX_METADATA = {
   workflowInstance: 'workflow_instance',
 } as const;
 
-export interface TenkiScope {
-  workspaceId?: string;
-  projectId: string;
-}
-
-interface TenkiIdentityProject {
-  id: string;
-  name?: string;
-}
-
-interface TenkiIdentityWorkspace {
-  id: string;
-  name?: string;
-  projects: TenkiIdentityProject[];
-}
-
-interface TenkiIdentity {
-  workspaces: TenkiIdentityWorkspace[];
-}
-
-export interface TenkiScopeClient {
-  whoAmI(): Promise<TenkiIdentity>;
-}
-
-export async function resolveTenkiScope(
+// Workspace scope for the calls that accept one. A workspace API key carries its
+// workspace as its own identity, so the server infers the scope and this stays
+// unset; a service token can span workspaces and has to name the one it means.
+export function resolveWorkspaceScope(
   config: AppConfig,
   env: NodeJS.ProcessEnv,
-  sandbox: TenkiScopeClient,
-): Promise<TenkiScope> {
-  const configuredProjectId = env[config.worker.tenkiProjectIdEnv]?.trim();
-  const configuredWorkspaceId = env[config.worker.tenkiWorkspaceIdEnv]?.trim();
-  if (configuredProjectId) {
-    return {
-      projectId: configuredProjectId,
-      workspaceId: configuredWorkspaceId || undefined,
-    };
-  }
-
-  const identity = await sandbox.whoAmI();
-  const projects = identity.workspaces.flatMap((workspace) =>
-    workspace.projects.map((project) => ({
-      workspaceId: workspace.id,
-      workspaceName: workspace.name,
-      projectId: project.id,
-      projectName: project.name,
-    })),
-  );
-
-  if (projects.length === 1) {
-    return {
-      workspaceId: configuredWorkspaceId || projects[0]!.workspaceId,
-      projectId: projects[0]!.projectId,
-    };
-  }
-
-  const available = projects
-    .map((project) => `${project.projectName ?? '<unnamed>'} (${project.projectId})`)
-    .join(', ');
-  throw new Error(
-    projects.length === 0
-      ? `Missing ${config.worker.tenkiProjectIdEnv}; Tenki auth returned no projects.`
-      : `Missing ${config.worker.tenkiProjectIdEnv}; Tenki auth has ${projects.length} projects: ${available}.`,
-  );
-}
-
-export function applyTenkiScope(options: Record<string, unknown>, scope: TenkiScope): void {
-  options.projectId = scope.projectId;
-  if (scope.workspaceId) options.workspaceId = scope.workspaceId;
+): { workspaceId?: string } {
+  const workspaceId = env[config.worker.tenkiWorkspaceIdEnv]?.trim();
+  return workspaceId ? { workspaceId } : {};
 }
 
 // Client-construction options for `new TenkiSandbox(...)`: auth token and, when

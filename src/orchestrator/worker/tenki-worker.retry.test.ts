@@ -1146,7 +1146,6 @@ function fakeConfig(): AppConfig {
 function fakeEnv(config: AppConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   env[config.worker.githubTokenEnv] = 'gh-token';
-  env[config.worker.tenkiProjectIdEnv] = 'project-1';
   env[config.worker.tenkiApiKeyEnv] = 'tenki-key';
   env[config.worker.codexApiKeyEnv] = 'codex-key';
   return env;

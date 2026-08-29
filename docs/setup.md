@@ -73,7 +73,7 @@ Sign up at [Tenki](https://tenki.cloud), create an API key, and install the CLI;
 | Variable | What to put in it |
 |---|---|
 | `TENKI_API_KEY` | Your API key. |
-| `TENKI_PROJECT_ID` | Required when your account reaches more than one project. With exactly one, the runner selects it on its own. |
+| `TENKI_WORKSPACE_ID` | Only for a service token that spans workspaces; a workspace API key needs nothing here. |
 
 **Check it.** With the variables exported, the CLI answers for the key:
 

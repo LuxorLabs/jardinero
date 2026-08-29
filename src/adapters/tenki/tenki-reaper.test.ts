@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { loadConfig } from '../../config.js';
-import type { Logger } from '../../platform/logger.js';
 import type { SandboxRunState } from '../../store/types.js';
 import {
   classifySandboxForReap,
@@ -233,28 +232,6 @@ describe('reconcileTenkiSandboxes', () => {
       process.removeListener('unhandledRejection', onUnhandled);
     }
   });
-
-  test('When listing hits the page limit then should warn', async () => {
-    const closed: string[] = [];
-    // 100 unowned sandboxes: nothing to reap, but a full page must not read as
-    // "swept everything".
-    const sessions = Array.from({ length: 100 }, (_unused, index) =>
-      fakeSession(`s${index}`, { app: 'jardinero', run_id: `peer-${index}` }, closed),
-    );
-    const { log, warns } = recordingLogger();
-
-    const summary = await reconcileTenkiSandboxes({
-      listSessions: async () => sessions,
-      lookupRunStatus: () => undefined,
-      closeTimeoutMs: 1_000,
-      log,
-    });
-
-    assert.equal(summary.reaped, 0);
-    assert.equal(summary.byClass.skip_unowned_run, 100);
-    assert.equal(warns.length, 1);
-    assert.match(warns[0], /page limit/);
-  });
 });
 
 describe('createTenkiReaper', () => {
@@ -330,23 +307,4 @@ function fakeSession(
       if (closeBehavior === 'hang') await new Promise(() => {});
     },
   };
-}
-
-function recordingLogger(): { log: Logger; warns: string[]; infos: string[] } {
-  const warns: string[] = [];
-  const infos: string[] = [];
-  const log: Logger = {
-    debug() {},
-    info(message) {
-      infos.push(message);
-    },
-    warn(message) {
-      warns.push(message);
-    },
-    error() {},
-    child() {
-      return log;
-    },
-  };
-  return { log, warns, infos };
 }

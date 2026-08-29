@@ -134,7 +134,7 @@ export async function runPreflight(config: AppConfig, env = process.env): Promis
   if (config.worker.runner === 'tenki') {
     checks.push(await tenkiSdkCheck());
     checks.push(tenkiAuthCheck(config, env));
-    checks.push(tenkiProjectCheck(config, env));
+    checks.push(tenkiWorkspaceCheck(config, env));
     checks.push(codexAuthCheck(config, env));
     if (config.workflows.logReviewer.enabled && config.mcp.grafana.enabled) {
       for (const envName of grafanaMcpRequiredEnvNames(config)) {
@@ -292,18 +292,21 @@ function tenkiAuthCheck(config: AppConfig, env: NodeJS.ProcessEnv): PreflightChe
   };
 }
 
-function tenkiProjectCheck(config: AppConfig, env: NodeJS.ProcessEnv): PreflightCheck {
-  if (env[config.worker.tenkiProjectIdEnv]) {
+function tenkiWorkspaceCheck(config: AppConfig, env: NodeJS.ProcessEnv): PreflightCheck {
+  if (env[config.worker.tenkiWorkspaceIdEnv]) {
     return {
-      name: 'tenki_project',
+      name: 'tenki_workspace',
       status: 'ok',
-      detail: `${config.worker.tenkiProjectIdEnv} is configured.`,
+      detail: `${config.worker.tenkiWorkspaceIdEnv} is configured.`,
     };
   }
+  // Not a warning: a workspace API key carries its workspace as its own identity,
+  // which is the ordinary case. Only a service token spans workspaces and needs
+  // one named.
   return {
-    name: 'tenki_project',
-    status: 'warning',
-    detail: `No ${config.worker.tenkiProjectIdEnv}; worker will auto-select only if Tenki auth has exactly one project.`,
+    name: 'tenki_workspace',
+    status: 'ok',
+    detail: `No ${config.worker.tenkiWorkspaceIdEnv}; the Tenki credential's own workspace is used.`,
   };
 }
 

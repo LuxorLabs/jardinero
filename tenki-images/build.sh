@@ -17,7 +17,6 @@
 #
 # Env:
 #   TENKI_API_KEY         required
-#   TENKI_PROJECT_ID      required
 #   TENKI_WORKSPACE_SLUG  optional   -> registry prefix; derived from the session
 #   RECIPES_DIR           optional   -> where the recipes live (default: recipes/)
 #   CODEX_VERSION         optional   -> Codex CLI to bake (default: latest).
@@ -135,7 +134,6 @@ fi
 need tenki
 need jq
 [ -n "${TENKI_API_KEY:-}" ] || die "TENKI_API_KEY is required"
-[ -n "${TENKI_PROJECT_ID:-}" ] || die "TENKI_PROJECT_ID is required"
 
 # Resolve a GitHub token only when we actually need to clone for the canary.
 gh_token=""

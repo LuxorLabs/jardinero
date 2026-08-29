@@ -34,7 +34,6 @@ This is step 4 of [`../docs/setup.md`](../docs/setup.md), which is where it sits
 
 ```bash
 export TENKI_API_KEY=...
-export TENKI_PROJECT_ID=...
 # The workspace slug is derived from the authenticated session; set
 # TENKI_WORKSPACE_SLUG only to override it.
 

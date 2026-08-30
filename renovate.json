@@ -19,12 +19,12 @@
   },
   "packageRules": [
     {
-      "description": "Manage github-actions SHA pins manually. Renovate opening a digest-bump PR runs CI with the new SHA — if upstream's tag has been hijacked, secrets are exfiltrated before we even review the PR. Same rationale as the other repositories; the pins here need a periodic manual sweep, because nothing will remind you.",
+      "description": "Manage github-actions SHA pins manually; a digest-bump PR would run CI with the new SHA before anyone reviews it.",
       "matchManagers": ["github-actions"],
       "enabled": false
     },
     {
-      "description": "Hold Node on major 24. .nvmrc is the single source for both CI and the published image's base tag (publish-image.yml derives NODE_VERSION from it), and Dockerfile.prod carries its own ARG default that has to move with it. A major bump is a deliberate change across all three, not a dependency PR. Widen this when you are ready to move.",
+      "description": "Hold Node on major 24; .nvmrc, publish-image.yml, and Dockerfile.prod have to move together.",
       "matchPackageNames": ["node"],
       "allowedVersions": "/^24(\\.|-|$)/"
     },
@@ -42,12 +42,12 @@
     },
     {
       "groupName": "react",
-      "matchPackageNames": [
-        "/^react$/",
-        "/^react-dom$/",
-        "/^@types/react($|-)/",
-        "/^@vitejs/plugin-react$/"
-      ]
+      "matchPackageNames": ["/^react$/", "/^react-dom$/", "/^@types/react($|-)/"]
+    },
+    {
+      "description": "vite and its plugins move together; @vitejs/plugin-react v6 requires vite ^8.",
+      "groupName": "vite",
+      "matchPackageNames": ["/^vite$/", "/^@vitejs//"]
     },
     {
       "groupName": "react UI ecosystem",

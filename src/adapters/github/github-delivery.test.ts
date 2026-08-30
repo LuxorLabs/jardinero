@@ -224,7 +224,10 @@ describe('handleGitHubDelivery', () => {
         assert.equal(events.at(0)?.checksAreRed, c.want.checksAreRed);
       }
       if (c.want.headBranch !== undefined) {
-        assert.equal((events.at(0)?.ref as { headBranch?: string }).headBranch, c.want.headBranch);
+        assert.equal(
+          (events.at(0)?.ref as { headBranch?: string } | undefined)?.headBranch,
+          c.want.headBranch,
+        );
       }
     });
   }
@@ -529,7 +532,7 @@ describe('handleGitHubDelivery', () => {
         },
       });
 
-      assert.equal((events.at(0)?.ref as CommentData).reviewThreadId, testCase.want);
+      assert.equal((events.at(0)?.ref as CommentData | undefined)?.reviewThreadId, testCase.want);
     });
   }
 

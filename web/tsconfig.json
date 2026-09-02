@@ -16,9 +16,8 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
+      "@/*": ["./src/*"],
       "@shared": ["../src/transport/dashboard/dashboard-api-types.ts"]
     },
     "types": ["vite/client"]

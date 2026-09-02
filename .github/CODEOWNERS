@@ -1,0 +1,3 @@
+# Reviews from these people are what the ruleset's Code Owners requirement counts,
+# so an approval from a bot with write access no longer unblocks a merge.
+*  @luciocorral @GuzmanPintos @hashbender @cbascom @eddiewang @faraonc

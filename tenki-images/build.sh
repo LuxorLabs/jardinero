@@ -19,6 +19,7 @@
 #   TENKI_API_KEY         required
 #   TENKI_PROJECT_ID      required
 #   TENKI_WORKSPACE_SLUG  optional   -> registry prefix; derived from the session
+#   RECIPES_DIR           optional   -> where the recipes live (default: recipes/)
 #   CODEX_VERSION         optional   -> Codex CLI to bake (default: latest).
 #                                        Pin to the version that ships GPT-5.6.
 #   GH_TOKEN / GITHUB_TOKEN  needed for canary clone of a private repo;
@@ -55,9 +56,10 @@ done
 case "$repo" in *[!a-zA-Z0-9._-]*) die "invalid repo name: $repo" ;; esac
 case "$channel" in *[!a-zA-Z0-9._-]*) die "invalid --tag value: $channel" ;; esac
 
-recipe="$here/recipes/$repo.sh"
-env_file="$here/recipes/$repo.env"
-verify_script="$here/recipes/$repo.verify.sh"
+recipes_dir="${RECIPES_DIR:-$here/recipes}"
+recipe="$recipes_dir/$repo.sh"
+env_file="$recipes_dir/$repo.env"
+verify_script="$recipes_dir/$repo.verify.sh"
 [ -f "$recipe" ] || die "no recipe for '$repo' (expected $recipe)"
 
 # --- per-repo build metadata (host side) --------------------------------

@@ -17,13 +17,9 @@ export default defineConfig({
       '@shared': resolve(rootDir, 'src/transport/dashboard/dashboard-api-types.ts'),
     },
   },
-  // Benchmark/prod target is headless Chromium (evergreen); es2022 lets esbuild
-  // skip legacy-syntax downleveling (class fields, spread helpers, etc.) that
-  // Vite's conservative default target still emits.
-  esbuild: {
-    legalComments: 'none',
-    drop: ['console', 'debugger'],
-  },
+  // Benchmark/prod is headless Chromium, so this only has to clear es2022.
+  // Vite 8's default (baseline-widely-available) is already higher and builds
+  // identical code; the pin is a floor, not an optimization.
   build: {
     target: 'es2022',
     outDir: resolve(rootDir, 'dist/public'),
@@ -31,6 +27,13 @@ export default defineConfig({
     manifest: true,
     rollupOptions: {
       input: resolve(rootDir, 'web/index.html'),
+      output: {
+        // web/ is outside biome's files.includes, so nothing lints a stray
+        // console.log or debugger out of the dashboard. This is the only thing
+        // keeping them out of the operator's browser. Vite 8 transforms with
+        // oxc, which ignores the old esbuild `drop`; the equivalent lives here.
+        minify: { compress: { dropConsole: true, dropDebugger: true } },
+      },
     },
   },
   server: {

@@ -229,7 +229,10 @@ describe('Discord thread names', () => {
         threadName: testCase.threadName,
       });
 
-      assert.equal((discord.calls[0]?.body as { name: string }).name, testCase.wantName);
+      assert.equal(
+        (discord.calls[0]?.body as { name: string } | undefined)?.name,
+        testCase.wantName,
+      );
     });
   }
 });

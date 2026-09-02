@@ -2,6 +2,8 @@
 # because pnpm reads its settings from here.
 
 # esbuild is the only dependency allowed to run install scripts; its script links
-# the platform binary that tsx and vite exec.
+# the platform binary tsx execs. Vite 8 bundles with rolldown and transforms with
+# oxc, both napi, so it no longer needs esbuild at all -- it stays an optional
+# peer used only by the deprecated transformWithEsbuild.
 allowBuilds:
   esbuild: true

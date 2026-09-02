@@ -11,7 +11,7 @@
 NODE_VERSION ?= 24
 
 # Whether `make check` also verifies a changeset is present. Set false on main or
-# a tag (push-main, release-docker), where no changeset exists by design.
+# a tag (push-main, publish-image), where no changeset exists by design.
 CHECK_CHANGESET ?= true
 
 # App version for the dashboard KPI: the exact release tag if on one, else

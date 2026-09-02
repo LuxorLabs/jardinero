@@ -22,6 +22,28 @@ Two worked examples. Neither is a drop-in: both name a host, an image tag and a 
 
 **Configuration is a mounted file, not an edited checkout.** Point `CONFIG_PATH` at it. It is the whole configuration: there is no merge across files, and every key it omits takes its code default. `../../docs/configuration.md` is the reference.
 
+## Verifying the image
+
+The published images are signed, so you can check an image really came from this repository before you run it. Either check is sufficient; they assert the same thing by different routes.
+
+With [cosign](https://docs.sigstore.dev/cosign/installation/):
+
+```bash
+cosign verify ghcr.io/luxorlabs/jardinero:vX.Y.Z \
+  --certificate-identity-regexp '^https://github\.com/LuxorLabs/jardinero/\.github/workflows/publish-image\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The identity regexp is the point: it pins the signature to this repository's publish workflow running on a release tag. Verifying without it only tells you the image was signed by someone.
+
+With the GitHub CLI:
+
+```bash
+gh attestation verify oci://ghcr.io/luxorlabs/jardinero:vX.Y.Z --repo LuxorLabs/jardinero
+```
+
+If you build your own images from a fork, both commands take your own repository in place of `LuxorLabs/jardinero`.
+
 ## Upgrading
 
 Both examples above track `latest`. Pin a fixed version for anything you care about, so a rollback is a value change:

@@ -1,6 +1,6 @@
 # Architecture
 
-Jardinero is a TypeScript/Node control plane for autonomous engineering agents. It receives events (GitHub, Linear, cron, the operator), turns each one into work it can track, runs that work in ephemeral Tenki sandboxes or Persistent Freestyle VMs that run Codex, verifies what those agents produce, and shows an operator what happened.
+Jardinero is a TypeScript/Node control plane for autonomous engineering agents. It receives events (GitHub, Linear, cron, the operator), turns each one into work it can track, runs that work in ephemeral Tenki sandboxes or persistent Freestyle VMs that run Codex, verifies what those agents produce, and shows an operator what happened.
 
 Everything runs in one process, over one SQLite database.
 

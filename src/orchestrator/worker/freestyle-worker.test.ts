@@ -4,6 +4,8 @@ import { describe, test } from 'node:test';
 import type { Vm } from 'freestyle';
 
 import { loadConfig, type AppConfig } from '../../config.js';
+import type { SandboxRun } from '../../store/types.js';
+import type { SandboxRunContext } from '../sandbox-pool.js';
 import {
   FreestyleSandboxProvider,
   FreestyleWorkerRunner,
@@ -15,6 +17,30 @@ import {
 describe('FreestyleWorkerRunner', () => {
   test('When it is constructed without credentials then should defer authentication until a run', () => {
     assert.doesNotThrow(() => new FreestyleWorkerRunner(freestyleConfig(), {}));
+  });
+
+  test('When a run finishes then should drive it on a Freestyle VM and delete it', async () => {
+    const fake = fakeVm({ streamedStdout: '{"type":"turn.completed"}\n' });
+    const config = freestyleConfig();
+    // api_key keeps Codex auth off the host's ~/.codex, which a unit test has no
+    // business reading.
+    config.worker.codexAuthMode = 'api_key';
+    const env: NodeJS.ProcessEnv = {
+      FREESTYLE_API_KEY: 'key',
+      [config.worker.githubTokenEnv]: 'gh-token',
+      [config.worker.codexApiKeyEnv]: 'codex-key',
+    };
+    const events: string[] = [];
+    const runner = new FreestyleWorkerRunner(config, env, {
+      createClient: () => fakeClient(fake),
+    });
+
+    const result = await runner.run(fakeContext(events));
+
+    assert.equal(result.status, 'succeeded');
+    assert.equal(result.sandboxSessionId, 'vm-1');
+    assert.ok(events.includes('sandbox.ready'), events.join(','));
+    assert.equal(fake.deleteCalls, 1);
   });
 });
 
@@ -175,132 +201,150 @@ describe('FreestyleSandboxProvider.terminate', () => {
   });
 });
 
-describe('Freestyle sandbox session execution', () => {
-  test('When an output sink is supplied then should stream the combined PTY channel and return its result', async () => {
-    const fake = fakeVm({
-      streamedStdout: '{"type":"thread.started"}\n',
-      streamedStderr: 'note\n',
-    });
-    const provider = providerWith(fake);
-    const session = await provider.create(
-      { env: { GITHUB_TOKEN: 'secret' } },
-      new AbortController().signal,
-    );
-    const output: Array<{ text: string; stderr: boolean; final: boolean }> = [];
-
-    assert.ok(session.exec);
-    const result = await session.exec('sh', {
+describe('FreestyleSession.exec', () => {
+  const cases: Array<{
+    name: string;
+    vm?: FakeVmOptions;
+    command: string;
+    args?: string[];
+    stream: boolean;
+    abortWhileRunning?: boolean;
+    wantExecCommand?: string;
+    wantExitCode?: number;
+    wantStdout?: string;
+    wantStderr?: RegExp;
+    wantChunks?: Array<{ text: string; stderr: boolean; final: boolean }>;
+    wantPtySignals?: string[];
+    wantPtyCloses?: number;
+    wantError?: RegExp;
+  }> = [
+    {
+      name: 'When no output sink is given then should run it as a one-shot exec',
+      command: 'printf',
+      args: ['hello world'],
+      stream: false,
+      wantExecCommand: "'printf' 'hello world'",
+      wantExitCode: 0,
+      wantStdout: '',
+      wantPtyCloses: 0,
+    },
+    {
+      // The provider answers a killed command with no status at all, so the
+      // timeout has to be named or it reads as a plain failure.
+      name: 'When a one-shot exec hits the provider timeout then should say so on stderr',
+      vm: { execStatusCode: null },
+      command: 'sleep',
+      stream: false,
+      wantExitCode: 1,
+      wantStdout: '',
+      wantStderr: /timed out after 300s/,
+      wantPtyCloses: 0,
+    },
+    {
+      name: 'When an output sink is given then should stream the combined PTY channel',
+      vm: { streamedStdout: '{"type":"thread.started"}\n', streamedStderr: 'note\n' },
+      command: 'sh',
       args: ['-lc', 'codex exec --json'],
-      onOutput: (chunk) => {
-        output.push({
-          text: new TextDecoder().decode(chunk.data),
-          stderr: chunk.isStderr,
-          final: chunk.isFinal,
-        });
-      },
+      stream: true,
+      wantExitCode: 0,
+      wantStdout: '{"type":"thread.started"}\nnote\n',
+      wantChunks: [
+        { text: '{"type":"thread.started"}\n', stderr: false, final: false },
+        { text: 'note\n', stderr: false, final: false },
+        { text: '', stderr: false, final: true },
+      ],
+      wantPtyCloses: 1,
+    },
+    {
+      name: 'When a PTY command exits unsuccessfully then should return its exit code',
+      vm: { streamedStdout: 'failed\n', ptyExitCode: 23 },
+      command: 'failing-command',
+      stream: true,
+      wantExitCode: 23,
+      wantStdout: 'failed\n',
+      wantPtyCloses: 1,
+    },
+    {
+      name: 'When a PTY reports an error then should return error and close the session',
+      vm: { ptyError: 'socket lost' },
+      command: 'long-command',
+      stream: true,
+      wantError: /socket lost/,
+      wantPtyCloses: 1,
+    },
+    {
+      name: 'When a PTY closes before command exit then should return error with the close reason',
+      vm: { ptyCloseBeforeExit: { code: 1006, reason: 'network lost' } },
+      command: 'long-command',
+      stream: true,
+      wantError: /code=1006, reason=network lost/,
+      wantPtyCloses: 1,
+    },
+    {
+      name: 'When the run aborts while the PTY is active then should kill and close the session',
+      vm: { holdPtyOpen: true },
+      command: 'long-command',
+      stream: true,
+      abortWhileRunning: true,
+      wantError: /Run aborted/,
+      wantPtySignals: ['sigkill'],
+      wantPtyCloses: 1,
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, async () => {
+      const fake = fakeVm(testCase.vm);
+      const controller = new AbortController();
+      const session = await providerWith(fake).create({}, controller.signal);
+      const chunks: Array<{ text: string; stderr: boolean; final: boolean }> = [];
+      assert.ok(session.exec);
+
+      const running = session.exec(testCase.command, {
+        ...(testCase.args ? { args: testCase.args } : {}),
+        ...(testCase.stream
+          ? {
+              onOutput: (chunk) => {
+                chunks.push({
+                  text: new TextDecoder().decode(chunk.data),
+                  stderr: chunk.isStderr,
+                  final: chunk.isFinal,
+                });
+              },
+            }
+          : {}),
+      });
+      if (testCase.abortWhileRunning) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        controller.abort();
+      }
+
+      if (testCase.wantError) {
+        await assert.rejects(running, testCase.wantError);
+      } else {
+        const result = await running;
+        assert.equal(result.exitCode, testCase.wantExitCode);
+        assert.equal(new TextDecoder().decode(result.stdout), testCase.wantStdout);
+        if (testCase.wantStderr) {
+          assert.match(new TextDecoder().decode(result.stderr), testCase.wantStderr);
+        }
+      }
+
+      if (testCase.wantExecCommand) {
+        assert.ok(
+          fake.execCommands.includes(testCase.wantExecCommand),
+          fake.execCommands.join(','),
+        );
+      }
+      if (testCase.wantChunks) assert.deepEqual(chunks, testCase.wantChunks);
+      assert.deepEqual(fake.ptySignals, testCase.wantPtySignals ?? []);
+      assert.equal(fake.ptyCloseCalls, testCase.wantPtyCloses);
     });
+  }
+});
 
-    assert.notEqual(typeof result, 'string');
-    if (typeof result === 'string') return;
-    assert.equal(result.exitCode, 0);
-    assert.ok(result.stdout instanceof Uint8Array);
-    assert.ok(result.stderr instanceof Uint8Array);
-    assert.equal(new TextDecoder().decode(result.stdout), '{"type":"thread.started"}\nnote\n');
-    assert.equal(new TextDecoder().decode(result.stderr), '');
-    assert.deepEqual(output, [
-      { text: '{"type":"thread.started"}\n', stderr: false, final: false },
-      { text: 'note\n', stderr: false, final: false },
-      { text: '', stderr: false, final: true },
-    ]);
-    assert.ok(fake.ptyCommands.some((command) => command.includes('/run.sh')));
-    assert.equal(fake.ptyCloseCalls, 1);
-  });
-
-  test('When a streamed command is still running then should emit incremental and final chunks', async () => {
-    const fake = fakeVm({
-      streamedStdout: 'first\n',
-      streamedStderr: 'warning\n',
-    });
-    const session = await providerWith(fake).create({}, new AbortController().signal);
-    const output: Array<{ text: string; stderr: boolean; final: boolean }> = [];
-
-    assert.ok(session.exec);
-    const result = await session.exec('long-command', {
-      onOutput: (chunk) => {
-        output.push({
-          text: new TextDecoder().decode(chunk.data),
-          stderr: chunk.isStderr,
-          final: chunk.isFinal,
-        });
-      },
-    });
-
-    assert.notEqual(typeof result, 'string');
-    assert.deepEqual(output, [
-      { text: 'first\n', stderr: false, final: false },
-      { text: 'warning\n', stderr: false, final: false },
-      { text: '', stderr: false, final: true },
-    ]);
-  });
-
-  test('When a PTY command exits unsuccessfully then should return its exit code', async () => {
-    const fake = fakeVm({ streamedStdout: 'failed\n', ptyExitCode: 23 });
-    const session = await providerWith(fake).create({}, new AbortController().signal);
-
-    assert.ok(session.exec);
-    const result = await session.exec('failing-command', { onOutput: () => undefined });
-
-    assert.notEqual(typeof result, 'string');
-    if (typeof result === 'string') return;
-    assert.equal(result.status, 'FAILED');
-    assert.equal(result.exitCode, 23);
-    assert.ok(result.stdout instanceof Uint8Array);
-    assert.equal(new TextDecoder().decode(result.stdout), 'failed\n');
-    assert.equal(fake.ptyCloseCalls, 1);
-  });
-
-  test('When a PTY reports an error then should reject and close the session', async () => {
-    const fake = fakeVm({ ptyError: 'socket lost' });
-    const session = await providerWith(fake).create({}, new AbortController().signal);
-
-    assert.ok(session.exec);
-    await assert.rejects(
-      session.exec('long-command', { onOutput: () => undefined }),
-      /socket lost/,
-    );
-    assert.equal(fake.ptyCloseCalls, 1);
-  });
-
-  test('When a PTY closes before command exit then should reject with the close reason', async () => {
-    const fake = fakeVm({
-      ptyCloseBeforeExit: { code: 1006, reason: 'network lost' },
-    });
-    const session = await providerWith(fake).create({}, new AbortController().signal);
-
-    assert.ok(session.exec);
-    await assert.rejects(
-      session.exec('long-command', { onOutput: () => undefined }),
-      /code=1006, reason=network lost/,
-    );
-    assert.equal(fake.ptyCloseCalls, 1);
-  });
-
-  test('When a run is aborted while its PTY is active then should kill and close the session', async () => {
-    const controller = new AbortController();
-    const fake = fakeVm({ holdPtyOpen: true });
-    const session = await providerWith(fake).create({}, controller.signal);
-
-    assert.ok(session.exec);
-    const running = session.exec('long-command', { onOutput: () => undefined });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    controller.abort();
-
-    await assert.rejects(running, /Run aborted/);
-    assert.deepEqual(fake.ptySignals, ['sigkill']);
-    assert.equal(fake.ptyCloseCalls, 1);
-  });
-
-  test('When using the session facade then should execute short commands and preserve worker-owned files', async () => {
+describe('FreestyleSession file access', () => {
+  test('When files are written then should leave every one owned by the worker user', async () => {
     const fake = fakeVm();
     const session = await providerWith(fake).create({}, new AbortController().signal);
     const source = new ReadableStream<Uint8Array>({
@@ -313,24 +357,19 @@ describe('Freestyle sandbox session execution', () => {
     await session.writeFile('/tmp/direct', 'direct');
     await session.fs.writeStream('/tmp/stream', source, { mode: 0o600 });
     await session.fs.mkdir('/tmp/directory');
+
     assert.ok(session.readFile);
     const direct = await session.readFile('/tmp/direct');
     assert.equal(typeof direct === 'string' ? direct : new TextDecoder().decode(direct), 'direct');
-    const readStream = await session.fs.readStream('/tmp/stream');
-    assert.equal(await new Response(readStream).text(), 'streamed');
-    assert.ok(session.exec);
-    const result = await session.exec('printf', { args: ['hello world'] });
-
-    assert.notEqual(typeof result, 'string');
-    if (typeof result === 'string') return;
-    assert.equal(result.status, 'SUCCEEDED');
-    assert.ok(fake.execCommands.includes("'printf' 'hello world'"));
+    assert.equal(await new Response(await session.fs.readStream('/tmp/stream')).text(), 'streamed');
     assert.ok(fake.execCommands.includes("chown tenki:tenki '/tmp/direct'"));
     assert.ok(fake.execCommands.includes("chown tenki:tenki '/tmp/stream'"));
     assert.ok(fake.execCommands.includes("chown tenki:tenki '/tmp/directory'"));
   });
+});
 
-  test('When git clone is requested then should use the token helper without placing a token in the URL', async () => {
+describe('FreestyleSession.git.clone', () => {
+  test('When a clone is requested then should pass the token through a helper, never the URL', async () => {
     const fake = fakeVm();
     const session = await providerWith(fake).create(
       { env: { GITHUB_TOKEN: 'top-secret' } },
@@ -474,18 +513,20 @@ function providerWith(fake: FakeVm, onCreate: () => void = () => undefined) {
 
 const fakeResources = new WeakMap<FakeVm, { cpu: number; memory: number }>();
 
-function fakeVm(
-  options: {
-    resources?: { cpu: number; memory: number };
-    resizeError?: Error;
-    streamedStdout?: string;
-    streamedStderr?: string;
-    ptyExitCode?: number;
-    ptyError?: unknown;
-    ptyCloseBeforeExit?: { code: number; reason: string };
-    holdPtyOpen?: boolean;
-  } = {},
-): FakeVm {
+interface FakeVmOptions {
+  resources?: { cpu: number; memory: number };
+  resizeError?: Error;
+  // null is how the provider reports a command its timeout killed.
+  execStatusCode?: number | null;
+  streamedStdout?: string;
+  streamedStderr?: string;
+  ptyExitCode?: number;
+  ptyError?: unknown;
+  ptyCloseBeforeExit?: { code: number; reason: string };
+  holdPtyOpen?: boolean;
+}
+
+function fakeVm(options: FakeVmOptions = {}): FakeVm {
   const files = new Map<string, Uint8Array>();
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
@@ -580,10 +621,15 @@ function fakeVm(
         },
       },
     }),
-    exec: async (request: string | { command: string }) => {
+    exec: async (request: string | { command: string; linuxUser?: string }) => {
       const command = typeof request === 'string' ? request : request.command;
       execCommands.push(command);
-      return { stdout: '', stderr: '', statusCode: 0 };
+      // Only the session's own exec names a linuxUser; the root-level prepare and
+      // chown commands have to keep succeeding whatever the case scripts.
+      const isSessionExec = typeof request !== 'string' && request.linuxUser !== undefined;
+      const statusCode =
+        isSessionExec && options.execStatusCode !== undefined ? options.execStatusCode : 0;
+      return { stdout: '', stderr: '', statusCode };
     },
   } as unknown as FakeVm;
   fakeResources.set(vm, options.resources ?? { cpu: 4, memory: 8192 });
@@ -595,4 +641,41 @@ function freestyleConfig(): AppConfig {
   config.worker.runner = 'freestyle';
   config.worker.default.image = 'snapshot-1';
   return config;
+}
+
+function fakeClient(fake: FakeVm) {
+  return {
+    vms: {
+      create: async () => ({
+        vm: fake,
+        vmId: 'vm-1',
+        data: { resources: fakeResources.get(fake) ?? { cpu: 4, memory: 8192 } },
+      }),
+    },
+  };
+}
+
+function fakeContext(events: string[]): SandboxRunContext {
+  const sandboxRun: SandboxRun = {
+    id: 'run-freestyle-test',
+    agentName: 'Agent',
+    runState: 'running',
+    workflowType: 'pr_maintainer',
+    workflowInstanceId: 'instance-1',
+    sandboxSessionId: null,
+    costUsd: null,
+    errorMessage: null,
+    startedAt: 0,
+    endedAt: null,
+  };
+  return {
+    sandboxRun,
+    task: { workflow: 'pr_maintain', payload: {}, promptOverrides: {} },
+    maxWallClockMs: 60_000,
+    signal: new AbortController().signal,
+    publishEvent: async (event) => {
+      events.push(event.type);
+    },
+    writeSandboxRunArtifact: async (name) => name,
+  };
 }

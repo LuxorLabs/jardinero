@@ -309,7 +309,12 @@ function fakeSession(options: FakeSessionOptions = {}): FakeSession {
       : {
           exec: async (_command: string, execOptions: { args: string[] }) => {
             commands.push(execOptions.args[1]);
-            return { exitCode: options.exitCode ?? 0, stderr: options.stderr ?? '' };
+            const encoder = new TextEncoder();
+            return {
+              exitCode: options.exitCode ?? 0,
+              stdout: encoder.encode(''),
+              stderr: encoder.encode(options.stderr ?? ''),
+            };
           },
         }),
   };

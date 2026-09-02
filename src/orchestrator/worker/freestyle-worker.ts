@@ -9,22 +9,25 @@ import {
 } from 'freestyle';
 
 import type { AppConfig } from '../../config.js';
-import { assertExecSucceeded, shellQuote } from '../../adapters/tenki/tenki-utils.js';
+import { assertExecSucceeded, normalizeRemotePath, shellQuote } from './sandbox-utils.js';
 import type {
-  WorkerSandboxExecOutput,
-  WorkerSandboxExecResult,
-  WorkerSandboxProvider,
-  WorkerSandboxSession,
+  SandboxExecOutput,
+  SandboxExecResult,
+  SandboxProvider,
+  SandboxSession,
 } from '../../types.js';
-import type { SandboxRunner } from '../sandbox-pool.js';
-import { SandboxWorkerRunner, type SandboxWorkerRunnerDeps } from './tenki-worker.js';
+import { SandboxWorkerRunner, type SandboxWorkerRunnerDeps } from './sandbox-worker.js';
 
-type WorkerSandboxWriteStreamOptions = NonNullable<
-  Parameters<WorkerSandboxSession['fs']['writeStream']>[2]
->;
+type SandboxWriteStreamOptions = NonNullable<Parameters<SandboxSession['fs']['writeStream']>[2]>;
 
+// The agent user the prepared worker images ship, and where Codex auth is
+// forwarded to; both providers land on the same layout so one image serves each.
 const WORKER_USER = 'tenki';
 const WORKER_HOME = '/home/tenki';
+
+// The provider caps a one-shot exec at five minutes, which is why anything that
+// can outlast it goes through the PTY instead.
+const EXEC_TIMEOUT_MS = 300_000;
 
 interface FreestyleClient {
   vms: {
@@ -41,29 +44,17 @@ interface FreestyleClient {
   };
 }
 
-export interface FreestyleWorkerRunnerDeps
-  extends Omit<SandboxWorkerRunnerDeps, 'provider' | 'loadSdk' | 'terminateSession'> {
+export interface FreestyleWorkerRunnerDeps extends SandboxWorkerRunnerDeps {
   createClient?: () => FreestyleClient;
 }
 
-export class FreestyleWorkerRunner implements SandboxRunner {
-  private readonly runner: SandboxWorkerRunner;
-
+export class FreestyleWorkerRunner extends SandboxWorkerRunner {
   constructor(config: AppConfig, env = process.env, deps: FreestyleWorkerRunnerDeps = {}) {
-    const provider = new FreestyleSandboxProvider(config, env, deps);
-    this.runner = new SandboxWorkerRunner(config, env, {
-      getPullRequestHead: deps.getPullRequestHead,
-      sandboxReadyRetryDelayMs: deps.sandboxReadyRetryDelayMs,
-      provider,
-    });
-  }
-
-  run(...args: Parameters<SandboxRunner['run']>): ReturnType<SandboxRunner['run']> {
-    return this.runner.run(...args);
+    super(config, env, new FreestyleSandboxProvider(config, env, deps), deps);
   }
 }
 
-export class FreestyleSandboxProvider implements WorkerSandboxProvider {
+export class FreestyleSandboxProvider implements SandboxProvider {
   readonly name = 'Freestyle';
   readonly apiTarget: string;
   private readonly createClient: () => FreestyleClient;
@@ -86,10 +77,7 @@ export class FreestyleSandboxProvider implements WorkerSandboxProvider {
       });
   }
 
-  async create(
-    options: Record<string, unknown>,
-    signal: AbortSignal,
-  ): Promise<WorkerSandboxSession> {
+  async create(options: Record<string, unknown>, signal: AbortSignal): Promise<SandboxSession> {
     throwIfAborted(signal);
     const client = this.createClient();
     const createOptions = freestyleVmCreateOptions(options);
@@ -108,39 +96,30 @@ export class FreestyleSandboxProvider implements WorkerSandboxProvider {
       };
       if (Object.keys(resize).length > 0) await created.vm.resize(resize);
 
-      await prepareWorkerUser(created.vm);
-      return new FreestyleSession(
-        created.vm,
-        created.vmId,
-        stringRecord(options.env),
-        signal,
-      ).asWorkerSandboxSession();
+      await prepareWorkerUser(created.vm, normalizeRemotePath(this.config.worker.workspacePath));
+      return new FreestyleSession(created.vm, created.vmId, stringRecord(options.env), signal);
     } catch (error) {
       await created.vm.delete().catch(() => undefined);
       throw error;
     }
   }
 
-  async waitReady(_session: WorkerSandboxSession, signal: AbortSignal): Promise<void> {
+  async waitReady(_session: SandboxSession, signal: AbortSignal): Promise<void> {
     throwIfAborted(signal);
   }
 
-  async terminate(session: WorkerSandboxSession): Promise<void> {
-    await (session as unknown as FreestyleSessionHandle).deleteVm();
+  async terminate(session: SandboxSession): Promise<void> {
+    await (session as FreestyleSession).deleteVm();
   }
 }
 
-interface FreestyleSessionHandle {
-  deleteVm(): Promise<void>;
-}
-
-class FreestyleSession implements FreestyleSessionHandle {
+export class FreestyleSession implements SandboxSession {
   readonly fs = {
     readStream: (path: string) => this.vm.fs.readFileStream(path),
     writeStream: async (
       path: string,
       data: ReadableStream<Uint8Array>,
-      options: WorkerSandboxWriteStreamOptions = {},
+      options: SandboxWriteStreamOptions = {},
     ) => {
       await this.vm.fs.writeFile(path, await streamToBytes(data), { mode: options.mode });
       await this.chownWorker(path);
@@ -170,10 +149,6 @@ class FreestyleSession implements FreestyleSessionHandle {
     private readonly signal: AbortSignal,
   ) {}
 
-  asWorkerSandboxSession(): WorkerSandboxSession {
-    return this as unknown as WorkerSandboxSession;
-  }
-
   async deleteVm(): Promise<void> {
     await this.vm.delete();
   }
@@ -191,33 +166,31 @@ class FreestyleSession implements FreestyleSessionHandle {
     command: string,
     options: {
       args?: string[];
-      onOutput?: (output: WorkerSandboxExecOutput) => void;
+      onOutput?: (output: SandboxExecOutput) => void;
     } = {},
-  ): Promise<WorkerSandboxExecResult> {
+  ): Promise<SandboxExecResult> {
     const shellCommand = [command, ...(options.args ?? [])].map(shellQuote).join(' ');
     return options.onOutput
       ? this.execLong(shellCommand, options.onOutput)
       : this.execShort(shellCommand);
   }
 
-  private async execShort(command: string): Promise<WorkerSandboxExecResult> {
+  private async execShort(command: string): Promise<SandboxExecResult> {
     throwIfAborted(this.signal);
-    const startedAt = Date.now();
     const result = await this.vm.exec({
       command,
       linuxUser: WORKER_USER,
       env: workerEnvironment(this.env),
-      timeoutMs: 300_000,
+      timeoutMs: EXEC_TIMEOUT_MS,
     });
-    return freestyleExecResult(command, result, Date.now() - startedAt);
+    return freestyleExecResult(command, result);
   }
 
   private async execLong(
     command: string,
-    onOutput?: (output: WorkerSandboxExecOutput) => void,
-  ): Promise<WorkerSandboxExecResult> {
+    onOutput?: (output: SandboxExecOutput) => void,
+  ): Promise<SandboxExecResult> {
     throwIfAborted(this.signal);
-    const startedAt = Date.now();
     const runId = randomUUID().replaceAll('-', '');
     const runDir = `/tmp/jardinero-${runId}`;
     const scriptPath = `${runDir}/run.sh`;
@@ -304,7 +277,7 @@ class FreestyleSession implements FreestyleSessionHandle {
         stderr: '',
         statusCode: completed.exitCode,
       };
-      return freestyleExecResult(command, result, Date.now() - startedAt);
+      return freestyleExecResult(command, result);
     } finally {
       this.signal.removeEventListener('abort', abortHandler);
       if (ptySession) {
@@ -327,6 +300,9 @@ export function freestyleVmCreateOptions(options: Record<string, unknown>): Crea
     slug: freestyleSlug(name),
     displayName: name.slice(0, 63),
     ...(image ? { snapshotId: image } : {}),
+    // A run is many calls against one VM, and an ephemeral VM is deleted the moment
+    // it stops, so any transient stop would take the clone with it. The run deletes
+    // the VM itself; the TTL below reclaims it when the orchestrator never gets there.
     persistence: { type: 'persistent' },
     automaticRestart: true,
     ttlSeconds: Math.ceil(maxDurationMs / 1_000) + 300,
@@ -364,35 +340,37 @@ function freestyleApiTarget(baseUrl: string | undefined): string {
   }
 }
 
-async function prepareWorkerUser(vm: Vm): Promise<void> {
+async function prepareWorkerUser(vm: Vm, workspacePath: string): Promise<void> {
   const command = [
     `id -u ${WORKER_USER} >/dev/null 2>&1 || useradd --create-home --shell /bin/bash ${WORKER_USER}`,
-    `mkdir -p ${WORKER_HOME}`,
-    `chown ${WORKER_USER}:${WORKER_USER} ${WORKER_HOME}`,
-    `if command -v sudo >/dev/null 2>&1; then printf '%s\\n' '${WORKER_USER} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/jardinero-worker; chmod 0440 /etc/sudoers.d/jardinero-worker; fi`,
+    // The workspace is configurable and need not sit under the worker's home, so
+    // it is granted here; the run's first mkdir already runs as the worker user.
+    `mkdir -p ${shellQuote(WORKER_HOME)} ${shellQuote(workspacePath)}`,
+    `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(WORKER_HOME)} ${shellQuote(workspacePath)}`,
+    // Codex auth forwarding shells out to sudo unconditionally, so a snapshot
+    // without it fails much later, mid-run, with a raw shell error.
+    `command -v sudo >/dev/null 2>&1 || { echo 'the worker snapshot must provide sudo' >&2; exit 1; }`,
+    `printf '%s\\n' '${WORKER_USER} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/jardinero-worker`,
+    'chmod 0440 /etc/sudoers.d/jardinero-worker',
   ].join(' && ');
   const result = await vm.exec({ command, timeoutMs: 60_000 });
   assertFreestyleExecSucceeded(result, 'prepare Freestyle worker user');
 }
 
-function freestyleExecResult(
-  command: string,
-  result: ExecResult,
-  durationMs: number,
-): WorkerSandboxExecResult {
-  const stdout = new TextEncoder().encode(result.stdout ?? '');
-  const stderr = new TextEncoder().encode(result.stderr ?? '');
-  const exitCode = result.statusCode ?? 1;
+function freestyleExecResult(command: string, result: ExecResult): SandboxExecResult {
+  const encoder = new TextEncoder();
+  // A null status is how the provider reports a command its timeout killed; left
+  // alone it reads downstream as an ordinary exit code 1.
+  const timedOut = result.statusCode === null || result.statusCode === undefined;
+  const detail = timedOut
+    ? [result.stderr, `timed out after ${EXEC_TIMEOUT_MS / 1_000}s: ${command}`]
+        .filter(Boolean)
+        .join('\n')
+    : (result.stderr ?? '');
   return {
-    sessionId: '',
-    command,
-    args: [],
-    status: exitCode === 0 ? 'SUCCEEDED' : 'FAILED',
-    exitCode,
-    durationMs,
-    outputs: [],
-    stdout,
-    stderr,
+    exitCode: result.statusCode ?? 1,
+    stdout: encoder.encode(result.stdout ?? ''),
+    stderr: encoder.encode(detail),
   };
 }
 

@@ -23,36 +23,29 @@ export interface WorkerResult {
   error?: string;
 }
 
-export interface WorkerSandboxExecOutput {
+export interface SandboxExecOutput {
   data: Uint8Array;
   isStderr: boolean;
   isFinal: boolean;
 }
 
-export interface WorkerSandboxExecResult {
-  sessionId?: string;
-  exitCode?: number;
-  code?: number;
-  status?: number | string;
-  stdout?: string | Uint8Array;
-  stderr?: string | Uint8Array;
-  output?: string | Uint8Array;
-  error?: string | Uint8Array;
-  command?: string;
-  args?: string[];
-  durationMs?: number;
-  outputs?: WorkerSandboxExecOutput[];
+// SandboxExecResult is what a finished command answers with, normalized by each
+// provider so a reader never guesses which field carries the exit code.
+export interface SandboxExecResult {
+  exitCode: number;
+  stdout: Uint8Array;
+  stderr: Uint8Array;
 }
 
-export interface WorkerSandboxSession {
+export interface SandboxSession {
   id: string;
   exec?(
     command: string,
     options?: {
       args?: string[];
-      onOutput?: (output: WorkerSandboxExecOutput) => void;
+      onOutput?: (output: SandboxExecOutput) => void;
     },
-  ): Promise<WorkerSandboxExecResult | string>;
+  ): Promise<SandboxExecResult>;
   writeFile(path: string, content: string | Uint8Array): Promise<void>;
   readFile?(path: string): Promise<string | Uint8Array>;
   fs: {
@@ -69,12 +62,12 @@ export interface WorkerSandboxSession {
   };
 }
 
-export interface WorkerSandboxProvider {
+export interface SandboxProvider {
   name: string;
   apiTarget: string;
-  create(options: Record<string, unknown>, signal: AbortSignal): Promise<WorkerSandboxSession>;
-  waitReady(session: WorkerSandboxSession, signal: AbortSignal): Promise<void>;
-  terminate(session: WorkerSandboxSession): Promise<void>;
+  create(options: Record<string, unknown>, signal: AbortSignal): Promise<SandboxSession>;
+  waitReady(session: SandboxSession, signal: AbortSignal): Promise<void>;
+  terminate(session: SandboxSession): Promise<void>;
 }
 
 export type FixNoPrReason =

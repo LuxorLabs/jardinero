@@ -257,7 +257,7 @@ Now switch the runner on, which is what makes runs real. Use the provider chosen
 
 ```yaml
 worker:
-  runner: "freestyle" # or "tenki"
+  runner: "tenki" # or "freestyle"
 ```
 
 Boot refuses this with no `worker.default.image` from step 4, and with no App credentials above.

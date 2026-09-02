@@ -33,6 +33,7 @@ export class TenkiSandboxProvider implements SandboxProvider {
   private readonly loadSdk: () => Promise<TenkiSdk>;
   private readonly terminateSession: typeof terminateTenkiSessionInChild;
   private sandbox?: Awaited<ReturnType<typeof this.openSandbox>>;
+  private workspaceScope?: { workspaceId?: string };
 
   constructor(
     private readonly config: AppConfig,
@@ -46,8 +47,11 @@ export class TenkiSandboxProvider implements SandboxProvider {
   async create(options: Record<string, unknown>, _signal: AbortSignal): Promise<SandboxSession> {
     const sandbox = await this.openSandbox();
     // Tenki-only create options, so they go here and not where the run assembles
-    // what every provider shares. The reaper lists by the tag.
-    Object.assign(options, resolveWorkspaceScope(this.config, this.env), {
+    // what every provider shares. The reaper lists by the tag. The scope is kept
+    // after the first create because it depends only on the env; caching the
+    // value rather than the promise leaves a failed lookup to be retried.
+    this.workspaceScope ??= await resolveWorkspaceScope(this.config, this.env, sandbox);
+    Object.assign(options, this.workspaceScope, {
       tags: [JARDINERO_SANDBOX_APP],
     });
     return sandbox.create(options);

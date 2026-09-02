@@ -32,8 +32,8 @@ describe('TenkiSandboxProvider.create', () => {
       wantScope: { workspaceId: 'workspace-1' },
     },
     {
-      // Nothing configured means the create goes out unscoped, and Tenki resolves
-      // the workspace from the credential itself.
+      // Nothing configured and one reachable workspace is unambiguous, so the
+      // create goes out unscoped and Tenki resolves it from the credential.
       name: 'When no workspace is configured then should leave the create options unscoped',
       env: {},
       wantScope: {},
@@ -57,6 +57,41 @@ describe('TenkiSandboxProvider.create', () => {
       });
     });
   }
+
+  test('When the credential reaches several workspaces then should refuse to create', async () => {
+    const provider = new TenkiSandboxProvider(
+      tenkiConfig(),
+      {},
+      {
+        loadSdk: async () =>
+          fakeSdk([], {
+            workspaces: [
+              { id: 'ws-1', name: 'alpha' },
+              { id: 'ws-2', name: 'beta' },
+            ],
+          }),
+      },
+    );
+
+    await assert.rejects(
+      () => provider.create({}, new AbortController().signal),
+      /Missing TENKI_WORKSPACE_ID; the Tenki credential reaches 2 workspaces/,
+    );
+  });
+
+  test('When several runs share the provider then should resolve the workspace once', async () => {
+    let whoAmICalls = 0;
+    const provider = new TenkiSandboxProvider(
+      tenkiConfig(),
+      {},
+      { loadSdk: async () => fakeSdk([], { onWhoAmI: () => (whoAmICalls += 1) }) },
+    );
+
+    await provider.create({}, new AbortController().signal);
+    await provider.create({}, new AbortController().signal);
+
+    assert.equal(whoAmICalls, 1);
+  });
 
   test('When several runs share the provider then should build the client once', async () => {
     let sdkLoads = 0;
@@ -131,12 +166,21 @@ function tenkiConfig(): AppConfig {
 }
 
 // fakeSdk stands in for the SDK module: the sandbox client the provider builds,
-// and the session its create answers with.
-function fakeSdk(created: Array<Record<string, unknown>> = []) {
+// and the session its create answers with. The identity defaults to a single
+// workspace, which is what an unscoped create needs to be unambiguous.
+function fakeSdk(
+  created: Array<Record<string, unknown>> = [],
+  options: { workspaces?: Array<{ id: string; name: string }>; onWhoAmI?: () => void } = {},
+) {
+  const workspaces = options.workspaces ?? [{ id: 'ws-1', name: 'only' }];
   return {
     TenkiSandbox: class {
-      async create(options: Record<string, unknown>): Promise<SandboxSession> {
-        created.push(options);
+      async whoAmI() {
+        options.onWhoAmI?.();
+        return { workspaces };
+      }
+      async create(createOptions: Record<string, unknown>): Promise<SandboxSession> {
+        created.push(createOptions);
         return { id: 'session-1' } as SandboxSession;
       }
     },

@@ -37,7 +37,7 @@ let completed = false;
 
 try {
   const createOptions = createSessionOptions();
-  Object.assign(createOptions, resolveWorkspaceScope(config, process.env));
+  Object.assign(createOptions, await resolveWorkspaceScope(config, process.env, sandbox));
   console.log('creating Tenki sandbox session');
   console.log(redactedJson(createOptions));
   session = await sandbox.createAndWait(createOptions);

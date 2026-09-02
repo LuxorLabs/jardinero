@@ -339,6 +339,32 @@ describe('createTenkiReaper', () => {
       closeStore();
     }
   });
+
+  test('When the credential reaches several workspaces then should fail the sweep', async () => {
+    const { store, cleanup: closeStore } = createTestStore();
+    try {
+      const listOptions: Array<Record<string, unknown>> = [];
+      const closed: string[] = [];
+      const reaper = createTenkiReaper(loadConfig(), {}, store, {
+        loadSdk: async () =>
+          fakeSdk(listOptions, closed, [
+            { id: 'ws-1', name: 'alpha' },
+            { id: 'ws-2', name: 'beta' },
+          ]),
+      });
+
+      // Sweeping an arbitrary workspace is worse than not sweeping, so the
+      // ambiguity surfaces as a failed cycle rather than a reap somewhere else.
+      await assert.rejects(
+        () => reaper.reapOnce(),
+        /Missing TENKI_WORKSPACE_ID; the Tenki credential reaches 2 workspaces/,
+      );
+      assert.deepEqual(listOptions, []);
+      assert.deepEqual(closed, ['client']);
+    } finally {
+      closeStore();
+    }
+  });
 });
 
 function meta(overrides: Record<string, string> = {}): Record<string, string> {
@@ -382,9 +408,16 @@ function classCounts(
 
 // fakeSdk stands in for the SDK module: the client the sweep builds, the listing
 // it answers with, and the close it records.
-function fakeSdk(listOptions: Array<Record<string, unknown>>, closed: string[]): TenkiSdk {
+function fakeSdk(
+  listOptions: Array<Record<string, unknown>>,
+  closed: string[],
+  workspaces: Array<{ id: string; name: string }> = [{ id: 'ws-1', name: 'only' }],
+): TenkiSdk {
   return {
     TenkiSandbox: class {
+      async whoAmI() {
+        return { workspaces };
+      }
       async list(options: Record<string, unknown>): Promise<ReapableSessionHandle[]> {
         listOptions.push(options);
         return [];

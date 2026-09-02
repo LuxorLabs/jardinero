@@ -204,7 +204,7 @@ export function createTenkiReaper(
         // Ask for our own tag so a sweep never pulls the workspace's foreign
         // sessions; ownership is still classifySandboxForReap's call.
         return await sandbox.list({
-          ...resolveWorkspaceScope(config, env),
+          ...(await resolveWorkspaceScope(config, env, sandbox)),
           tags: [JARDINERO_SANDBOX_APP],
         });
       } finally {

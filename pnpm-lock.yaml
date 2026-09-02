@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@tenkicloud/sandbox':
-        specifier: 0.3.4
-        version: 0.3.4
+        specifier: 1.0.0
+        version: 1.0.0
       dotenv:
         specifier: 17.4.2
         version: 17.4.2
@@ -911,8 +911,8 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@tenkicloud/sandbox@0.3.4':
-    resolution: {integrity: sha512-zrl1oiUOI2b7p/uxB3i4I2+aW3sEukK6TyQPLyC6ubqvukvHXFZDbdEbfn7kcQkr2uDl+ur8GCE569LdbPJ6/g==}
+  '@tenkicloud/sandbox@1.0.0':
+    resolution: {integrity: sha512-gHR5xRd//eXswQ36VKks/477AoW44cxQ9y5ECD7QO8/OXL9sf//AsrawYeA5bgg8vbS3V2FocX5lYwG7rO0c/w==}
     engines: {node: '>=18'}
 
   '@types/node@25.9.5':
@@ -1552,6 +1552,18 @@ packages:
 
   ws@8.21.0:
     resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
+  ws@8.21.1:
+    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -2233,12 +2245,12 @@ snapshots:
       tailwindcss: 4.3.3
       vite: 8.2.1(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0)
 
-  '@tenkicloud/sandbox@0.3.4':
+  '@tenkicloud/sandbox@1.0.0':
     dependencies:
       '@bufbuild/protobuf': 2.12.1
       '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.12.1)
       '@connectrpc/connect-node': 2.1.2(@bufbuild/protobuf@2.12.1)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.12.1))
-      ws: 8.21.0
+      ws: 8.21.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -2738,6 +2750,8 @@ snapshots:
       strip-ansi: 6.0.1
 
   ws@8.21.0: {}
+
+  ws@8.21.1: {}
 
   y18n@5.0.8: {}
 

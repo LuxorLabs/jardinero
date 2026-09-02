@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { loadConfig, resolveSeatModel, resolveWorkerImage } from '../src/config.js';
 import { forwardHostCodexAuthToSandbox } from '../src/adapters/codex/codex-auth.js';
 import { terminateTenkiSessionInChild } from '../src/adapters/tenki/tenki-terminate.js';
-import { resolveWorkspaceScope } from '../src/adapters/tenki/tenki-scope.js';
+import {
+  JARDINERO_SANDBOX_APP,
+  resolveWorkspaceScope,
+  SANDBOX_METADATA,
+} from '../src/adapters/tenki/tenki-scope.js';
 import {
   assertExecSucceeded,
   normalizeRemotePath,
@@ -126,9 +130,10 @@ function createSessionOptions(): Record<string, unknown> {
     maxDurationMs: 10 * 60_000,
     env,
     metadata: {
-      app: 'jardinero',
+      [SANDBOX_METADATA.app]: JARDINERO_SANDBOX_APP,
       purpose: 'tenki-smoke',
     },
+    tags: [JARDINERO_SANDBOX_APP],
   };
   const image = resolveWorkerImage(config, undefined);
   if (image) {

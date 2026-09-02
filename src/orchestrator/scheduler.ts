@@ -97,7 +97,7 @@ export class Scheduler {
     }
   }
 
-  // Sweep the Tenki project for leaked sandboxes (a run's sandbox that outlived
+  // Sweep the Tenki workspace for leaked sandboxes (a run's sandbox that outlived
   // the run). Fires once at startup to reclaim anything a crash or restart
   // stranded, then on an interval. Disabled when no reaper was wired (mock
   // runner) or sandbox_reaper_interval_min is < 1.

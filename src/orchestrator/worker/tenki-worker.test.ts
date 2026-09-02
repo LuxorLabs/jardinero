@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { loadConfig, type AppConfig } from '../../config.js';
+import { JARDINERO_SANDBOX_APP } from '../../adapters/tenki/tenki-scope.js';
 import type { SandboxSession } from '../../types.js';
 import { TenkiSandboxProvider, TenkiWorkerRunner, loadTenkiSdk } from './tenki-worker.js';
 
@@ -31,8 +32,8 @@ describe('TenkiSandboxProvider.create', () => {
       wantScope: { workspaceId: 'workspace-1' },
     },
     {
-      // A workspace API key carries its own workspace, so the create goes out
-      // unscoped and Tenki resolves it from the caller's identity.
+      // Nothing configured means the create goes out unscoped, and Tenki resolves
+      // the workspace from the credential itself.
       name: 'When no workspace is configured then should leave the create options unscoped',
       env: {},
       wantScope: {},
@@ -49,7 +50,11 @@ describe('TenkiSandboxProvider.create', () => {
       const session = await provider.create({ name: 'agent-run' }, new AbortController().signal);
 
       assert.equal(session.id, 'session-1');
-      assert.deepEqual(created[0], { name: 'agent-run', ...testCase.wantScope });
+      assert.deepEqual(created[0], {
+        name: 'agent-run',
+        tags: [JARDINERO_SANDBOX_APP],
+        ...testCase.wantScope,
+      });
     });
   }
 

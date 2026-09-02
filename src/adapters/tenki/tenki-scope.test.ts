@@ -12,8 +12,8 @@ describe('resolveWorkspaceScope', () => {
       want: { workspaceId: 'workspace-1' },
     },
     {
-      // The key has to be absent rather than present-and-undefined: the SDK sends
-      // what it is handed, and Tenki rejects an explicit empty scope.
+      // Nothing configured means nothing on the request, and Tenki resolves the
+      // workspace from the credential itself.
       name: 'When no workspace is configured then should return no scope',
       env: {},
       want: {},

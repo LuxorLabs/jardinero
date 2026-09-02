@@ -8,8 +8,11 @@ import {
   reconcileTenkiSandboxes,
   type ReapableSessionHandle,
   type ReapClassification,
+  type ReapSummary,
 } from './tenki-reaper.js';
 import { createTestStore } from '../../testing/store.js';
+
+type TenkiSdk = typeof import('@tenkicloud/sandbox');
 
 describe('classifySandboxForReap', () => {
   const classifierCases: Array<{
@@ -107,98 +110,120 @@ describe('classifySandboxForReap', () => {
 });
 
 describe('reconcileTenkiSandboxes', () => {
-  test('When sessions mix states then should reap only terminal runs', async () => {
-    const closed: string[] = [];
-    const statuses: Record<string, SandboxRunState> = {
-      'run-terminal': 'orphaned',
-      'run-active': 'running',
-    };
-    const sessions = [
-      fakeSession('leak', meta({ run_id: 'run-terminal' }), closed),
-      fakeSession('busy', meta({ run_id: 'run-active' }), closed, 'ok', 'RUNNING'),
-      fakeSession('foreign', { app: 'other', run_id: 'run-terminal' }, closed),
-      fakeSession('unowned', { app: 'jardinero' }, closed),
-    ];
-    const reaped: string[] = [];
-
-    const summary = await reconcileTenkiSandboxes({
-      listSessions: async () => sessions,
-      lookupRunStatus: (runId) => statuses[runId],
-      closeTimeoutMs: 1_000,
-      onReaped: (session) => reaped.push(session.id),
-    });
-
-    assert.deepEqual(closed, ['leak']);
-    assert.deepEqual(reaped, ['leak']);
-    assert.equal(summary.listed, 4);
-    assert.equal(summary.reaped, 1);
-    assert.equal(summary.failed, 0);
-    assert.equal(summary.byClass.reap_terminal_run, 1);
-    assert.equal(summary.byClass.skip_active_run, 1);
-    assert.equal(summary.byClass.skip_foreign, 1);
-    assert.equal(summary.byClass.skip_unowned_run, 1);
-  });
-
-  test('When a close throws then should record failure and continue', async () => {
-    const closed: string[] = [];
-    const statuses: Record<string, SandboxRunState> = { 'run-1': 'orphaned', 'run-2': 'failed' };
-    const failures: string[] = [];
-    const sessions = [
-      fakeSession('first', meta({ run_id: 'run-1' }), closed, 'throw'),
-      fakeSession('second', meta({ run_id: 'run-2' }), closed, 'ok'),
-    ];
-
-    const summary = await reconcileTenkiSandboxes({
-      listSessions: async () => sessions,
-      lookupRunStatus: (runId) => statuses[runId],
-      closeTimeoutMs: 1_000,
-      onReapFailed: (session) => failures.push(session.id),
-    });
-
-    // The throwing close does not abort the sweep; the second sandbox is still reaped.
-    assert.deepEqual(closed, ['first', 'second']);
-    assert.deepEqual(failures, ['first']);
-    assert.equal(summary.reaped, 1);
-    assert.equal(summary.failed, 1);
-  });
-
-  test('When a close hangs then should time out and fail', async () => {
-    const closed: string[] = [];
-    const sessions = [fakeSession('stuck', meta({ run_id: 'run-1' }), closed, 'hang')];
-
-    const summary = await reconcileTenkiSandboxes({
-      listSessions: async () => sessions,
-      lookupRunStatus: () => 'orphaned',
-      closeTimeoutMs: 20,
-    });
-
-    assert.equal(summary.reaped, 0);
-    assert.equal(summary.failed, 1);
-  });
-
-  test('When onReaped throws then should still count the reap', async () => {
-    const closed: string[] = [];
-    const failures: string[] = [];
-    const sessions = [fakeSession('leak', meta({ run_id: 'run-1' }), closed)];
-
-    const summary = await reconcileTenkiSandboxes({
-      listSessions: async () => sessions,
-      lookupRunStatus: () => 'orphaned',
-      closeTimeoutMs: 1_000,
-      onReaped: () => {
-        throw new Error('audit write failed');
+  const cases: Array<{
+    name: string;
+    sessions: SessionSpec[];
+    statuses: Record<string, SandboxRunState>;
+    closeTimeoutMs?: number;
+    auditThrows?: boolean;
+    wantClosed: string[];
+    wantReaped: string[];
+    wantFailures: string[];
+    wantSummary: ReapSummary;
+  }> = [
+    {
+      name: 'When sessions mix states then should reap only the terminal runs',
+      sessions: [
+        { id: 'leak', metadata: meta({ run_id: 'run-terminal' }) },
+        { id: 'busy', metadata: meta({ run_id: 'run-active' }), state: 'RUNNING' },
+        { id: 'foreign', metadata: { app: 'other', run_id: 'run-terminal' } },
+        { id: 'unowned', metadata: { app: 'jardinero' } },
+      ],
+      statuses: { 'run-terminal': 'orphaned', 'run-active': 'running' },
+      wantClosed: ['leak'],
+      wantReaped: ['leak'],
+      wantFailures: [],
+      wantSummary: {
+        listed: 4,
+        reaped: 1,
+        failed: 0,
+        byClass: classCounts({
+          reap_terminal_run: 1,
+          skip_active_run: 1,
+          skip_foreign: 1,
+          skip_unowned_run: 1,
+        }),
       },
-      onReapFailed: (session) => failures.push(session.id),
+    },
+    {
+      // A throwing close does not abort the sweep; the sandboxes behind it are
+      // still reaped.
+      name: 'When a close throws then should record the failure and keep sweeping',
+      sessions: [
+        { id: 'first', metadata: meta({ run_id: 'run-1' }), close: 'throw' },
+        { id: 'second', metadata: meta({ run_id: 'run-2' }) },
+      ],
+      statuses: { 'run-1': 'orphaned', 'run-2': 'failed' },
+      wantClosed: ['first', 'second'],
+      wantReaped: ['second'],
+      wantFailures: ['first'],
+      wantSummary: {
+        listed: 2,
+        reaped: 1,
+        failed: 1,
+        byClass: classCounts({ reap_terminal_run: 2 }),
+      },
+    },
+    {
+      name: 'When a close hangs then should time out and count a failure',
+      sessions: [{ id: 'stuck', metadata: meta({ run_id: 'run-1' }), close: 'hang' }],
+      statuses: { 'run-1': 'orphaned' },
+      closeTimeoutMs: 20,
+      wantClosed: ['stuck'],
+      wantReaped: [],
+      wantFailures: ['stuck'],
+      wantSummary: {
+        listed: 1,
+        reaped: 0,
+        failed: 1,
+        byClass: classCounts({ reap_terminal_run: 1 }),
+      },
+    },
+    {
+      // The close succeeded, so the sandbox is a reap and not a failure; a broken
+      // bookkeeping callback must not double-count it or reach onReapFailed.
+      name: 'When the audit callback throws then should still count the reap',
+      sessions: [{ id: 'leak', metadata: meta({ run_id: 'run-1' }) }],
+      statuses: { 'run-1': 'orphaned' },
+      auditThrows: true,
+      wantClosed: ['leak'],
+      wantReaped: ['leak'],
+      wantFailures: [],
+      wantSummary: {
+        listed: 1,
+        reaped: 1,
+        failed: 0,
+        byClass: classCounts({ reap_terminal_run: 1 }),
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, async () => {
+      const closed: string[] = [];
+      const reaped: string[] = [];
+      const failures: string[] = [];
+
+      const summary = await reconcileTenkiSandboxes({
+        listSessions: async () => testCase.sessions.map((spec) => fakeSession(spec, closed)),
+        lookupRunStatus: (runId) => testCase.statuses[runId],
+        closeTimeoutMs: testCase.closeTimeoutMs ?? 1_000,
+        onReaped: (session) => {
+          reaped.push(session.id);
+          if (testCase.auditThrows) throw new Error('audit write failed');
+        },
+        onReapFailed: (session) => failures.push(session.id),
+      });
+
+      assert.deepEqual(closed, testCase.wantClosed);
+      assert.deepEqual(reaped, testCase.wantReaped);
+      assert.deepEqual(failures, testCase.wantFailures);
+      assert.deepEqual(summary, testCase.wantSummary);
     });
+  }
+});
 
-    // The close succeeded, so the sandbox is a reap, not a failure; a broken
-    // bookkeeping callback must not double-count it or call onReapFailed.
-    assert.deepEqual(closed, ['leak']);
-    assert.equal(summary.reaped, 1);
-    assert.equal(summary.failed, 0);
-    assert.deepEqual(failures, []);
-  });
-
+describe('a close that rejects after the reaper stopped waiting', () => {
   test('When close rejects after the timeout then should not leak a rejection', async () => {
     const rejections: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {
@@ -206,8 +231,6 @@ describe('reconcileTenkiSandboxes', () => {
     };
     process.on('unhandledRejection', onUnhandled);
     try {
-      // close() rejects well after the timeout has already won the race; the
-      // abandoned promise must not surface as an unhandled rejection.
       const session: ReapableSessionHandle = {
         id: 'slow',
         state: 'PAUSED',
@@ -235,7 +258,7 @@ describe('reconcileTenkiSandboxes', () => {
 });
 
 describe('createTenkiReaper', () => {
-  test('When a run is terminal then should reap its sandbox and audit', async () => {
+  test('When a run is terminal then should reap its sandbox and audit both outcomes', async () => {
     const { store, dataPath: tempDir, cleanup: closeStore } = createTestStore();
     const config = loadConfig();
     config.store.dataPath = tempDir;
@@ -248,6 +271,13 @@ describe('createTenkiReaper', () => {
         workflowInstanceId: instance.id,
       });
       store.finishSandboxRun(terminal.id, { runState: 'failed' });
+
+      const unclosable = store.startSandboxRun({
+        agentName: 'PrMaintainer',
+        workflowType: 'pr_maintainer',
+        workflowInstanceId: instance.id,
+      });
+      store.finishSandboxRun(unclosable.id, { runState: 'failed' });
 
       const active = store.startSandboxRun({
         agentName: 'PrMaintainer',
@@ -265,8 +295,15 @@ describe('createTenkiReaper', () => {
 
       const closed: string[] = [];
       const sessions = [
-        fakeSession('leak', meta({ run_id: terminal.id }), closed),
-        fakeSession('busy', meta({ run_id: active.id }), closed, 'ok', 'RUNNING'),
+        fakeSession({ id: 'leak', metadata: meta({ run_id: terminal.id }) }, closed),
+        fakeSession(
+          { id: 'broken', metadata: meta({ run_id: unclosable.id }), close: 'throw' },
+          closed,
+        ),
+        fakeSession(
+          { id: 'busy', metadata: meta({ run_id: active.id }), state: 'RUNNING' },
+          closed,
+        ),
       ];
 
       const reaper = createTenkiReaper(config, {}, store, {
@@ -274,10 +311,30 @@ describe('createTenkiReaper', () => {
       });
       const summary = await reaper.reapOnce();
 
-      assert.deepEqual(closed, ['leak']);
+      assert.deepEqual(closed, ['leak', 'broken']);
       assert.equal(summary.reaped, 1);
-      assert.equal(summary.failed, 0);
+      assert.equal(summary.failed, 1);
       assert.ok(recordedTypes.includes('orchestrator.leaked_sandbox_closed'));
+      assert.ok(recordedTypes.includes('orchestrator.leaked_sandbox_close_failed'));
+    } finally {
+      closeStore();
+    }
+  });
+
+  test('When a sweep lists sandboxes then should filter on the `jardinero` tag and close the client', async () => {
+    const { store, cleanup: closeStore } = createTestStore();
+    try {
+      const listOptions: Array<Record<string, unknown>> = [];
+      const closed: string[] = [];
+      const reaper = createTenkiReaper(loadConfig(), { TENKI_WORKSPACE_ID: 'workspace-1' }, store, {
+        loadSdk: async () => fakeSdk(listOptions, closed),
+      });
+
+      const summary = await reaper.reapOnce();
+
+      assert.equal(summary.listed, 0);
+      assert.deepEqual(listOptions, [{ workspaceId: 'workspace-1', tags: ['jardinero'] }]);
+      assert.deepEqual(closed, ['client']);
     } finally {
       closeStore();
     }
@@ -288,23 +345,53 @@ function meta(overrides: Record<string, string> = {}): Record<string, string> {
   return { app: 'jardinero', run_id: 'run-1', workflow: 'pr_maintain', ...overrides };
 }
 
-// A fake listed sandbox with a spyable close(). closeBehavior lets a case make
-// close reject or hang so the reap-failure and timeout paths are exercised.
-function fakeSession(
-  id: string,
-  metadata: Record<string, string>,
-  closed: string[],
-  closeBehavior: 'ok' | 'throw' | 'hang' = 'ok',
-  state = 'PAUSED',
-): ReapableSessionHandle {
+interface SessionSpec {
+  id: string;
+  metadata: Record<string, string>;
+  state?: string;
+  // Makes close reject or hang, so the reap-failure and timeout paths are reachable.
+  close?: 'ok' | 'throw' | 'hang';
+}
+
+// A fake listed sandbox with a spyable close().
+function fakeSession(spec: SessionSpec, closed: string[]): ReapableSessionHandle {
   return {
-    id,
-    state,
-    metadata,
+    id: spec.id,
+    state: spec.state ?? 'PAUSED',
+    metadata: spec.metadata,
     close: async () => {
-      closed.push(id);
-      if (closeBehavior === 'throw') throw new Error(`close failed for ${id}`);
-      if (closeBehavior === 'hang') await new Promise(() => {});
+      closed.push(spec.id);
+      if (spec.close === 'throw') throw new Error(`close failed for ${spec.id}`);
+      if (spec.close === 'hang') await new Promise(() => {});
     },
   };
+}
+
+function classCounts(
+  counts: Partial<Record<ReapClassification, number>>,
+): Record<ReapClassification, number> {
+  return {
+    reap_terminal_run: 0,
+    skip_foreign: 0,
+    skip_terminal_state: 0,
+    skip_active_run: 0,
+    skip_unowned_run: 0,
+    ...counts,
+  };
+}
+
+// fakeSdk stands in for the SDK module: the client the sweep builds, the listing
+// it answers with, and the close it records.
+function fakeSdk(listOptions: Array<Record<string, unknown>>, closed: string[]): TenkiSdk {
+  return {
+    TenkiSandbox: class {
+      async list(options: Record<string, unknown>): Promise<ReapableSessionHandle[]> {
+        listOptions.push(options);
+        return [];
+      }
+      close(): void {
+        closed.push('client');
+      }
+    },
+  } as unknown as TenkiSdk;
 }

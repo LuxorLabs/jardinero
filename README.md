@@ -35,11 +35,11 @@ Jardinero orchestrates agents; it does not run them itself. This is what you hav
 |---|---|
 | A host that stays up | Node 24, ~1 GB RAM, a persistent disk for the SQLite database. A laptop with a tunnel is fine to try it. |
 | A public HTTPS URL | GitHub and Linear deliver over webhooks. Without it nothing reaches Jardinero. |
-| A [Tenki](https://tenki.cloud) account | Every agent runs in a Tenki sandbox. This is the meter that runs. |
+| A [Tenki](https://tenki.cloud) or [Freestyle](https://www.freestyle.sh) account | Every agent runs in an isolated VM from the provider selected by `worker.runner`. This is the meter that runs. |
 | A GitHub App you create | Installed on the repositories you want Jardinero to work on. Every workflow ends in a pull request. |
 | Codex auth | A ChatGPT/Codex login, or an OpenAI API key. |
 | Something to run `pnpm run codex:refresh` on a timer | Only on a ChatGPT/Codex login. Left alone it goes stale and every run starts failing. [`docs/secrets.md`](docs/secrets.md) explains why. |
-| One worker image per repository | Built in your own Tenki account, carrying that repository's toolchain. A repository whose image lacks it fails after the agent has already done the work. |
+| One worker image per repository | A Tenki registry image or Freestyle snapshot carrying that repository's toolchain. A repository whose image lacks it fails after the agent has already done the work. |
 
 **To keep pull requests moving:** nothing else. It is on by default; tag the App on a pull request and it starts.
 
@@ -49,11 +49,11 @@ Jardinero orchestrates agents; it does not run them itself. This is what you hav
 
 **To drive it from chat:** a Discord application, and a guild to publish its commands in.
 
-Every pass costs money: sandbox time in Tenki, plus the Codex tokens the agent spends. There is no free tier. Jardinero records what each run cost when Codex reports it, and the dashboard adds it up.
+Every pass costs money: VM time from the selected provider, plus the Codex tokens the agent spends. Jardinero records what each run cost when Codex reports it, and the dashboard adds it up.
 
 ## Setting it up
 
-[`docs/setup.md`](docs/setup.md) walks the whole thing: the Tenki account and the worker image, the GitHub App and its webhook, Codex auth, and then whatever you want on top of it. Configuration lives in `config/local.yaml` and is documented in [`docs/configuration.md`](docs/configuration.md); credentials come from the environment, never from the config, and each one is listed in [`docs/secrets.md`](docs/secrets.md).
+[`docs/setup.md`](docs/setup.md) walks the whole thing: the sandbox provider and worker image, the GitHub App and its webhook, Codex auth, and then whatever you want on top of it. Configuration lives in `config/local.yaml` and is documented in [`docs/configuration.md`](docs/configuration.md); credentials come from the environment, never from the config, and each one is listed in [`docs/secrets.md`](docs/secrets.md).
 
 Two ways to run it for real, both worked examples in [`examples/deploy/`](examples/deploy/): a Compose file for one box, and a kustomize base for a Kubernetes cluster.
 

@@ -23,6 +23,53 @@ export interface WorkerResult {
   error?: string;
 }
 
+export interface SandboxExecOutput {
+  data: Uint8Array;
+  isStderr: boolean;
+  isFinal: boolean;
+}
+
+// SandboxExecResult is what a finished command answers with, normalized by each
+// provider so a reader never guesses which field carries the exit code.
+export interface SandboxExecResult {
+  exitCode: number;
+  stdout: Uint8Array;
+  stderr: Uint8Array;
+}
+
+export interface SandboxSession {
+  id: string;
+  exec?(
+    command: string,
+    options?: {
+      args?: string[];
+      onOutput?: (output: SandboxExecOutput) => void;
+    },
+  ): Promise<SandboxExecResult>;
+  writeFile(path: string, content: string | Uint8Array): Promise<void>;
+  readFile?(path: string): Promise<string | Uint8Array>;
+  fs: {
+    readStream(path: string): Promise<ReadableStream<Uint8Array>>;
+    writeStream(
+      path: string,
+      data: ReadableStream<Uint8Array>,
+      options?: { mode?: number; truncate?: boolean; sync?: boolean },
+    ): Promise<void>;
+    mkdir(path: string): Promise<void>;
+  };
+  git?: {
+    clone(url: string, options: { directory: string }): Promise<unknown>;
+  };
+}
+
+export interface SandboxProvider {
+  name: string;
+  apiTarget: string;
+  create(options: Record<string, unknown>, signal: AbortSignal): Promise<SandboxSession>;
+  waitReady(session: SandboxSession, signal: AbortSignal): Promise<void>;
+  terminate(session: SandboxSession): Promise<void>;
+}
+
 export type FixNoPrReason =
   | 'false_positive'
   | 'unreproducible'

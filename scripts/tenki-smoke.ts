@@ -10,7 +10,7 @@ import {
   normalizeRemotePath,
   remoteJoin,
   shellQuote,
-} from '../src/adapters/tenki/tenki-utils.js';
+} from '../src/orchestrator/worker/sandbox-utils.js';
 
 type TenkiSdk = typeof import('@tenkicloud/sandbox');
 type TenkiSession = import('@tenkicloud/sandbox').Session;
@@ -248,7 +248,7 @@ function codexSmokeCommand(promptPath: string): string {
   return args.join(' ');
 }
 
-function execShell(session: TenkiSession, command: string): Promise<TenkiExecResult | string> {
+function execShell(session: TenkiSession, command: string): Promise<TenkiExecResult> {
   if (!session.exec) {
     throw new Error('exec unavailable on SDK session');
   }

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { loadConfig } from '../../config.js';
-import { TenkiWorkerRunner } from './tenki-worker.js';
+import { SandboxWorkerRunner } from './sandbox-worker.js';
 import type { SandboxRun } from '../../store/types.js';
 import type { SandboxRunContext } from '../sandbox-pool.js';
-import type { Workflow } from '../../types.js';
+import type { SandboxProvider, Workflow } from '../../types.js';
 
 describe('codexCommand', () => {
   // The seat's model and effort must reach the CLI as `-m <model>` and
@@ -66,7 +66,7 @@ describe('codexCommand', () => {
 
   for (const c of cases) {
     test(c.name, () => {
-      const runner = new TenkiWorkerRunner(loadConfig(), {});
+      const runner = new SandboxWorkerRunner(loadConfig(), {}, stubProvider());
       const command = (runner as unknown as CommandProbe).codexCommand(
         makeContext(c.workflow, c.payload),
       );
@@ -101,5 +101,18 @@ function makeContext(workflow: Workflow, payload: Record<string, unknown>): Sand
     signal: new AbortController().signal,
     publishEvent: async () => {},
     writeSandboxRunArtifact: async () => 'artifact',
+  };
+}
+
+// codexCommand never reaches the provider, so the seam only has to exist.
+function stubProvider(): SandboxProvider {
+  return {
+    name: 'Stub',
+    apiTarget: 'stub.invalid',
+    create: async () => {
+      throw new Error('not used');
+    },
+    waitReady: async () => {},
+    terminate: async () => {},
   };
 }

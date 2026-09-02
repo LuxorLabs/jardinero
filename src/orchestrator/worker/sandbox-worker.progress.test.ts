@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { LineBuffer, codexEventDetail, isCodexMilestone } from './tenki-worker.js';
+import { LineBuffer, codexEventDetail, isCodexMilestone } from './sandbox-worker.js';
 
 const encoder = new TextEncoder();
 

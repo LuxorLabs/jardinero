@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { loadConfig } from '../../config.js';
-import { TenkiWorkerRunner, type TenkiWorkerRunnerDeps } from './tenki-worker.js';
+import { SandboxWorkerRunner } from './sandbox-worker.js';
 import type { SandboxRun } from '../../store/types.js';
+import type { SandboxProvider, SandboxSession } from '../../types.js';
 import type { SandboxRunContext, SandboxTask } from '../sandbox-pool.js';
 
 // Regression for the wall-clock-abort crash path: when a run hits its
@@ -13,16 +14,12 @@ import type { SandboxRunContext, SandboxTask } from '../sandbox-pool.js';
 // failure also throws (events.jsonl append under disk/IO pressure), the cleanup
 // promise must not surface as an unhandled rejection: the orchestrator exits the
 // whole process on any unhandled rejection, taking every in-flight run with it.
-describe('TenkiWorkerRunner', () => {
+describe('SandboxWorkerRunner', () => {
   test('When a terminate failure report also throws then should not reject', async () => {
     const config = loadConfig();
 
     const env: NodeJS.ProcessEnv = {};
     env[config.worker.githubTokenEnv] = 'gh-token';
-    // Set the project id so resolveTenkiScope short-circuits and never calls the
-    // (faked) sandbox's whoAmI.
-    env[config.worker.tenkiProjectIdEnv] = 'project-1';
-    env[config.worker.tenkiApiKeyEnv] = 'tenki-key';
     if (config.worker.codexAuthMode === 'access_token') {
       env[config.worker.codexAccessTokenEnv] = 'codex-token';
     } else if (config.worker.codexAuthMode === 'api_key') {
@@ -34,24 +31,18 @@ describe('TenkiWorkerRunner', () => {
     // not observe the abort signal), so the only thing between a failed
     // session-close and the process is the abort handler's guard.
     const waitReady = deferred<void>();
-    const fakeSdk = {
-      TenkiSandbox: class {
-        async create(): Promise<unknown> {
-          return {
-            id: 'fake-session',
-            waitReady: () => waitReady.promise,
-          };
-        }
+    const provider: SandboxProvider = {
+      name: 'Fake',
+      apiTarget: 'fake.invalid',
+      create: async () => ({ id: 'fake-session' }) as SandboxSession,
+      waitReady: () => waitReady.promise,
+      // The sandbox close fails, the way it does when the sandbox is unreachable.
+      terminate: async () => {
+        throw new Error('boom-terminate');
       },
     };
 
-    const runner = new TenkiWorkerRunner(config, env, {
-      loadSdk: (async () => fakeSdk) as unknown as TenkiWorkerRunnerDeps['loadSdk'],
-      // The sandbox close fails, the way it does when the sandbox is unreachable.
-      terminateSession: (async () => {
-        throw new Error('boom-terminate');
-      }) as unknown as TenkiWorkerRunnerDeps['terminateSession'],
-    });
+    const runner = new SandboxWorkerRunner(config, env, provider);
 
     const controller = new AbortController();
     const context: SandboxRunContext = {

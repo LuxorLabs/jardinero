@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { normalizeRemotePath, remoteJoin } from '../../adapters/tenki/tenki-utils.js';
+import { normalizeRemotePath, remoteJoin } from './sandbox-utils.js';
 import {
   buildAuthenticatedFetchPrCommand,
   buildDockerSocketGrantCommand,
@@ -8,7 +8,7 @@ import {
   mcpListIncludesServer,
   mcpListServerRequiresLogin,
   parseDockerSocketStatus,
-} from './tenki-worker.js';
+} from './sandbox-worker.js';
 
 describe('normalizeRemotePath', () => {
   test('When path has outer whitespace and trailing slashes then should succeed', () => {

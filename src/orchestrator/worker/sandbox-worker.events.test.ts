@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { finalAgentMessageText } from './tenki-worker.js';
+import { finalAgentMessageText } from './sandbox-worker.js';
 
 describe('finalAgentMessageText', () => {
   const cases: Array<{ name: string; events: unknown[]; want: string | undefined }> = [

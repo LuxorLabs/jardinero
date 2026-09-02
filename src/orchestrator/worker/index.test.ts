@@ -3,17 +3,23 @@ import { describe, test } from 'node:test';
 
 import { loadConfig } from '../../config.js';
 import { createWorkerRunner } from './index.js';
+import { FreestyleWorkerRunner } from './freestyle-worker.js';
 import { MockWorkerRunner } from './mock-worker.js';
 import { TenkiWorkerRunner } from './tenki-worker.js';
 
 describe('createWorkerRunner', () => {
-  // Only the literal 'tenki' spends money on a sandbox, so anything else has to land
-  // on the mock rather than being treated as a real runner.
+  // Only named real providers spend money on a sandbox, so anything else has to
+  // land on the mock rather than being treated as a real runner.
   const cases: Array<{ name: string; runner: string; want: unknown }> = [
     {
       name: 'When the runner is `tenki` then should build the tenki runner',
       runner: 'tenki',
       want: TenkiWorkerRunner,
+    },
+    {
+      name: 'When the runner is `freestyle` then should build the Freestyle runner',
+      runner: 'freestyle',
+      want: FreestyleWorkerRunner,
     },
     {
       name: 'When the runner is `mock` then should build the mock runner',

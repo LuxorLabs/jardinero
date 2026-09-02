@@ -38,10 +38,9 @@ log.info('configuration loaded', {
   linear_implementer: config.workflows.linearImplementer.enabled,
   request_router: config.workflows.requestRouter.enabled,
 });
-// The mock runner does no GitHub operations, so only real (tenki) runs require
-// the App token.
+// The mock runner does no GitHub operations, so only real runs require the App token.
 let tokenRefresher: GitHubAppTokenRefresher | undefined;
-if (config.worker.runner === 'tenki') {
+if (config.worker.runner !== 'mock') {
   tokenRefresher = await startGitHubAppTokenRefresher({ config, logger: log });
 }
 // Linear session write-backs run under any worker runner, so gate the token
@@ -87,8 +86,8 @@ process.on('uncaughtException', (error) => {
 });
 
 const runner = createWorkerRunner(config);
-// The reaper reclaims leaked Tenki sandboxes, so it exists only under the real runner:
-// the mock runner creates none.
+// Tenki exposes project-wide reconciliation. Freestyle VMs instead receive a
+// provider-enforced TTL when they are created.
 const reapSandboxesOnce =
   config.worker.runner === 'tenki'
     ? createTenkiReaper(config, process.env, store).reapOnce

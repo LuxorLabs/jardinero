@@ -35,6 +35,15 @@ Reacting and replying needs write on Pull requests and Issues. Which events the 
 | `TENKI_API_URL` | Only to override the SDK default. |
 | `TENKI_WORKSPACE_ID` | Only for a service token that spans workspaces. A workspace API key carries its own workspace, and the server infers it. |
 
+## Freestyle
+
+Only when `worker.runner` is `freestyle`.
+
+| Variable | What it is |
+|---|---|
+| `FREESTYLE_API_KEY` | A permanent Freestyle API key from the dashboard. The runner creates, resizes and deletes worker VMs with it. |
+| `FREESTYLE_API_URL` | Optional API base URL override. Leave it unset for Freestyle's public API. |
+
 ## Codex
 
 `worker.codex_auth_mode` picks which of these applies.

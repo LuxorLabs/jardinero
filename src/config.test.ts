@@ -146,6 +146,8 @@ describe('loadConfig', () => {
           tenkiApiKeyEnv: 'TENKI_API_KEY',
           tenkiApiUrlEnv: 'TENKI_API_URL',
           tenkiWorkspaceIdEnv: 'TENKI_WORKSPACE_ID',
+          freestyleApiKeyEnv: 'FREESTYLE_API_KEY',
+          freestyleApiUrlEnv: 'FREESTYLE_API_URL',
           githubTokenEnv: 'GITHUB_TOKEN',
           gitAuthorName: '',
           gitAuthorEmail: '',
@@ -887,6 +889,20 @@ describe('Workflow check wait cadence the loader refuses', () => {
 });
 
 describe('Worker config', () => {
+  test('When the runner is `freestyle` then should read its provider settings', () => {
+    const config = loadYamlConfig(`
+  runner: "freestyle"
+  freestyle_api_key_env: "FREESTYLE_TOKEN"
+  freestyle_api_url_env: "FREESTYLE_ENDPOINT"
+  default:
+    image: "snapshot-worker"
+`);
+
+    assert.equal(config.worker.runner, 'freestyle');
+    assert.equal(config.worker.freestyleApiKeyEnv, 'FREESTYLE_TOKEN');
+    assert.equal(config.worker.freestyleApiUrlEnv, 'FREESTYLE_ENDPOINT');
+  });
+
   test('When the reaper settings are overridden then should read them', () => {
     // Appended as indented children of the minimal config's existing worker map.
     const config = loadYamlConfig(`
@@ -931,6 +947,16 @@ describe('Worker seat effort', () => {
 
 describe('Worker config the loader refuses', () => {
   const cases: Array<{ name: string; yaml: string; wantError: RegExp }> = [
+    {
+      name: 'When the runner is unknown then should return error',
+      yaml: '  runner: "unknown"',
+      wantError: /Expected "mock", "tenki", or "freestyle"/,
+    },
+    {
+      name: 'When the Freestyle runner has no image then should return error',
+      yaml: '  runner: "freestyle"',
+      wantError: /worker\.default\.image is required when worker\.runner is "freestyle"/,
+    },
     {
       name: 'When `session_close_timeout_ms` is a string then should return error',
       yaml: '  session_close_timeout_ms: "30000"',

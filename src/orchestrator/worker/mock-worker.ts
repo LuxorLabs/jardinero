@@ -27,7 +27,7 @@ export class MockWorkerRunner implements SandboxRunner {
         services: context.task.payload.services,
         candidates: [],
         implementation_handoffs: implementationHandoffs,
-        note: 'Mock runner did not query Grafana. Tenki runner is required for live log review.',
+        note: 'Mock runner did not query Grafana. A real runner is required for live log review.',
       };
       const artifact = await context.writeSandboxRunArtifact(
         'triage-report.json',
@@ -58,12 +58,12 @@ export class MockWorkerRunner implements SandboxRunner {
               outcome: 'no_pr' as const,
               reason: 'false_positive' as const,
               evidence: ['Mock fix implementation did not make GitHub writes.'],
-              recommendedFollowup: 'Use the Tenki runner for live implementation.',
+              recommendedFollowup: 'Use a real runner for live implementation.',
               raw: {
                 outcome: 'no_pr',
                 reason: 'false_positive',
                 evidence: ['Mock fix implementation did not make GitHub writes.'],
-                recommended_followup: 'Use the Tenki runner for live implementation.',
+                recommended_followup: 'Use a real runner for live implementation.',
               },
             }
           : undefined;
@@ -123,12 +123,12 @@ export class MockWorkerRunner implements SandboxRunner {
             outcome: 'no_pr' as const,
             reason: 'insufficient_evidence' as const,
             evidence: ['Mock linear implementation did not make GitHub writes.'],
-            recommendedFollowup: 'Use the Tenki runner for live implementation.',
+            recommendedFollowup: 'Use a real runner for live implementation.',
             raw: {
               outcome: 'no_pr',
               reason: 'insufficient_evidence',
               evidence: ['Mock linear implementation did not make GitHub writes.'],
-              recommended_followup: 'Use the Tenki runner for live implementation.',
+              recommended_followup: 'Use a real runner for live implementation.',
             },
           }
         : undefined;

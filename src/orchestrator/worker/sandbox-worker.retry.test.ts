@@ -3,14 +3,13 @@ import { describe, test } from 'node:test';
 import { loadConfig, type AppConfig } from '../../config.js';
 import type { SandboxRun } from '../../store/types.js';
 import type { SandboxRunContext, SandboxTask } from '../sandbox-pool.js';
+import type { SandboxExecOutput, SandboxProvider, SandboxSession } from '../../types.js';
 import {
+  SandboxWorkerRunner,
   isCodexCapacityError,
-  TenkiWorkerRunner,
-  type TenkiWorkerRunnerDeps,
-} from './tenki-worker.js';
+  type SandboxWorkerRunnerDeps,
+} from './sandbox-worker.js';
 import { HANDOFF_JSON_MARKER } from '../../workflows/pr/implementation-handoff.js';
-
-type TenkiExecOutput = import('@tenkicloud/sandbox').Output;
 
 // What Codex prints when the model it was asked for is full.
 const CAPACITY_STDOUT = JSON.stringify({
@@ -27,7 +26,7 @@ const LOG_REVIEW_REPORTING_EVENTS = new Set([
   'agent.logs_reachable_failed',
 ]);
 
-describe('TenkiWorkerRunner', () => {
+describe('SandboxWorkerRunner', () => {
   test('When waitReady deadline exceeded then should retry with fresh session', async () => {
     const operations: string[] = [];
     const first = fakeSession('first', operations, {
@@ -191,7 +190,7 @@ describe('TenkiWorkerRunner', () => {
 
     await assert.rejects(
       runner.run(fakeContext(events, controller)),
-      /\[wait for Tenki sandbox to become ready\|api\.tenki\.cloud\]/,
+      /\[wait for Fake sandbox to become ready\|fake\.invalid\]/,
     );
 
     assert.deepEqual(
@@ -214,7 +213,7 @@ describe('TenkiWorkerRunner', () => {
 
     await assert.rejects(
       runner.run(fakeContext(events)),
-      /\[wait for Tenki sandbox to become ready\|api\.tenki\.cloud\] Call failed: permanent template validation failed/,
+      /\[wait for Fake sandbox to become ready\|fake\.invalid\] Call failed: permanent template validation failed/,
     );
 
     assert.deepEqual(
@@ -1017,8 +1016,8 @@ type FakeSession = {
   id: string;
   exec(
     command: string,
-    options: { args?: string[]; onOutput?: (output: TenkiExecOutput) => void },
-  ): Promise<{ exitCode: number; stdout: string }>;
+    options: { args?: string[]; onOutput?: (output: SandboxExecOutput) => void },
+  ): Promise<{ exitCode: number; stdout: Uint8Array; stderr: Uint8Array }>;
   readFile(path: string): Promise<string>;
   waitReady(timeout?: unknown, signal?: AbortSignal): Promise<void>;
   writeFile(path: string, content: string): Promise<void>;
@@ -1046,35 +1045,36 @@ function fakeRunner(
     config?: (config: AppConfig) => void;
     env?: (env: NodeJS.ProcessEnv) => void;
     captureCreates?: Array<Record<string, unknown>>;
-    getPullRequestHead?: TenkiWorkerRunnerDeps['getPullRequestHead'];
+    getPullRequestHead?: SandboxWorkerRunnerDeps['getPullRequestHead'];
   } = {},
-): TenkiWorkerRunner {
+): SandboxWorkerRunner {
   const config = fakeConfig();
   options.config?.(config);
   const env = fakeEnv(config);
   options.env?.(env);
   let createIndex = 0;
-  const fakeSdk = {
-    TenkiSandbox: class {
-      async create(createOptions: Record<string, unknown>): Promise<FakeSession> {
-        const session = sessions[createIndex];
-        createIndex += 1;
-        if (!session) throw new Error('unexpected extra create');
-        options.captureCreates?.push(createOptions);
-        operations.push(`create:${session.id}`);
-        return session;
+  const provider: SandboxProvider = {
+    name: 'Fake',
+    apiTarget: 'fake.invalid',
+    create: async (createOptions) => {
+      const session = sessions[createIndex];
+      createIndex += 1;
+      if (!session) throw new Error('unexpected extra create');
+      options.captureCreates?.push(createOptions);
+      operations.push(`create:${session.id}`);
+      return session as unknown as SandboxSession;
+    },
+    waitReady: (session, signal) =>
+      (session as unknown as FakeSession).waitReady(undefined, signal),
+    terminate: async (session) => {
+      operations.push(`terminate:${session.id}`);
+      if (options.terminateErrorSessionIds?.has(session.id)) {
+        throw new Error('terminate failed');
       }
     },
   };
 
-  return new TenkiWorkerRunner(config, env, {
-    loadSdk: (async () => fakeSdk) as unknown as TenkiWorkerRunnerDeps['loadSdk'],
-    terminateSession: (async (sessionId: string) => {
-      operations.push(`terminate:${sessionId}`);
-      if (options.terminateErrorSessionIds?.has(sessionId)) {
-        throw new Error('terminate failed');
-      }
-    }) as unknown as TenkiWorkerRunnerDeps['terminateSession'],
+  return new SandboxWorkerRunner(config, env, provider, {
     sandboxReadyRetryDelayMs: () => 0,
     ...(options.getPullRequestHead ? { getPullRequestHead: options.getPullRequestHead } : {}),
   });
@@ -1092,7 +1092,7 @@ function fakeSession(
     id,
     async exec(
       _command: string,
-      _options: { args?: string[]; onOutput?: (output: TenkiExecOutput) => void },
+      _options: { args?: string[]; onOutput?: (output: SandboxExecOutput) => void },
     ) {
       operations.push(`exec:${id}`);
       options.commands?.push([_command, ...(_options.args ?? [])].join(' '));
@@ -1108,9 +1108,9 @@ function fakeSession(
           });
         }
         if (options.codexExecError) throw options.codexExecError;
-        if (scripted) return { exitCode: scripted.exitCode, stdout: scripted.stdout ?? '' };
+        if (scripted) return execResult(scripted.exitCode, scripted.stdout ?? '');
       }
-      return { exitCode: 0, stdout: '' };
+      return execResult(0, '');
     },
     async readFile(_path: string) {
       return options.readFileContent ?? 'done';
@@ -1146,7 +1146,6 @@ function fakeConfig(): AppConfig {
 function fakeEnv(config: AppConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   env[config.worker.githubTokenEnv] = 'gh-token';
-  env[config.worker.tenkiApiKeyEnv] = 'tenki-key';
   env[config.worker.codexApiKeyEnv] = 'codex-key';
   return env;
 }
@@ -1194,4 +1193,9 @@ function fakeTask(): SandboxTask {
     payload: { repo: 'acme/web.app', pr_number: 1 },
     promptOverrides: {},
   };
+}
+
+function execResult(exitCode: number, stdout: string) {
+  const encoder = new TextEncoder();
+  return { exitCode, stdout: encoder.encode(stdout), stderr: encoder.encode('') };
 }

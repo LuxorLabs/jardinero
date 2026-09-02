@@ -4,7 +4,7 @@ Conventions for whoever edits this repository, human or agent. Codex reads `AGEN
 
 ## What Jardinero is
 
-A TypeScript/Node control plane for autonomous engineering agents. Every piece of work is an instance of one of five workflows, tracked in SQLite and executed in an ephemeral Tenki sandbox that runs Codex; Jardinero verifies what the agent produced and shows an operator what happened.
+A TypeScript/Node control plane for autonomous engineering agents. Every piece of work is an instance of one of five workflows, tracked in SQLite and executed in an ephemeral Tenki sandbox or persistent Freestyle VM that runs Codex; Jardinero verifies what the agent produced and shows an operator what happened.
 
 The two words are not interchangeable: a **workflow** is one of the five state machines (`request_router`, `linear_implementer`, `fix_implementer`, `pr_maintainer`, `log_reviewer`) and the instance it advances; an **agent** is a seat that runs inside a sandbox (`sandbox_run.agent_name`, and the prompt it is given), and one workflow may dispatch several.
 
@@ -19,7 +19,7 @@ Read [`docs/architecture.md`](docs/architecture.md) first for the components, th
 | `src/transport/*` | Every HTTP surface: `server.ts` routes to `dashboard/`, `admin/`, `capsule/`, `webhooks/` and `health/` |
 | `src/store/*` + `db/schema.sql` | SQLite state, event log, per-run artifacts |
 | `src/orchestrator/state-machines/*` | One directory per workflow: the state machine that owns it, and the only place that decides what happens next |
-| `src/orchestrator/*` | `engine-commands.ts` (the seam transport uses), `sandbox-pool.ts` (caps, kill, run lifecycle), `scheduler.ts` (cron and polling), and the `WorkerRunner` boundary in `worker/` |
+| `src/orchestrator/*` | `engine-commands.ts` (the seam transport uses), `sandbox-pool.ts` (caps, kill, run lifecycle), `scheduler.ts` (cron and polling), and the `WorkerRunner` boundary for Tenki, Freestyle and Mock in `worker/` |
 | `src/workflows/*` | Per-workflow prompts, payloads and result parsers, one directory each: `linear/`, `pr/`, `log-review/`, `router/` |
 | `src/adapters/*` | One directory per outside service: `github/`, `linear/`, `tenki/`, `codex/`, `grafana/` |
 | `src/platform/*` | Cross-cutting primitives with no domain knowledge: logger, time, ids, json, url parsing, locks, preflight |
@@ -242,4 +242,4 @@ Adding a config key: put its default in the `src/config.ts` reader — the code 
 
 `config/local.yaml` is the default for local dev and for ephemeral self-contained instances (e.g. a Jardinero spun up in Tenki to demo a PR); it is **not** authoritative for real deployments. In a real deployment the authoritative config lives wherever that deployment is defined, mounted into the container with `CONFIG_PATH` pointed at it, so a config change is a deploy edit plus a restart, not a code change or an image rebuild.
 
-Secrets are read from the process env and, locally, from `.env` (template `.env.example`). Set `worker.runner: "mock"` for local smoke tests, `"tenki"` for real sandbox execution. See the README for the auth modes and the per-repo worker-image overrides.
+Secrets are read from the process env and, locally, from `.env` (template `.env.example`). Set `worker.runner: "mock"` for local smoke tests, or `"tenki"` / `"freestyle"` for real sandbox execution. See the README for the auth modes and the per-repo worker-image overrides.

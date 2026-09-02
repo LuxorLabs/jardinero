@@ -2,10 +2,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { assertExecSucceeded, shellQuote } from '../tenki/tenki-utils.js';
-
-type TenkiSession = import('@tenkicloud/sandbox').Session;
-type TenkiExecResult = import('@tenkicloud/sandbox').ExecResult;
+import { assertExecSucceeded, shellQuote } from '../../orchestrator/worker/sandbox-utils.js';
+import type { SandboxExecResult, SandboxSession } from '../../types.js';
 
 const HOST_CODEX_AUTH_PATH = path.join(homedir(), '.codex', 'auth.json');
 const HOST_CODEX_CREDENTIALS_PATH = path.join(homedir(), '.codex', '.credentials.json');
@@ -46,7 +44,7 @@ export function resetCodexAuthCacheForTest(): void {
 }
 
 export async function forwardHostCodexAuthToSandbox(
-  session: TenkiSession,
+  session: SandboxSession,
   force = false,
 ): Promise<void> {
   const authSnapshot = readHostCodexAuth();
@@ -163,7 +161,7 @@ function combinedSnapshotHash(
     .digest('hex');
 }
 
-async function ensureRemoteDirectory(session: TenkiSession, remotePath: string): Promise<void> {
+async function ensureRemoteDirectory(session: SandboxSession, remotePath: string): Promise<void> {
   try {
     await session.fs.mkdir(remotePath);
   } catch (error) {
@@ -182,10 +180,10 @@ function stringToReadableStream(value: string): ReadableStream<Uint8Array> {
   });
 }
 
-function execShell(session: TenkiSession, command: string): Promise<TenkiExecResult | string> {
+function execShell(session: SandboxSession, command: string): Promise<SandboxExecResult> {
   if (!session.exec) {
     throw new Error(
-      'Tenki session does not expose exec; Codex auth forwarding requires shell execution.',
+      'Sandbox session does not expose exec; Codex auth forwarding requires shell execution.',
     );
   }
   return session.exec('sh', { args: ['-lc', command] });

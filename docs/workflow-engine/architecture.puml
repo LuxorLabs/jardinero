@@ -45,8 +45,8 @@ package "Orchestrator" as CORE {
 
 package "Execution" as EXE {
   component "SandboxPool\n\ncaps, kill\nrun lifecycle" as SP
-  component "WorkerRunner\nTenki | Mock" as RUN
-  component "Tenki\nsandbox + Codex" as TenkiX <<external>>
+  component "WorkerRunner\n\nTenki\nFreestyle\nMock" as RUN
+  component "Provider VM\n+ Codex" as SandboxX <<external>>
 }
 
 DiscordX --> DA
@@ -63,7 +63,7 @@ MC --> ST : instance state + event log
 
 MC --> SP : start sandbox run
 SP --> RUN : execute
-RUN --> TenkiX : sandbox + Codex
+RUN --> SandboxX : sandbox + Codex
 SP --> MC : run succeeded / failed
 
 MC --> ADP : reports

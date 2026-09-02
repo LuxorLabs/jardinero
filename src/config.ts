@@ -167,7 +167,7 @@ export interface AppConfig {
     };
   };
   worker: {
-    runner: 'mock' | 'tenki';
+    runner: 'mock' | 'tenki' | 'freestyle';
     codexAuthMode: 'capsule' | 'access_token' | 'api_key';
     codexAccessTokenEnv: string;
     codexApiKeyEnv: string;
@@ -176,6 +176,8 @@ export interface AppConfig {
     tenkiApiKeyEnv: string;
     tenkiApiUrlEnv: string;
     tenkiWorkspaceIdEnv: string;
+    freestyleApiKeyEnv: string;
+    freestyleApiUrlEnv: string;
     githubTokenEnv: string;
     gitAuthorName: string;
     gitAuthorEmail: string;
@@ -512,6 +514,8 @@ export function loadConfig(
         ['worker', 'tenki_workspace_id_env'],
         'TENKI_WORKSPACE_ID',
       ),
+      freestyleApiKeyEnv: stringAt(raw, ['worker', 'freestyle_api_key_env'], 'FREESTYLE_API_KEY'),
+      freestyleApiUrlEnv: stringAt(raw, ['worker', 'freestyle_api_url_env'], 'FREESTYLE_API_URL'),
       githubTokenEnv: stringAt(raw, ['worker', 'github_token_env'], 'GITHUB_TOKEN'),
       gitAuthorName: stringAt(raw, ['worker', 'git_author_name'], ''),
       gitAuthorEmail: stringAt(raw, ['worker', 'git_author_email'], ''),
@@ -586,11 +590,11 @@ export function loadConfig(
   validatePeopleConfig(config.people);
   validateServerPublicUrl(config.server.publicUrl);
   assertWorkerGenerationsResolve(config.worker);
-  // A tenki runner with no resolvable default image boots fine but fails opaquely at
+  // A real runner with no resolvable default image boots fine but fails opaquely at
   // sandbox creation; catch the old flat `worker.image` config (now `worker.default`).
-  if (config.worker.runner === 'tenki' && config.worker.default.image.trim().length === 0) {
+  if (config.worker.runner !== 'mock' && config.worker.default.image.trim().length === 0) {
     throw new Error(
-      'worker.default.image is required when worker.runner is "tenki"; the flat worker.image key was replaced by worker.default.image.',
+      `worker.default.image is required when worker.runner is "${config.worker.runner}"; the flat worker.image key was replaced by worker.default.image.`,
     );
   }
   return config;
@@ -1333,10 +1337,16 @@ function permissionSignalsAt(
   };
 }
 
-function runnerAt(raw: RawConfig, keys: string[], fallback: 'mock' | 'tenki'): 'mock' | 'tenki' {
+function runnerAt(
+  raw: RawConfig,
+  keys: string[],
+  fallback: 'mock' | 'tenki' | 'freestyle',
+): 'mock' | 'tenki' | 'freestyle' {
   const value = stringAt(raw, keys, fallback);
-  if (value === 'mock' || value === 'tenki') return value;
-  throw new Error(`Unsupported worker.runner "${value}". Expected "mock" or "tenki".`);
+  if (value === 'mock' || value === 'tenki' || value === 'freestyle') return value;
+  throw new Error(
+    `Unsupported worker.runner "${value}". Expected "mock", "tenki", or "freestyle".`,
+  );
 }
 
 function effortAt(raw: RawConfig, keys: string[], fallback: CodexEffort): CodexEffort {

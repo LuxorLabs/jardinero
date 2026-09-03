@@ -167,7 +167,7 @@ export interface AppConfig {
     };
   };
   worker: {
-    runner: 'mock' | 'tenki' | 'freestyle';
+    runner: 'mock' | 'tenki' | 'freestyle' | 'daytona';
     codexAuthMode: 'capsule' | 'access_token' | 'api_key';
     codexAccessTokenEnv: string;
     codexApiKeyEnv: string;
@@ -178,6 +178,8 @@ export interface AppConfig {
     tenkiWorkspaceIdEnv: string;
     freestyleApiKeyEnv: string;
     freestyleApiUrlEnv: string;
+    daytonaApiKeyEnv: string;
+    daytonaApiUrlEnv: string;
     githubTokenEnv: string;
     gitAuthorName: string;
     gitAuthorEmail: string;
@@ -516,6 +518,8 @@ export function loadConfig(
       ),
       freestyleApiKeyEnv: stringAt(raw, ['worker', 'freestyle_api_key_env'], 'FREESTYLE_API_KEY'),
       freestyleApiUrlEnv: stringAt(raw, ['worker', 'freestyle_api_url_env'], 'FREESTYLE_API_URL'),
+      daytonaApiKeyEnv: stringAt(raw, ['worker', 'daytona_api_key_env'], 'DAYTONA_API_KEY'),
+      daytonaApiUrlEnv: stringAt(raw, ['worker', 'daytona_api_url_env'], 'DAYTONA_API_URL'),
       githubTokenEnv: stringAt(raw, ['worker', 'github_token_env'], 'GITHUB_TOKEN'),
       gitAuthorName: stringAt(raw, ['worker', 'git_author_name'], ''),
       gitAuthorEmail: stringAt(raw, ['worker', 'git_author_email'], ''),
@@ -1340,12 +1344,14 @@ function permissionSignalsAt(
 function runnerAt(
   raw: RawConfig,
   keys: string[],
-  fallback: 'mock' | 'tenki' | 'freestyle',
-): 'mock' | 'tenki' | 'freestyle' {
+  fallback: 'mock' | 'tenki' | 'freestyle' | 'daytona',
+): 'mock' | 'tenki' | 'freestyle' | 'daytona' {
   const value = stringAt(raw, keys, fallback);
-  if (value === 'mock' || value === 'tenki' || value === 'freestyle') return value;
+  if (value === 'mock' || value === 'tenki' || value === 'freestyle' || value === 'daytona') {
+    return value;
+  }
   throw new Error(
-    `Unsupported worker.runner "${value}". Expected "mock", "tenki", or "freestyle".`,
+    `Unsupported worker.runner "${value}". Expected "mock", "tenki", "freestyle", or "daytona".`,
   );
 }
 

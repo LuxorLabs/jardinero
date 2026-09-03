@@ -148,6 +148,8 @@ describe('loadConfig', () => {
           tenkiWorkspaceIdEnv: 'TENKI_WORKSPACE_ID',
           freestyleApiKeyEnv: 'FREESTYLE_API_KEY',
           freestyleApiUrlEnv: 'FREESTYLE_API_URL',
+          daytonaApiKeyEnv: 'DAYTONA_API_KEY',
+          daytonaApiUrlEnv: 'DAYTONA_API_URL',
           githubTokenEnv: 'GITHUB_TOKEN',
           gitAuthorName: '',
           gitAuthorEmail: '',
@@ -903,6 +905,20 @@ describe('Worker config', () => {
     assert.equal(config.worker.freestyleApiUrlEnv, 'FREESTYLE_ENDPOINT');
   });
 
+  test('When the runner is `daytona` then should read its provider settings', () => {
+    const config = loadYamlConfig(`
+  runner: "daytona"
+  daytona_api_key_env: "DAYTONA_TOKEN"
+  daytona_api_url_env: "DAYTONA_ENDPOINT"
+  default:
+    image: "snapshot-worker"
+`);
+
+    assert.equal(config.worker.runner, 'daytona');
+    assert.equal(config.worker.daytonaApiKeyEnv, 'DAYTONA_TOKEN');
+    assert.equal(config.worker.daytonaApiUrlEnv, 'DAYTONA_ENDPOINT');
+  });
+
   test('When the reaper settings are overridden then should read them', () => {
     // Appended as indented children of the minimal config's existing worker map.
     const config = loadYamlConfig(`
@@ -950,12 +966,17 @@ describe('Worker config the loader refuses', () => {
     {
       name: 'When the runner is unknown then should return error',
       yaml: '  runner: "unknown"',
-      wantError: /Expected "mock", "tenki", or "freestyle"/,
+      wantError: /Expected "mock", "tenki", "freestyle", or "daytona"/,
     },
     {
       name: 'When the Freestyle runner has no image then should return error',
       yaml: '  runner: "freestyle"',
       wantError: /worker\.default\.image is required when worker\.runner is "freestyle"/,
+    },
+    {
+      name: 'When the Daytona runner has no image then should return error',
+      yaml: '  runner: "daytona"',
+      wantError: /worker\.default\.image is required when worker\.runner is "daytona"/,
     },
     {
       name: 'When `session_close_timeout_ms` is a string then should return error',

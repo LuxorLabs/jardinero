@@ -35,11 +35,11 @@ Jardinero orchestrates agents; it does not run them itself. This is what you hav
 |---|---|
 | A host that stays up | Node 24, ~1 GB RAM, a persistent disk for the SQLite database. A laptop with a tunnel is fine to try it. |
 | A public HTTPS URL | GitHub and Linear deliver over webhooks. Without it nothing reaches Jardinero. |
-| A [Tenki](https://tenki.cloud) or [Freestyle](https://www.freestyle.sh) account | Every agent runs in an isolated VM from the provider selected by `worker.runner`. This is the meter that runs. |
+| A [Tenki](https://tenki.cloud), [Freestyle](https://www.freestyle.sh) or [Daytona](https://www.daytona.io) account | Every agent runs in an isolated VM from the provider selected by `worker.runner`. This is the meter that runs. |
 | A GitHub App you create | Installed on the repositories you want Jardinero to work on. Every workflow ends in a pull request. |
 | Codex auth | A ChatGPT/Codex login, or an OpenAI API key. |
 | Something to run `pnpm run codex:refresh` on a timer | Only on a ChatGPT/Codex login. Left alone it goes stale and every run starts failing. [`docs/secrets.md`](docs/secrets.md) explains why. |
-| One worker image per repository | A Tenki registry image or Freestyle snapshot carrying that repository's toolchain. A repository whose image lacks it fails after the agent has already done the work. |
+| One worker image per repository | A Tenki registry image, Freestyle snapshot or Daytona snapshot carrying that repository's toolchain. A repository whose image lacks it fails after the agent has already done the work. |
 
 **To keep pull requests moving:** nothing else. It is on by default; tag the App on a pull request and it starts.
 

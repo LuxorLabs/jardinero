@@ -7,3 +7,6 @@
 # peer used only by the deprecated transformWithEsbuild.
 allowBuilds:
   esbuild: true
+  # @daytona/sdk pulls protobufjs in, whose postinstall only rewrites its own
+  # version banner; the SDK works without it, so it stays refused.
+  protobufjs: false

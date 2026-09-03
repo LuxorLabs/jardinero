@@ -27,6 +27,7 @@
     "test": "pnpm run build:test && node --test --test-timeout=120000 \"dist/src/**/*.test.js\" \"dist/test/**/*.test.js\""
   },
   "dependencies": {
+    "@daytona/sdk": "0.207.1",
     "@tenkicloud/sandbox": "1.0.2",
     "dotenv": "17.4.2",
     "freestyle": "0.2.2",

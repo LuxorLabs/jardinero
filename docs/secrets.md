@@ -44,6 +44,15 @@ Only when `worker.runner` is `freestyle`.
 | `FREESTYLE_API_KEY` | A permanent Freestyle API key from the dashboard. The runner creates, resizes and deletes worker VMs with it. |
 | `FREESTYLE_API_URL` | Optional API base URL override. Leave it unset for Freestyle's public API. |
 
+## Daytona
+
+Only when `worker.runner` is `daytona`.
+
+| Variable | What it is |
+|---|---|
+| `DAYTONA_API_KEY` | A Daytona API key from the dashboard. The runner creates and deletes worker sandboxes with it. |
+| `DAYTONA_API_URL` | Optional API base URL override. Leave it unset for Daytona's public API. |
+
 ## Codex
 
 `worker.codex_auth_mode` picks which of these applies.

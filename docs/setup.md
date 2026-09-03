@@ -68,7 +68,7 @@ Right now it should report `worker_runner=mock` and `admin_auth` ok. The mock ru
 
 ## 2. Set up a sandbox provider
 
-Every agent runs in a VM from the provider selected by `worker.runner`; the mock runner is for looking, not for working. Choose Tenki or Freestyle, create its API key and install its CLI. Step 4 uses the same provider to prepare a worker image.
+Every agent runs in a VM from the provider selected by `worker.runner`; the mock runner is for looking, not for working. Choose Tenki, Freestyle or Daytona, create its API key and install its CLI. Step 4 uses the same provider to prepare a worker image.
 
 ### Tenki
 
@@ -99,6 +99,21 @@ set -a; . ./.env; set +a
 pnpm exec freestyle vm list
 ```
 
+### Daytona
+
+Create an API key in the [Daytona dashboard](https://app.daytona.io/dashboard/keys), then install the [Daytona CLI](https://www.daytona.io/docs/en/getting-started/) for step 4's snapshot build.
+
+| Variable | What to put in it |
+|---|---|
+| `DAYTONA_API_KEY` | Your API key. |
+
+**Check it.** With the variable exported, the CLI lists the sandboxes the key can reach:
+
+```bash
+set -a; . ./.env; set +a
+daytona sandbox list
+```
+
 ## 3. Install Codex
 
 Codex is the model that writes the code. Nothing installs it for you:
@@ -124,7 +139,7 @@ On `capsule`, read [Keeping capsule auth alive](secrets.md#keeping-capsule-auth-
 
 Build one worker image per repository: the sandbox the agent works inside, carrying **that repository's** toolchain. There is no image to borrow, and one that lacks it fails after the agent has already done the work and paid for it.
 
-Recipes live in [`../tenki-images/`](../tenki-images/), with three worked examples: `node-repo-example`, `go-repo-example` and `python-repo-example`. Despite the directory name, the setup recipes themselves are ordinary Linux scripts and can also prepare a Freestyle snapshot.
+Recipes live in [`../tenki-images/`](../tenki-images/), with three worked examples: `node-repo-example`, `go-repo-example` and `python-repo-example`. Despite the directory name, the setup recipes themselves are ordinary Linux scripts and can also prepare a Freestyle or Daytona snapshot.
 
 ### Building it on Tenki
 
@@ -182,6 +197,33 @@ worker:
 ```
 
 **Check it.** Boot a clean VM from the snapshot and run the recipe's `*.verify.sh` from a fresh clone, then delete the canary VM. With Jardinero running, `/setup` must report `freestyle_sdk`, `freestyle_auth` and `codex_auth` as `ok` before the first paid run.
+
+### Building it on Daytona
+
+Daytona snapshots are built from a Dockerfile, so render the recipe's shared base plus repository toolchain into one setup script and bake it into an image. `--no-verify` keeps the Tenki canary body out; you will verify the snapshot on Daytona instead.
+
+```bash
+tenki-images/build.sh <name> --dry-run --no-verify > jardinero-worker-setup.sh
+cat > Dockerfile <<'EOF'
+FROM ubuntu:24.04
+COPY jardinero-worker-setup.sh /root/jardinero-worker-setup.sh
+RUN bash /root/jardinero-worker-setup.sh
+EOF
+daytona snapshot create <snapshot-name> --dockerfile Dockerfile --cpu 4 --memory 8 --disk 10
+```
+
+The snapshot must contain `git`, `gh`, Node 24, Codex, `sudo` and the repository toolchain. The runner creates the `tenki` user and injects the run credentials when a sandbox starts. A Daytona sandbox's CPU, memory and disk are fixed by its snapshot, so per-repository `resources` overrides in the config do not apply here; size the snapshot for the heaviest gate it must run, staying within your organization's per-sandbox limits (creation refuses loudly beyond them, e.g. disk past the default 10 GB cap). See [Daytona's snapshot docs](https://www.daytona.io/docs/en/snapshots/) for registry-image and dashboard alternatives.
+
+Put the snapshot name in the same image field:
+
+```yaml
+worker:
+  runner: "daytona"
+  default:
+    image: "<snapshot-name>"
+```
+
+**Check it.** Create a sandbox from the snapshot, run the recipe's `*.verify.sh` from a fresh clone inside it, then delete it. With Jardinero running, `/setup` must report `daytona_sdk`, `daytona_auth` and `codex_auth` as `ok` before the first paid run.
 
 It creates a real sandbox on your image, writes and reads a file, runs a command, forwards your Codex auth and asks the model for a short answer. If that passes, the expensive half of the setup is done.
 

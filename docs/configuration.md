@@ -28,7 +28,7 @@ worker:
 
 Worker files are written under `worker.workspace_path`, which defaults to `/home/tenki/workspace`. The Freestyle runner creates the `tenki` user when a VM starts so the same prepared image and Codex-auth layout work with either provider.
 
-`worker.freestyle_api_key_env` defaults to `FREESTYLE_API_KEY`. `worker.freestyle_api_url_env` defaults to `FREESTYLE_API_URL` and is only needed for an API endpoint override. Freestyle VMs receive outbound Internet access, the configured CPU and memory floor, the run metadata, and a TTL five minutes beyond Jardinero's wall-clock deadline. `worker.sandbox_reaper_interval_min` is Tenki-only because that provider exposes project-wide reconciliation; the Freestyle TTL is its crash-cleanup backstop.
+`worker.freestyle_api_key_env` defaults to `FREESTYLE_API_KEY`. `worker.freestyle_api_url_env` defaults to `FREESTYLE_API_URL` and is only needed for an API endpoint override. Freestyle VMs receive outbound Internet access, the configured CPU and memory floor, the run metadata, and a TTL five minutes beyond Jardinero's wall-clock deadline. `worker.sandbox_reaper_interval_min` is Tenki-only because that provider exposes workspace-wide reconciliation; the Freestyle TTL is its crash-cleanup backstop.
 
 ### Model auth
 

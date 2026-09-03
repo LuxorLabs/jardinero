@@ -2,9 +2,9 @@ import type { AppConfig } from '../../config.js';
 import type { SandboxProvider, SandboxSession } from '../../types.js';
 import { terminateTenkiSessionInChild } from '../../adapters/tenki/tenki-terminate.js';
 import {
-  applyTenkiScope,
   buildTenkiClientOptions,
-  resolveTenkiScope,
+  JARDINERO_SANDBOX_APP,
+  resolveWorkspaceScope,
 } from '../../adapters/tenki/tenki-scope.js';
 import { SandboxWorkerRunner, type SandboxWorkerRunnerDeps } from './sandbox-worker.js';
 
@@ -33,6 +33,7 @@ export class TenkiSandboxProvider implements SandboxProvider {
   private readonly loadSdk: () => Promise<TenkiSdk>;
   private readonly terminateSession: typeof terminateTenkiSessionInChild;
   private sandbox?: Awaited<ReturnType<typeof this.openSandbox>>;
+  private workspaceScope?: { workspaceId: string };
 
   constructor(
     private readonly config: AppConfig,
@@ -45,9 +46,12 @@ export class TenkiSandboxProvider implements SandboxProvider {
 
   async create(options: Record<string, unknown>, _signal: AbortSignal): Promise<SandboxSession> {
     const sandbox = await this.openSandbox();
-    // The scope has to be resolved against a live client, so it is applied here
-    // rather than where the run assembles its create options.
-    applyTenkiScope(options, await resolveTenkiScope(this.config, this.env, sandbox));
+    // Tenki-only create options, so they go here and not where the run assembles
+    // what every provider shares. The reaper lists by the tag.
+    this.workspaceScope ??= await resolveWorkspaceScope(this.config, this.env, sandbox);
+    Object.assign(options, this.workspaceScope, {
+      tags: [JARDINERO_SANDBOX_APP],
+    });
     return sandbox.create(options);
   }
 

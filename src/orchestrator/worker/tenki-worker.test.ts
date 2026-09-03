@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { loadConfig, type AppConfig } from '../../config.js';
+import { JARDINERO_SANDBOX_APP } from '../../adapters/tenki/tenki-scope.js';
 import type { SandboxSession } from '../../types.js';
 import { TenkiSandboxProvider, TenkiWorkerRunner, loadTenkiSdk } from './tenki-worker.js';
 
@@ -23,52 +24,97 @@ describe('TenkiSandboxProvider.create', () => {
   const cases: Array<{
     name: string;
     env: NodeJS.ProcessEnv;
-    wantScope: Record<string, unknown>;
+    workspaces?: Array<{ id: string; name: string }>;
+    creates?: number;
+    wantScope?: Record<string, unknown>;
+    wantError?: RegExp;
+    wantWhoAmICalls: number;
+    wantSdkLoads: number;
   }> = [
     {
-      name: 'When the project is configured then should scope the create options to it',
-      env: { TENKI_PROJECT_ID: 'project-1' },
-      wantScope: { projectId: 'project-1' },
+      name: 'When a workspace is configured then should scope the create options to it',
+      env: { TENKI_WORKSPACE_ID: 'workspace-1' },
+      wantScope: { workspaceId: 'workspace-1' },
+      wantWhoAmICalls: 0,
+      wantSdkLoads: 1,
     },
     {
-      name: 'When a workspace is configured too then should scope the create options to both',
-      env: { TENKI_PROJECT_ID: 'project-1', TENKI_WORKSPACE_ID: 'workspace-1' },
-      wantScope: { projectId: 'project-1', workspaceId: 'workspace-1' },
+      // Nothing configured and one reachable workspace is unambiguous, so the
+      // create names the one the credential reaches.
+      name: 'When no workspace is configured then should scope to the one the credential reaches',
+      env: {},
+      wantScope: { workspaceId: 'ws-1' },
+      wantWhoAmICalls: 1,
+      wantSdkLoads: 1,
+    },
+    {
+      name: 'When several runs share the provider then should resolve the workspace and client once',
+      env: {},
+      creates: 2,
+      wantScope: { workspaceId: 'ws-1' },
+      wantWhoAmICalls: 1,
+      wantSdkLoads: 1,
+    },
+    {
+      // Scope resolution refusing is the run refusing; a create that picked a
+      // workspace on its own is what the guard exists to prevent.
+      name: 'When the credential reaches several workspaces then should refuse to create',
+      env: {},
+      workspaces: [
+        { id: 'ws-1', name: 'alpha' },
+        { id: 'ws-2', name: 'beta' },
+      ],
+      wantError: /Missing TENKI_WORKSPACE_ID; the Tenki credential reaches 2 workspaces/,
+      wantWhoAmICalls: 1,
+      wantSdkLoads: 1,
     },
   ];
 
   for (const testCase of cases) {
     test(testCase.name, async () => {
       const created: Array<Record<string, unknown>> = [];
+      let whoAmICalls = 0;
+      let sdkLoads = 0;
       const provider = new TenkiSandboxProvider(tenkiConfig(), testCase.env, {
-        loadSdk: async () => fakeSdk(created),
-      });
-
-      const session = await provider.create({ name: 'agent-run' }, new AbortController().signal);
-
-      assert.equal(session.id, 'session-1');
-      assert.deepEqual(created[0], { name: 'agent-run', ...testCase.wantScope });
-    });
-  }
-
-  test('When several runs share the provider then should build the client once', async () => {
-    let sdkLoads = 0;
-    const provider = new TenkiSandboxProvider(
-      tenkiConfig(),
-      { TENKI_PROJECT_ID: 'project-1' },
-      {
         loadSdk: async () => {
           sdkLoads += 1;
-          return fakeSdk();
+          return fakeSdk(created, {
+            workspaces: testCase.workspaces,
+            onWhoAmI: () => (whoAmICalls += 1),
+          });
         },
-      },
-    );
+      });
+      const creates = testCase.creates ?? 1;
+      const act = async (): Promise<void> => {
+        for (let attempt = 0; attempt < creates; attempt += 1) {
+          const session = await provider.create(
+            { name: 'agent-run' },
+            new AbortController().signal,
+          );
+          assert.equal(session.id, 'session-1');
+        }
+      };
 
-    await provider.create({}, new AbortController().signal);
-    await provider.create({}, new AbortController().signal);
+      if (testCase.wantError) {
+        await assert.rejects(act, testCase.wantError);
+      } else {
+        await act();
+      }
 
-    assert.equal(sdkLoads, 1);
-  });
+      assert.deepEqual(
+        created,
+        testCase.wantScope
+          ? Array.from({ length: creates }, () => ({
+              name: 'agent-run',
+              tags: [JARDINERO_SANDBOX_APP],
+              ...testCase.wantScope,
+            }))
+          : [],
+      );
+      assert.equal(whoAmICalls, testCase.wantWhoAmICalls);
+      assert.equal(sdkLoads, testCase.wantSdkLoads);
+    });
+  }
 });
 
 describe('TenkiSandboxProvider.waitReady', () => {
@@ -124,12 +170,21 @@ function tenkiConfig(): AppConfig {
 }
 
 // fakeSdk stands in for the SDK module: the sandbox client the provider builds,
-// and the session its create answers with.
-function fakeSdk(created: Array<Record<string, unknown>> = []) {
+// and the session its create answers with. The identity defaults to a single
+// workspace, which is what an unscoped create needs to be unambiguous.
+function fakeSdk(
+  created: Array<Record<string, unknown>> = [],
+  options: { workspaces?: Array<{ id: string; name: string }>; onWhoAmI?: () => void } = {},
+) {
+  const workspaces = options.workspaces ?? [{ id: 'ws-1', name: 'only' }];
   return {
     TenkiSandbox: class {
-      async create(options: Record<string, unknown>): Promise<SandboxSession> {
-        created.push(options);
+      async whoAmI() {
+        options.onWhoAmI?.();
+        return { workspaces };
+      }
+      async create(createOptions: Record<string, unknown>): Promise<SandboxSession> {
+        created.push(createOptions);
         return { id: 'session-1' } as SandboxSession;
       }
     },

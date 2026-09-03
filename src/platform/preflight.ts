@@ -134,7 +134,6 @@ export async function runPreflight(config: AppConfig, env = process.env): Promis
   if (config.worker.runner === 'tenki') {
     checks.push(await tenkiSdkCheck());
     checks.push(tenkiAuthCheck(config, env));
-    checks.push(tenkiProjectCheck(config, env));
   } else if (config.worker.runner === 'freestyle') {
     checks.push(await freestyleSdkCheck());
     checks.push(
@@ -320,21 +319,6 @@ function tenkiAuthCheck(config: AppConfig, env: NodeJS.ProcessEnv): PreflightChe
     name: 'tenki_auth',
     status: 'warning',
     detail: `No ${config.worker.tenkiApiKeyEnv}; SDK must rely on ambient Capsule auth.`,
-  };
-}
-
-function tenkiProjectCheck(config: AppConfig, env: NodeJS.ProcessEnv): PreflightCheck {
-  if (env[config.worker.tenkiProjectIdEnv]) {
-    return {
-      name: 'tenki_project',
-      status: 'ok',
-      detail: `${config.worker.tenkiProjectIdEnv} is configured.`,
-    };
-  }
-  return {
-    name: 'tenki_project',
-    status: 'warning',
-    detail: `No ${config.worker.tenkiProjectIdEnv}; worker will auto-select only if Tenki auth has exactly one project.`,
   };
 }
 

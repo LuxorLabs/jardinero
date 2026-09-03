@@ -33,14 +33,7 @@ describe('runPreflight', () => {
       env: { ORCHESTRATOR_ADMIN_TOKEN: 'admin' },
       wantChecks: { worker_runner: 'ok', admin_auth: 'ok', grafana_mcp: 'ok' },
       wantStatus: 'ok',
-      wantAbsent: [
-        'tenki_sdk',
-        'tenki_auth',
-        'tenki_project',
-        'freestyle_sdk',
-        'freestyle_auth',
-        'codex_auth',
-      ],
+      wantAbsent: ['tenki_sdk', 'tenki_auth', 'freestyle_sdk', 'freestyle_auth', 'codex_auth'],
     },
     {
       name: 'When the admin token is missing then should return error',
@@ -131,29 +124,15 @@ describe('runPreflight', () => {
       wantChecks: { tenki_sdk: 'ok', tenki_auth: 'ok' },
     },
     {
-      // Both tenki credentials warn rather than error: the SDK can still fall back
-      // to ambient Capsule auth, and to a single-project auth.
-      name: 'When the tenki key and project are missing then should warn on both',
+      // A warning rather than an error: the SDK can still fall back to ambient
+      // Capsule auth.
+      name: 'When the tenki key is missing then should warn',
       configure: (config) => {
         config.worker.runner = 'tenki';
         config.worker.codexAuthMode = 'access_token';
       },
       env: { ORCHESTRATOR_ADMIN_TOKEN: 'admin', CODEX_ACCESS_TOKEN: 'x' },
-      wantChecks: { tenki_auth: 'warning', tenki_project: 'warning' },
-    },
-    {
-      name: 'When the tenki project is configured then should report it',
-      configure: (config) => {
-        config.worker.runner = 'tenki';
-        config.worker.codexAuthMode = 'access_token';
-      },
-      env: {
-        ORCHESTRATOR_ADMIN_TOKEN: 'admin',
-        TENKI_API_KEY: 'tenki',
-        TENKI_PROJECT_ID: 'project-1',
-        CODEX_ACCESS_TOKEN: 'x',
-      },
-      wantChecks: { tenki_project: 'ok' },
+      wantChecks: { tenki_auth: 'warning' },
     },
     {
       name: 'When the runner is `freestyle` then should require its SDK and API key',
@@ -167,7 +146,7 @@ describe('runPreflight', () => {
         CODEX_ACCESS_TOKEN: 'x',
       },
       wantChecks: { freestyle_sdk: 'ok', freestyle_auth: 'ok', codex_auth: 'ok' },
-      wantAbsent: ['tenki_sdk', 'tenki_auth', 'tenki_project'],
+      wantAbsent: ['tenki_sdk', 'tenki_auth'],
     },
     {
       name: 'When the Freestyle API key is missing then should return error',
@@ -491,7 +470,7 @@ describe('what the report is safe to serve', () => {
     const values = {
       ORCHESTRATOR_ADMIN_TOKEN: 'admin-secret',
       TENKI_API_KEY: 'tenki-secret',
-      TENKI_PROJECT_ID: 'project-secret',
+      TENKI_WORKSPACE_ID: 'workspace-secret',
       OPENAI_API_KEY: 'sk-secret',
       LINEAR_CLIENT_ID: 'linear-id-secret',
       LINEAR_CLIENT_SECRET: 'linear-secret',

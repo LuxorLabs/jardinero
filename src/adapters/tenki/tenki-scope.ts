@@ -1,7 +1,7 @@
 import type { AppConfig } from '../../config.js';
 
 // Marks a sandbox as created by Jardinero. The reaper only ever touches sandboxes
-// carrying this so a shared Tenki project's foreign sandboxes are never reaped.
+// carrying this, so foreign sandboxes sharing the workspace are never reaped.
 export const JARDINERO_SANDBOX_APP = 'jardinero';
 
 // Metadata keys stamped on every worker sandbox and read back by the reaper.
@@ -14,74 +14,37 @@ export const SANDBOX_METADATA = {
   workflowInstance: 'workflow_instance',
 } as const;
 
-export interface TenkiScope {
-  workspaceId?: string;
-  projectId: string;
-}
-
-interface TenkiIdentityProject {
-  id: string;
-  name?: string;
-}
-
-interface TenkiIdentityWorkspace {
-  id: string;
-  name?: string;
-  projects: TenkiIdentityProject[];
-}
-
-interface TenkiIdentity {
-  workspaces: TenkiIdentityWorkspace[];
-}
-
+// The identity call the scope guard needs, declared here rather than imported
+// from the SDK so a test can supply one without loading it.
 export interface TenkiScopeClient {
-  whoAmI(): Promise<TenkiIdentity>;
+  whoAmI(): Promise<{ workspaces: { id: string; name: string }[] }>;
 }
 
-export async function resolveTenkiScope(
+// The workspace every Tenki call is scoped to, named on the request rather than
+// left to the server. A workspace API key carries its workspace as its own
+// identity and a service token can span several, and which kind the credential is
+// cannot be decided here -- both are prefixed tk_ -- so when nothing is configured
+// the credential is asked what it reaches and an ambiguous answer is refused.
+// Naming the resolved one keeps a credential that later gains workspaces from
+// moving where sandboxes land, which is unrecoverable once they exist.
+export async function resolveWorkspaceScope(
   config: AppConfig,
   env: NodeJS.ProcessEnv,
-  sandbox: TenkiScopeClient,
-): Promise<TenkiScope> {
-  const configuredProjectId = env[config.worker.tenkiProjectIdEnv]?.trim();
-  const configuredWorkspaceId = env[config.worker.tenkiWorkspaceIdEnv]?.trim();
-  if (configuredProjectId) {
-    return {
-      projectId: configuredProjectId,
-      workspaceId: configuredWorkspaceId || undefined,
-    };
-  }
+  client: TenkiScopeClient,
+): Promise<{ workspaceId: string }> {
+  const key = config.worker.tenkiWorkspaceIdEnv;
+  const configured = env[key]?.trim();
+  if (configured) return { workspaceId: configured };
 
-  const identity = await sandbox.whoAmI();
-  const projects = identity.workspaces.flatMap((workspace) =>
-    workspace.projects.map((project) => ({
-      workspaceId: workspace.id,
-      workspaceName: workspace.name,
-      projectId: project.id,
-      projectName: project.name,
-    })),
-  );
+  const workspaces = (await client.whoAmI()).workspaces;
+  if (workspaces.length === 1) return { workspaceId: workspaces[0]!.id };
 
-  if (projects.length === 1) {
-    return {
-      workspaceId: configuredWorkspaceId || projects[0]!.workspaceId,
-      projectId: projects[0]!.projectId,
-    };
-  }
-
-  const available = projects
-    .map((project) => `${project.projectName ?? '<unnamed>'} (${project.projectId})`)
-    .join(', ');
+  const reached = workspaces.map((workspace) => `${workspace.name} (${workspace.id})`).join(', ');
   throw new Error(
-    projects.length === 0
-      ? `Missing ${config.worker.tenkiProjectIdEnv}; Tenki auth returned no projects.`
-      : `Missing ${config.worker.tenkiProjectIdEnv}; Tenki auth has ${projects.length} projects: ${available}.`,
+    workspaces.length === 0
+      ? `Missing ${key}; the Tenki credential reaches no workspace.`
+      : `Missing ${key}; the Tenki credential reaches ${workspaces.length} workspaces: ${reached}.`,
   );
-}
-
-export function applyTenkiScope(options: Record<string, unknown>, scope: TenkiScope): void {
-  options.projectId = scope.projectId;
-  if (scope.workspaceId) options.workspaceId = scope.workspaceId;
 }
 
 // Client-construction options for `new TenkiSandbox(...)`: auth token and, when

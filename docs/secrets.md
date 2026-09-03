@@ -32,9 +32,8 @@ Reacting and replying needs write on Pull requests and Issues. Which events the 
 | Variable | What it is |
 |---|---|
 | `TENKI_API_KEY` | Your Tenki API key. Only optional when the runtime supplies ambient SDK auth to the process. |
-| `TENKI_PROJECT_ID` | Required when your Tenki auth can reach more than one project. With one, the runner calls `whoAmI()` and selects it. |
 | `TENKI_API_URL` | Only to override the SDK default. |
-| `TENKI_WORKSPACE_ID` | Only when the project id is ambiguous outside its workspace. |
+| `TENKI_WORKSPACE_ID` | Required for a service token that spans workspaces; startup refuses rather than let the server pick. A workspace API key carries its own workspace, and the server infers it. |
 
 ## Freestyle
 

@@ -175,7 +175,6 @@ export interface AppConfig {
     codexBypassSandbox: boolean;
     tenkiApiKeyEnv: string;
     tenkiApiUrlEnv: string;
-    tenkiProjectIdEnv: string;
     tenkiWorkspaceIdEnv: string;
     freestyleApiKeyEnv: string;
     freestyleApiUrlEnv: string;
@@ -194,13 +193,13 @@ export interface AppConfig {
     triageEffort: CodexEffort;
     // Stamped onto every sandbox's metadata so an operator (and a future
     // re-attach path) can tell which orchestrator deployment owns it. Distinct
-    // per deployment when several share a Tenki project.
+    // per deployment when several share a Tenki workspace.
     orchestratorId: string;
     // Backstop for the reaper: Tenki terminates an idle-paused sandbox after this
     // long instead of leaving it paused indefinitely. Bounds the leak for any
     // sandbox the reaper does not reclaim (e.g. its run row was pruned).
     sandboxPauseRetentionMs: number;
-    // How often the reaper sweeps the Tenki project for leaked sandboxes; < 1
+    // How often the reaper sweeps the Tenki workspace for leaked sandboxes; < 1
     // disables it.
     sandboxReaperIntervalMin: number;
   };
@@ -510,7 +509,6 @@ export function loadConfig(
       codexBypassSandbox: booleanAt(raw, ['worker', 'codex_bypass_sandbox'], true),
       tenkiApiKeyEnv: stringAt(raw, ['worker', 'tenki_api_key_env'], 'TENKI_API_KEY'),
       tenkiApiUrlEnv: stringAt(raw, ['worker', 'tenki_api_url_env'], 'TENKI_API_URL'),
-      tenkiProjectIdEnv: stringAt(raw, ['worker', 'tenki_project_id_env'], 'TENKI_PROJECT_ID'),
       tenkiWorkspaceIdEnv: stringAt(
         raw,
         ['worker', 'tenki_workspace_id_env'],

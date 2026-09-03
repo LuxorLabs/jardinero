@@ -145,7 +145,6 @@ describe('loadConfig', () => {
           codexBypassSandbox: true,
           tenkiApiKeyEnv: 'TENKI_API_KEY',
           tenkiApiUrlEnv: 'TENKI_API_URL',
-          tenkiProjectIdEnv: 'TENKI_PROJECT_ID',
           tenkiWorkspaceIdEnv: 'TENKI_WORKSPACE_ID',
           freestyleApiKeyEnv: 'FREESTYLE_API_KEY',
           freestyleApiUrlEnv: 'FREESTYLE_API_URL',

@@ -5,7 +5,7 @@ import type { SandboxRunState } from '../../store/types.js';
 import {
   buildTenkiClientOptions,
   JARDINERO_SANDBOX_APP,
-  resolveTenkiScope,
+  resolveWorkspaceScope,
   SANDBOX_METADATA,
 } from './tenki-scope.js';
 import { loadTenkiSdk } from '../../orchestrator/worker/tenki-worker.js';
@@ -28,10 +28,6 @@ const TERMINAL_RUN_STATUSES: ReadonlySet<SandboxRunState> = new Set([
 // Session states that are already gone or on their way out; nothing left to reap.
 const TERMINAL_SESSION_STATES: ReadonlySet<string> = new Set(['TERMINATING', 'TERMINATED']);
 
-// The page size listProjectSandboxes uses; the SDK does not paginate past it, so
-// a listed count at the cap means there may be more sandboxes we did not see.
-const LIST_PAGE_LIMIT = 100;
-
 export type ReapClassification =
   | 'reap_terminal_run'
   | 'skip_foreign'
@@ -49,7 +45,7 @@ export interface ReapableSession {
 // Decide whether a sandbox is a reclaimable leak. Keyed on the sandbox's run
 // being terminal in THIS orchestrator's store: run ids are globally unique, so a
 // terminal match is unambiguously our own finished run. That makes the reap safe
-// even when the Tenki project is shared with another orchestrator instance (a
+// even when the Tenki workspace is shared with another orchestrator instance (a
 // peer's in-flight run is unknown here, not terminal, so it is left alone).
 export function classifySandboxForReap(
   session: ReapableSession,
@@ -96,7 +92,7 @@ function emptyByClass(): Record<ReapClassification, number> {
   };
 }
 
-// One reconciliation cycle: list the project's sandboxes, terminate the leaked
+// One reconciliation cycle: list the workspace's sandboxes, terminate the leaked
 // ones, and return a per-classification tally. Never throws for a single failed
 // close; a close that hangs is bounded by closeTimeoutMs so one stuck sandbox
 // cannot wedge the sweep.
@@ -111,15 +107,6 @@ export async function reconcileTenkiSandboxes(
     failed: 0,
     byClass: emptyByClass(),
   };
-
-  if (sessions.length >= LIST_PAGE_LIMIT) {
-    // Do not let a full page read as "swept everything"; the tail waits for the
-    // next cycle. Surface it so a persistent backlog is visible to operators.
-    log.warn('sandbox listing hit the page limit; some sandboxes may be unseen this cycle', {
-      listed: sessions.length,
-      page_limit: LIST_PAGE_LIMIT,
-    });
-  }
 
   const toReap: ReapableSessionHandle[] = [];
   for (const session of sessions) {
@@ -194,7 +181,7 @@ export interface CreateTenkiReaperDeps {
   listSessions?: () => Promise<ReapableSessionHandle[]>;
 }
 
-// Wires the reconciliation loop to the live Tenki project (list) and this
+// Wires the reconciliation loop to the live Tenki workspace (list) and this
 // orchestrator's store (run-status lookup, audit, metrics). Used on a schedule
 // and once at boot to reclaim sandboxes stranded by a crash or restart.
 export function createTenkiReaper(
@@ -205,14 +192,23 @@ export function createTenkiReaper(
 ): TenkiReaper {
   const loadSdk = deps.loadSdk ?? loadTenkiSdk;
   const log = logger.child('reaper');
+  let scope: { workspaceId: string } | undefined;
 
   const listSessions =
     deps.listSessions ??
     (async (): Promise<ReapableSessionHandle[]> => {
       const sdk = await loadSdk();
+      // Closed once the listing is in: the v1 client dials on construction and
+      // holds the connection open until it is.
       const sandbox = new sdk.TenkiSandbox(buildTenkiClientOptions(config, env));
-      const scope = await resolveTenkiScope(config, env, sandbox);
-      return sandbox.listProjectSandboxes(scope.projectId);
+      try {
+        scope ??= await resolveWorkspaceScope(config, env, sandbox);
+        // Ask for our own tag so a sweep never pulls the workspace's foreign
+        // sessions; ownership is still classifySandboxForReap's call.
+        return await sandbox.list({ ...scope, tags: [JARDINERO_SANDBOX_APP] });
+      } finally {
+        sandbox.close();
+      }
     });
 
   return {

@@ -27,7 +27,7 @@
     "test": "pnpm run build:test && node --test --test-timeout=120000 \"dist/src/**/*.test.js\" \"dist/test/**/*.test.js\""
   },
   "dependencies": {
-    "@tenkicloud/sandbox": "0.3.4",
+    "@tenkicloud/sandbox": "1.0.2",
     "dotenv": "17.4.2",
     "freestyle": "0.2.2",
     "prom-client": "15.1.3",

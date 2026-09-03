@@ -3,117 +3,71 @@ import { describe, test } from 'node:test';
 
 import { loadConfig } from '../../config.js';
 import {
-  applyTenkiScope,
   buildTenkiClientOptions,
-  resolveTenkiScope,
+  resolveWorkspaceScope,
   type TenkiScopeClient,
 } from './tenki-scope.js';
 
-describe('resolveTenkiScope', () => {
-  const ONE_PROJECT = [{ id: 'workspace-1', projects: [{ id: 'project-1', name: 'Default' }] }];
-
-  const resolutionCases: Array<{
-    name: string;
-    env: NodeJS.ProcessEnv;
-    workspaces?: Workspace[];
-    want: { projectId: string; workspaceId?: string };
-  }> = [
-    {
-      // A configured project is authoritative, so the client is never called; the
-      // refusing client is what proves it.
-      name: 'When the project id is configured then should use it without calling tenki',
-      env: { TENKI_PROJECT_ID: 'project-1', TENKI_WORKSPACE_ID: 'workspace-1' },
-      want: { projectId: 'project-1', workspaceId: 'workspace-1' },
-    },
-    {
-      name: 'When only the project id is configured then should leave the workspace unset',
-      env: { TENKI_PROJECT_ID: 'project-1' },
-      want: { projectId: 'project-1', workspaceId: undefined },
-    },
-    {
-      name: 'When the auth has exactly one project then should select it',
-      env: {},
-      workspaces: ONE_PROJECT,
-      want: { projectId: 'project-1', workspaceId: 'workspace-1' },
-    },
-    {
-      name: 'When a workspace is configured then should keep it over the discovered one',
-      env: { TENKI_WORKSPACE_ID: 'workspace-override' },
-      workspaces: ONE_PROJECT,
-      want: { projectId: 'project-1', workspaceId: 'workspace-override' },
-    },
-  ];
-
-  for (const testCase of resolutionCases) {
-    test(testCase.name, async () => {
-      const client = testCase.workspaces ? identityClient(testCase.workspaces) : refusingClient();
-
-      const scope = await resolveTenkiScope(loadConfig(), testCase.env, client);
-
-      assert.deepEqual(scope, testCase.want);
-    });
-  }
-
-  // Without a configured project id the scope can only be inferred when the auth
-  // leaves exactly one candidate; anything else has to fail loudly rather than pick.
-  const rejectionCases: Array<{ name: string; workspaces: Workspace[]; wantError: RegExp }> = [
-    {
-      name: 'When the auth has several projects then should return error',
-      workspaces: [
-        {
-          id: 'workspace-1',
-          projects: [
-            { id: 'project-1', name: 'One' },
-            { id: 'project-2', name: 'Two' },
-          ],
-        },
-      ],
-      wantError: /Missing TENKI_PROJECT_ID; Tenki auth has 2 projects/,
-    },
-    {
-      name: 'When the auth has no project then should return error',
-      workspaces: [],
-      wantError: /Missing TENKI_PROJECT_ID; Tenki auth returned no projects./,
-    },
-  ];
-
-  for (const testCase of rejectionCases) {
-    test(testCase.name, async () => {
-      await assert.rejects(
-        () => resolveTenkiScope(loadConfig(), {}, identityClient(testCase.workspaces)),
-        testCase.wantError,
-      );
-    });
-  }
-});
-
-describe('applyTenkiScope', () => {
+describe('resolveWorkspaceScope', () => {
   const cases: Array<{
     name: string;
-    scope: { projectId: string; workspaceId?: string };
-    want: Record<string, unknown>;
+    env: NodeJS.ProcessEnv;
+    reaches: string[];
+    wantScope?: { workspaceId: string };
+    wantError?: RegExp;
+    wantCalls: number;
   }> = [
     {
-      name: 'When the scope has a workspace then should apply both ids',
-      scope: { projectId: 'project-1', workspaceId: 'workspace-1' },
-      want: { projectId: 'project-1', workspaceId: 'workspace-1' },
+      // A configured workspace is the whole answer, so the credential is never asked.
+      name: 'When a workspace is configured then should scope to it',
+      env: { TENKI_WORKSPACE_ID: 'workspace-1' },
+      reaches: ['one', 'two'],
+      wantScope: { workspaceId: 'workspace-1' },
+      wantCalls: 0,
     },
     {
-      // An absent workspace must not be written as undefined: the SDK would send
-      // the key and Tenki rejects it.
-      name: 'When the scope has no workspace then should apply the project only',
-      scope: { projectId: 'project-1' },
-      want: { projectId: 'project-1' },
+      name: 'When one workspace is reachable then should name it on the request',
+      env: {},
+      reaches: ['only'],
+      wantScope: { workspaceId: 'ws-0' },
+      wantCalls: 1,
+    },
+    {
+      name: 'When the configured workspace is blank then should fall back to the credential',
+      env: { TENKI_WORKSPACE_ID: '   ' },
+      reaches: ['only'],
+      wantScope: { workspaceId: 'ws-0' },
+      wantCalls: 1,
+    },
+    {
+      name: 'When several workspaces are reachable then should refuse and name them',
+      env: {},
+      reaches: ['alpha', 'beta'],
+      wantError:
+        /Missing TENKI_WORKSPACE_ID; the Tenki credential reaches 2 workspaces: alpha \(ws-0\), beta \(ws-1\)\./,
+      wantCalls: 1,
+    },
+    {
+      name: 'When no workspace is reachable then should refuse',
+      env: {},
+      reaches: [],
+      wantError: /Missing TENKI_WORKSPACE_ID; the Tenki credential reaches no workspace\./,
+      wantCalls: 1,
     },
   ];
 
   for (const testCase of cases) {
-    test(testCase.name, () => {
-      const options: Record<string, unknown> = {};
+    test(testCase.name, async () => {
+      const client = clientReaching(...testCase.reaches);
+      const act = () => resolveWorkspaceScope(loadConfig(), testCase.env, client);
 
-      applyTenkiScope(options, testCase.scope);
+      if (testCase.wantError) {
+        await assert.rejects(act, testCase.wantError);
+      } else {
+        assert.deepEqual(await act(), testCase.wantScope);
+      }
 
-      assert.deepEqual(options, testCase.want);
+      assert.equal(client.calls(), testCase.wantCalls);
     });
   }
 });
@@ -135,24 +89,14 @@ describe('buildTenkiClientOptions', () => {
   }
 });
 
-interface Workspace {
-  id: string;
-  name?: string;
-  projects: Array<{ id: string; name?: string }>;
-}
-
-function refusingClient(): TenkiScopeClient {
+// A credential reaching the named workspaces, counting how often it was asked.
+function clientReaching(...names: string[]): TenkiScopeClient & { calls: () => number } {
+  let calls = 0;
   return {
-    async whoAmI() {
-      throw new Error('whoAmI should not be called');
-    },
-  };
-}
-
-function identityClient(workspaces: Workspace[]): TenkiScopeClient {
-  return {
-    async whoAmI() {
-      return { workspaces };
+    calls: () => calls,
+    whoAmI: async () => {
+      calls += 1;
+      return { workspaces: names.map((name, index) => ({ id: `ws-${index}`, name })) };
     },
   };
 }

@@ -17,29 +17,27 @@ export const SANDBOX_METADATA = {
 // The identity call the scope guard needs, declared here rather than imported
 // from the SDK so a test can supply one without loading it.
 export interface TenkiScopeClient {
-  whoAmI(): Promise<{ workspaces?: { id: string; name: string }[] }>;
+  whoAmI(): Promise<{ workspaces: { id: string; name: string }[] }>;
 }
 
-// Workspace scope for the calls that accept one. A workspace API key carries its
-// workspace as its own identity, so the server infers the scope and this stays
-// unset; a service token can span workspaces and has to name the one it means.
-// Which kind the credential is cannot be decided here -- both are prefixed tk_ --
-// so when nothing is configured the credential is asked what it reaches, and an
-// ambiguous answer is refused. Letting the server pick would scatter sandboxes
-// across whichever workspace it chose, which is unrecoverable once they exist.
+// The workspace every Tenki call is scoped to, named on the request rather than
+// left to the server. A workspace API key carries its workspace as its own
+// identity and a service token can span several, and which kind the credential is
+// cannot be decided here -- both are prefixed tk_ -- so when nothing is configured
+// the credential is asked what it reaches and an ambiguous answer is refused.
+// Naming the resolved one keeps a credential that later gains workspaces from
+// moving where sandboxes land, which is unrecoverable once they exist.
 export async function resolveWorkspaceScope(
   config: AppConfig,
   env: NodeJS.ProcessEnv,
   client: TenkiScopeClient,
-): Promise<{ workspaceId?: string }> {
+): Promise<{ workspaceId: string }> {
   const key = config.worker.tenkiWorkspaceIdEnv;
   const configured = env[key]?.trim();
   if (configured) return { workspaceId: configured };
 
-  const workspaces = (await client.whoAmI()).workspaces ?? [];
-  // One reachable workspace is unambiguous, so the request stays unscoped and the
-  // server resolves it from the credential.
-  if (workspaces.length === 1) return {};
+  const workspaces = (await client.whoAmI()).workspaces;
+  if (workspaces.length === 1) return { workspaceId: workspaces[0]!.id };
 
   const reached = workspaces.map((workspace) => `${workspace.name} (${workspace.id})`).join(', ');
   throw new Error(

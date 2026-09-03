@@ -24,93 +24,97 @@ describe('TenkiSandboxProvider.create', () => {
   const cases: Array<{
     name: string;
     env: NodeJS.ProcessEnv;
-    wantScope: Record<string, unknown>;
+    workspaces?: Array<{ id: string; name: string }>;
+    creates?: number;
+    wantScope?: Record<string, unknown>;
+    wantError?: RegExp;
+    wantWhoAmICalls: number;
+    wantSdkLoads: number;
   }> = [
     {
       name: 'When a workspace is configured then should scope the create options to it',
       env: { TENKI_WORKSPACE_ID: 'workspace-1' },
       wantScope: { workspaceId: 'workspace-1' },
+      wantWhoAmICalls: 0,
+      wantSdkLoads: 1,
     },
     {
       // Nothing configured and one reachable workspace is unambiguous, so the
-      // create goes out unscoped and Tenki resolves it from the credential.
-      name: 'When no workspace is configured then should leave the create options unscoped',
+      // create names the one the credential reaches.
+      name: 'When no workspace is configured then should scope to the one the credential reaches',
       env: {},
-      wantScope: {},
+      wantScope: { workspaceId: 'ws-1' },
+      wantWhoAmICalls: 1,
+      wantSdkLoads: 1,
+    },
+    {
+      name: 'When several runs share the provider then should resolve the workspace and client once',
+      env: {},
+      creates: 2,
+      wantScope: { workspaceId: 'ws-1' },
+      wantWhoAmICalls: 1,
+      wantSdkLoads: 1,
+    },
+    {
+      // Scope resolution refusing is the run refusing; a create that picked a
+      // workspace on its own is what the guard exists to prevent.
+      name: 'When the credential reaches several workspaces then should refuse to create',
+      env: {},
+      workspaces: [
+        { id: 'ws-1', name: 'alpha' },
+        { id: 'ws-2', name: 'beta' },
+      ],
+      wantError: /Missing TENKI_WORKSPACE_ID; the Tenki credential reaches 2 workspaces/,
+      wantWhoAmICalls: 1,
+      wantSdkLoads: 1,
     },
   ];
 
   for (const testCase of cases) {
     test(testCase.name, async () => {
       const created: Array<Record<string, unknown>> = [];
+      let whoAmICalls = 0;
+      let sdkLoads = 0;
       const provider = new TenkiSandboxProvider(tenkiConfig(), testCase.env, {
-        loadSdk: async () => fakeSdk(created),
-      });
-
-      const session = await provider.create({ name: 'agent-run' }, new AbortController().signal);
-
-      assert.equal(session.id, 'session-1');
-      assert.deepEqual(created[0], {
-        name: 'agent-run',
-        tags: [JARDINERO_SANDBOX_APP],
-        ...testCase.wantScope,
-      });
-    });
-  }
-
-  test('When the credential reaches several workspaces then should refuse to create', async () => {
-    const provider = new TenkiSandboxProvider(
-      tenkiConfig(),
-      {},
-      {
-        loadSdk: async () =>
-          fakeSdk([], {
-            workspaces: [
-              { id: 'ws-1', name: 'alpha' },
-              { id: 'ws-2', name: 'beta' },
-            ],
-          }),
-      },
-    );
-
-    await assert.rejects(
-      () => provider.create({}, new AbortController().signal),
-      /Missing TENKI_WORKSPACE_ID; the Tenki credential reaches 2 workspaces/,
-    );
-  });
-
-  test('When several runs share the provider then should resolve the workspace once', async () => {
-    let whoAmICalls = 0;
-    const provider = new TenkiSandboxProvider(
-      tenkiConfig(),
-      {},
-      { loadSdk: async () => fakeSdk([], { onWhoAmI: () => (whoAmICalls += 1) }) },
-    );
-
-    await provider.create({}, new AbortController().signal);
-    await provider.create({}, new AbortController().signal);
-
-    assert.equal(whoAmICalls, 1);
-  });
-
-  test('When several runs share the provider then should build the client once', async () => {
-    let sdkLoads = 0;
-    const provider = new TenkiSandboxProvider(
-      tenkiConfig(),
-      {},
-      {
         loadSdk: async () => {
           sdkLoads += 1;
-          return fakeSdk();
+          return fakeSdk(created, {
+            workspaces: testCase.workspaces,
+            onWhoAmI: () => (whoAmICalls += 1),
+          });
         },
-      },
-    );
+      });
+      const creates = testCase.creates ?? 1;
+      const act = async (): Promise<void> => {
+        for (let attempt = 0; attempt < creates; attempt += 1) {
+          const session = await provider.create(
+            { name: 'agent-run' },
+            new AbortController().signal,
+          );
+          assert.equal(session.id, 'session-1');
+        }
+      };
 
-    await provider.create({}, new AbortController().signal);
-    await provider.create({}, new AbortController().signal);
+      if (testCase.wantError) {
+        await assert.rejects(act, testCase.wantError);
+      } else {
+        await act();
+      }
 
-    assert.equal(sdkLoads, 1);
-  });
+      assert.deepEqual(
+        created,
+        testCase.wantScope
+          ? Array.from({ length: creates }, () => ({
+              name: 'agent-run',
+              tags: [JARDINERO_SANDBOX_APP],
+              ...testCase.wantScope,
+            }))
+          : [],
+      );
+      assert.equal(whoAmICalls, testCase.wantWhoAmICalls);
+      assert.equal(sdkLoads, testCase.wantSdkLoads);
+    });
+  }
 });
 
 describe('TenkiSandboxProvider.waitReady', () => {

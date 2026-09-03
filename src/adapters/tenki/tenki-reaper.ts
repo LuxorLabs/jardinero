@@ -192,6 +192,7 @@ export function createTenkiReaper(
 ): TenkiReaper {
   const loadSdk = deps.loadSdk ?? loadTenkiSdk;
   const log = logger.child('reaper');
+  let scope: { workspaceId: string } | undefined;
 
   const listSessions =
     deps.listSessions ??
@@ -201,12 +202,10 @@ export function createTenkiReaper(
       // holds the connection open until it is.
       const sandbox = new sdk.TenkiSandbox(buildTenkiClientOptions(config, env));
       try {
+        scope ??= await resolveWorkspaceScope(config, env, sandbox);
         // Ask for our own tag so a sweep never pulls the workspace's foreign
         // sessions; ownership is still classifySandboxForReap's call.
-        return await sandbox.list({
-          ...(await resolveWorkspaceScope(config, env, sandbox)),
-          tags: [JARDINERO_SANDBOX_APP],
-        });
+        return await sandbox.list({ ...scope, tags: [JARDINERO_SANDBOX_APP] });
       } finally {
         sandbox.close();
       }

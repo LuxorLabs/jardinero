@@ -16,3 +16,28 @@ allowBuilds:
 minimumReleaseAge: 20160 # 14 days, in minutes
 minimumReleaseAgeStrict: true
 minimumReleaseAgeExcludePrune: true
+
+# These versions were locked before the cooldown existed and cannot satisfy it retroactively;
+# @tenkicloud/sandbox and freestyle were pinned by hand, the rest came in transitively under
+# vite. Each entry pins the exact version it excuses, so a later release of the same package is
+# still gated, and the prune above drops the entry once nothing resolves to it.
+minimumReleaseAgeExclude:
+  - '@oxc-project/types@0.147.0'
+  - 'rolldown@1.2.6'
+  - '@rolldown/binding-android-arm-eabi@1.2.6'
+  - '@rolldown/binding-android-arm64@1.2.6'
+  - '@rolldown/binding-darwin-arm64@1.2.6'
+  - '@rolldown/binding-darwin-x64@1.2.6'
+  - '@rolldown/binding-freebsd-x64@1.2.6'
+  - '@rolldown/binding-linux-arm-gnueabihf@1.2.6'
+  - '@rolldown/binding-linux-arm64-gnu@1.2.6'
+  - '@rolldown/binding-linux-arm64-musl@1.2.6'
+  - '@rolldown/binding-linux-ppc64-gnu@1.2.6'
+  - '@rolldown/binding-linux-s390x-gnu@1.2.6'
+  - '@rolldown/binding-linux-x64-gnu@1.2.6'
+  - '@rolldown/binding-linux-x64-musl@1.2.6'
+  - '@rolldown/binding-openharmony-arm64@1.2.6'
+  - '@rolldown/binding-win32-arm64-msvc@1.2.6'
+  - '@rolldown/binding-win32-x64-msvc@1.2.6'
+  - '@tenkicloud/sandbox@1.0.2'
+  - 'freestyle@0.2.2'

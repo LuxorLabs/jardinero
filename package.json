@@ -34,7 +34,7 @@
     "yaml": "2.9.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.8",
+    "@biomejs/biome": "2.5.10",
     "@changesets/changelog-github": "1.0.0",
     "@changesets/cli": "3.0.0",
     "@radix-ui/react-label": "2.1.15",

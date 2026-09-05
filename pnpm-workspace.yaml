@@ -7,3 +7,12 @@
 # peer used only by the deprecated transformWithEsbuild.
 allowBuilds:
   esbuild: true
+
+# Renovate delegates lock file refreshes to pnpm, so the cooldown has to be enforced
+# here; Renovate's own minimumReleaseAge never sees the transitive versions pnpm picks.
+# Strict mode refuses an immature version instead of auto-collecting it into
+# minimumReleaseAgeExclude, and the prune drops an exclusion once no resolved version
+# still needs it.
+minimumReleaseAge: 20160 # 14 days, in minutes
+minimumReleaseAgeStrict: true
+minimumReleaseAgeExcludePrune: true

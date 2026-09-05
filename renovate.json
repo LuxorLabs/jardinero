@@ -8,7 +8,8 @@
   "rebaseWhen": "conflicted",
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["every weekend"]
+    "schedule": ["every weekend"],
+    "minimumReleaseAgeBehaviour": "timestamp-optional"
   },
   "prConcurrentLimit": 5,
   "minimumReleaseAge": "14 days",

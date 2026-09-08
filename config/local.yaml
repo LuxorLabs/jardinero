@@ -1,8 +1,8 @@
 # The bundled configuration: what Jardinero loads when CONFIG_PATH is unset.
 #
 # It holds only what differs from the per-key defaults in src/config.ts; anything
-# omitted falls back to those. As shipped it overrides nothing, so a fresh clone
-# runs the mock worker with every optional workflow off, and needs no accounts.
+# omitted falls back to those. A fresh clone runs the mock worker with every
+# optional workflow off, and needs no accounts.
 #
 # Every key, what it does and what a real value looks like is in
 # docs/configuration.md. Credentials never belong here: the config names the
@@ -10,3 +10,10 @@
 #
 # A real deployment mounts its own file and points CONFIG_PATH at it rather than
 # editing this one.
+
+worker:
+  implementation_effort: "high"
+  model_generations:
+    gpt-5.6:
+      implementation: "gpt-6-astra"
+      verify: "gpt-5.6-sol"

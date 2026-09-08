@@ -6,16 +6,28 @@ import test from 'node:test';
 
 import { type AppConfig, loadConfig } from './config.js';
 
-// The bundled file is documentation plus commented examples. Anything it sets for
-// real is a default written in two places, and src/config.ts is the one that owns them.
-test('When the bundled config is loaded then should override nothing the code defaults set', () => {
+test('When the bundled config is loaded then should select Astra at high effort and preserve the other seats', () => {
   const emptyDir = mkdtempSync(path.join(tmpdir(), 'jardinero-empty-config-'));
   writeFileSync(path.join(emptyDir, 'empty.yaml'), '# no overrides\n');
 
   const bundled = loadConfig('config/local.yaml');
   const defaults = loadConfig('empty.yaml', emptyDir);
 
-  assert.deepEqual(comparable(bundled), comparable(defaults));
+  assert.deepEqual(comparable(bundled), {
+    ...comparable(defaults),
+    worker: {
+      ...defaults.worker,
+      implementationEffort: 'high',
+      modelGenerations: {
+        ...defaults.worker.modelGenerations,
+        'gpt-5.6': {
+          implementation: 'gpt-6-astra',
+          triage: 'gpt-5.6-terra',
+          verify: 'gpt-5.6-sol',
+        },
+      },
+    },
+  });
 });
 
 // The example is documentation someone copies, so a key renamed out from under it

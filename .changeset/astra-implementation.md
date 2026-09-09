@@ -1,1 +1,1 @@
-Configure implementation seats to use GPT-6 Astra at high effort while preserving Terra triage and Sol verification.
+Add the gpt-6 generation, whose implementation seat runs GPT-6 Astra while triage stays on Terra and verification on Sol.

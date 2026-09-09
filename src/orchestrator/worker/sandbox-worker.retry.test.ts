@@ -668,7 +668,7 @@ describe('SandboxWorkerRunner', () => {
         { exitCode: 0, stdout: '' },
       ],
       wantStatus: 'succeeded',
-      wantModels: ['gpt-5.6-terra', 'gpt-6-astra'],
+      wantModels: ['gpt-5.6-terra', 'gpt-5.6-sol'],
       wantRetries: 1,
     },
     {
@@ -678,7 +678,7 @@ describe('SandboxWorkerRunner', () => {
         { exitCode: 1, stdout: CAPACITY_STDOUT },
       ],
       wantStatus: 'failed',
-      wantModels: ['gpt-5.6-terra', 'gpt-6-astra'],
+      wantModels: ['gpt-5.6-terra', 'gpt-5.6-sol'],
       wantRetries: 1,
       // One tail per run, so what both attempts printed is in it.
       wantTail: `${CAPACITY_STDOUT}\n${CAPACITY_STDOUT}\n`,

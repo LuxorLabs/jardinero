@@ -17,11 +17,11 @@ describe('codexCommand', () => {
     wantEffort: string;
   }> = [
     {
-      name: 'When repo generation is `gpt-5.6` and seat is implementation then should use Astra at high effort',
+      name: 'When repo generation is 5 6 and seat is implementation then should use sol',
       workflow: 'pr_maintain',
       payload: { repo: 'acme/ledger' },
-      wantModel: 'gpt-6-astra',
-      wantEffort: 'high',
+      wantModel: 'gpt-5.6-sol',
+      wantEffort: 'xhigh',
     },
     {
       name: 'When repo generation is 5 6 and seat is triage then should use terra',
@@ -35,11 +35,13 @@ describe('codexCommand', () => {
       name: 'When the linear role is implement then should use the implementation seat',
       workflow: 'linear',
       payload: { repo: 'acme/ledger', role: 'implement' },
-      wantModel: 'gpt-6-astra',
-      wantEffort: 'high',
+      wantModel: 'gpt-5.6-sol',
+      wantEffort: 'xhigh',
     },
     {
-      name: 'When the linear role is verify then should preserve Sol at high effort',
+      // The verify seat has no generation entry, so it inherits the implementation tier
+      // while keeping its own pinned effort.
+      name: 'When the linear role is verify then should inherit the implementation tier',
       workflow: 'linear',
       payload: { repo: 'acme/ledger', role: 'verify', effort: 'high' },
       wantModel: 'gpt-5.6-sol',
@@ -50,15 +52,15 @@ describe('codexCommand', () => {
       name: 'When seat effort exceeds the repo cap then should clamp to xhigh',
       workflow: 'fix_implement',
       payload: { repo: 'acme/ledger', effort: 'max' },
-      wantModel: 'gpt-6-astra',
+      wantModel: 'gpt-5.6-sol',
       wantEffort: 'xhigh',
     },
     {
       name: 'When repo is unmapped then should use the default generation',
       workflow: 'pr_maintain',
       payload: { repo: 'acme/unmapped-repo' },
-      wantModel: 'gpt-6-astra',
-      wantEffort: 'high',
+      wantModel: 'gpt-5.6-sol',
+      wantEffort: 'xhigh',
     },
   ];
 

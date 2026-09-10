@@ -9,7 +9,22 @@ import {
 } from 'freestyle';
 
 import type { AppConfig } from '../../config.js';
-import { assertExecSucceeded, normalizeRemotePath, shellQuote } from './sandbox-utils.js';
+import {
+  assertExecSucceeded,
+  buildGitCloneCommand,
+  concatBytes,
+  normalizeRemotePath,
+  numberOption,
+  renderShellEnvironment,
+  shellQuote,
+  streamToBytes,
+  stringOption,
+  stringRecord,
+  throwIfAborted,
+  WORKER_HOME,
+  WORKER_USER,
+  workerEnvironment,
+} from './sandbox-utils.js';
 import type {
   SandboxExecOutput,
   SandboxExecResult,
@@ -19,11 +34,6 @@ import type {
 import { SandboxWorkerRunner, type SandboxWorkerRunnerDeps } from './sandbox-worker.js';
 
 type SandboxWriteStreamOptions = NonNullable<Parameters<SandboxSession['fs']['writeStream']>[2]>;
-
-// The agent user the prepared worker images ship, and where Codex auth is
-// forwarded to; both providers land on the same layout so one image serves each.
-const WORKER_USER = 'tenki';
-const WORKER_HOME = '/home/tenki';
 
 // The provider caps a one-shot exec at five minutes, which is why anything that
 // can outlast it goes through the PTY instead.
@@ -133,11 +143,7 @@ export class FreestyleSession implements SandboxSession {
   readonly git = {
     clone: async (url: string, options: { directory?: string } = {}) => {
       const directory = options.directory ?? `${WORKER_HOME}/workspace/repo`;
-      const credentialHelper =
-        '!f() { if [ "$1" = get ]; then echo username=x-access-token; echo "password=$GITHUB_TOKEN"; fi; }; f';
-      const result = await this.execLong(
-        `git -c credential.helper=${shellQuote(credentialHelper)} clone ${shellQuote(url)} ${shellQuote(directory)}`,
-      );
+      const result = await this.execLong(buildGitCloneCommand(url, directory));
       assertExecSucceeded(result, 'clone repository');
     },
   };
@@ -324,13 +330,6 @@ export function freestyleSlug(value: string): string {
   return normalized || `jardinero-${randomUUID().slice(0, 8)}`;
 }
 
-export function renderShellEnvironment(env: Record<string, string>): string {
-  return `${Object.entries(env)
-    .filter(([name]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
-    .map(([name, value]) => `export ${name}=${shellQuote(value)}`)
-    .join('\n')}\n`;
-}
-
 function freestyleApiTarget(baseUrl: string | undefined): string {
   if (!baseUrl) return 'beta-api.freestyle.sh';
   try {
@@ -382,68 +381,12 @@ function assertFreestyleExecSucceeded(result: ExecResult, label: string): void {
   );
 }
 
-async function streamToBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  try {
-    for (;;) {
-      const next = await reader.read();
-      if (next.done) break;
-      chunks.push(next.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return concatBytes(chunks);
-}
-
-function concatBytes(chunks: Uint8Array[]): Uint8Array {
-  const result = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
-}
-
 function sanitizeMetadata(metadata: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(metadata)
       .slice(0, 64)
       .map(([key, value]) => [key.slice(0, 63), value.slice(0, 63)]),
   );
-}
-
-function stringRecord(value: unknown): Record<string, string> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string',
-    ),
-  );
-}
-
-function stringOption(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function numberOption(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function workerEnvironment(env: Record<string, string>): Record<string, string> {
-  return {
-    ...env,
-    HOME: WORKER_HOME,
-    USER: WORKER_USER,
-    LOGNAME: WORKER_USER,
-    PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-  };
-}
-
-function throwIfAborted(signal: AbortSignal): void {
-  if (signal.aborted) throw new Error('Run aborted.');
 }
 
 function toError(value: unknown): Error {

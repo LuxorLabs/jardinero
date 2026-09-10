@@ -4,11 +4,20 @@ import { describe, test } from 'node:test';
 import type { SandboxExecResult } from '../../types.js';
 import {
   assertExecSucceeded,
+  buildGitCloneCommand,
+  concatBytes,
   execStderr,
   execStdout,
   normalizeRemotePath,
+  numberOption,
   remoteJoin,
+  renderShellEnvironment,
   shellQuote,
+  streamToBytes,
+  stringOption,
+  stringRecord,
+  throwIfAborted,
+  workerEnvironment,
 } from './sandbox-utils.js';
 
 describe('assertExecSucceeded', () => {
@@ -187,6 +196,194 @@ describe('remoteJoin', () => {
   for (const testCase of cases) {
     test(testCase.name, () => {
       assert.equal(remoteJoin(testCase.root, ...testCase.parts), testCase.want);
+    });
+  }
+});
+
+describe('workerEnvironment', () => {
+  const cases: Array<{ name: string; env: Record<string, string>; want: Record<string, string> }> =
+    [
+      {
+        name: 'When the run carries variables then should keep them under the worker identity',
+        env: { GITHUB_TOKEN: 'gh' },
+        want: {
+          GITHUB_TOKEN: 'gh',
+          HOME: '/home/tenki',
+          USER: 'tenki',
+          LOGNAME: 'tenki',
+          PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        },
+      },
+      {
+        // The worker identity is not the caller's to choose.
+        name: 'When the run tries to set HOME then should override it',
+        env: { HOME: '/root' },
+        want: {
+          HOME: '/home/tenki',
+          USER: 'tenki',
+          LOGNAME: 'tenki',
+          PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        },
+      },
+    ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.deepEqual(workerEnvironment(testCase.env), testCase.want);
+    });
+  }
+});
+
+describe('renderShellEnvironment', () => {
+  const cases: Array<{ name: string; env: Record<string, string>; want: string }> = [
+    {
+      name: 'When a value contains shell syntax then should quote it',
+      env: { SAFE_NAME: "one'two" },
+      want: "export SAFE_NAME='one'\\''two'\n",
+    },
+    {
+      // An unexportable name would render a line the shell refuses to source.
+      name: 'When a name is not a valid identifier then should omit it',
+      env: { 'NOT-SAFE': 'value' },
+      want: '\n',
+    },
+    { name: 'When the environment is empty then should render nothing', env: {}, want: '\n' },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.equal(renderShellEnvironment(testCase.env), testCase.want);
+    });
+  }
+});
+
+describe('buildGitCloneCommand', () => {
+  test('When a clone is built then should pass the token through a helper, never the URL', () => {
+    const command = buildGitCloneCommand('https://github.com/example/repo.git', '/w/repo');
+
+    assert.match(command, /credential\.helper/);
+    assert.match(command, /password=\$GITHUB_TOKEN/);
+    assert.ok(command.includes("'https://github.com/example/repo.git'"), command);
+    assert.ok(command.includes("'/w/repo'"), command);
+  });
+});
+
+describe('throwIfAborted', () => {
+  const cases: Array<{ name: string; aborted: boolean; wantError?: RegExp }> = [
+    { name: 'When the signal is live then should succeed', aborted: false },
+    {
+      name: 'When the signal is aborted then should return error',
+      aborted: true,
+      wantError: /Run aborted/,
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      const controller = new AbortController();
+      if (testCase.aborted) controller.abort();
+
+      const act = () => throwIfAborted(controller.signal);
+      if (testCase.wantError) assert.throws(act, testCase.wantError);
+      else assert.doesNotThrow(act);
+    });
+  }
+});
+
+describe('streamToBytes', () => {
+  const cases: Array<{ name: string; chunks: string[]; want: string }> = [
+    { name: 'When the stream has one chunk then should return it', chunks: ['only'], want: 'only' },
+    {
+      name: 'When the stream has several chunks then should join them in order',
+      chunks: ['a', 'b', 'c'],
+      want: 'abc',
+    },
+    { name: 'When the stream is empty then should return no bytes', chunks: [], want: '' },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of testCase.chunks) controller.enqueue(encoder.encode(chunk));
+          controller.close();
+        },
+      });
+
+      assert.equal(new TextDecoder().decode(await streamToBytes(stream)), testCase.want);
+    });
+  }
+});
+
+describe('concatBytes', () => {
+  const cases: Array<{ name: string; chunks: string[]; want: string }> = [
+    {
+      name: 'When chunks are given then should join them in order',
+      chunks: ['a', 'bc'],
+      want: 'abc',
+    },
+    { name: 'When no chunks are given then should return no bytes', chunks: [], want: '' },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      const encoder = new TextEncoder();
+      const joined = concatBytes(testCase.chunks.map((chunk) => encoder.encode(chunk)));
+
+      assert.equal(new TextDecoder().decode(joined), testCase.want);
+    });
+  }
+});
+
+describe('stringRecord', () => {
+  const cases: Array<{ name: string; value: unknown; want: Record<string, string> }> = [
+    {
+      name: 'When every value is a string then should keep them all',
+      value: { a: 'x' },
+      want: { a: 'x' },
+    },
+    {
+      name: 'When a value is not a string then should drop that entry',
+      value: { a: 'x', b: 2 },
+      want: { a: 'x' },
+    },
+    { name: 'When the value is an array then should return empty', value: ['a'], want: {} },
+    { name: 'When the value is null then should return empty', value: null, want: {} },
+    { name: 'When the value is not an object then should return empty', value: 'a', want: {} },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.deepEqual(stringRecord(testCase.value), testCase.want);
+    });
+  }
+});
+
+describe('stringOption', () => {
+  const cases: Array<{ name: string; value: unknown; want?: string }> = [
+    { name: 'When the value is a string then should trim it', value: '  x  ', want: 'x' },
+    { name: 'When the value is blank then should return undefined', value: '   ' },
+    { name: 'When the value is not a string then should return undefined', value: 7 },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.equal(stringOption(testCase.value), testCase.want);
+    });
+  }
+});
+
+describe('numberOption', () => {
+  const cases: Array<{ name: string; value: unknown; want?: number }> = [
+    { name: 'When the value is a number then should return it', value: 4, want: 4 },
+    { name: 'When the value is not finite then should return undefined', value: Number.NaN },
+    { name: 'When the value is not a number then should return undefined', value: '4' },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.equal(numberOption(testCase.value), testCase.want);
     });
   }
 });

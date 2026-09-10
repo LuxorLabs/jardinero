@@ -172,6 +172,8 @@ Recipes live in [`../tenki-images/`](../tenki-images/), with three worked exampl
 pnpm run smoke:tenki
 ```
 
+It creates a real sandbox on your image, writes and reads a file, runs a command, forwards your Codex auth and asks the model for a short answer. If that passes, the expensive half of the setup is done.
+
 ### Building it on Freestyle
 
 Choose the recipe exactly as above, then render its shared base plus repository toolchain into one setup script. `--no-verify` prevents the Tenki build driver's canary body from being appended; you will verify the resulting snapshot on Freestyle instead.
@@ -224,8 +226,6 @@ worker:
 ```
 
 **Check it.** Create a sandbox from the snapshot, run the recipe's `*.verify.sh` from a fresh clone inside it, then delete it. With Jardinero running, `/setup` must report `daytona_sdk`, `daytona_auth` and `codex_auth` as `ok` before the first paid run.
-
-It creates a real sandbox on your image, writes and reads a file, runs a command, forwards your Codex auth and asks the model for a short answer. If that passes, the expensive half of the setup is done.
 
 ## 5. Put it behind a public URL
 

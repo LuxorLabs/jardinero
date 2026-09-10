@@ -6,19 +6,22 @@ import { DaytonaProcessExecutionTimeoutError, type Sandbox } from '@daytona/sdk'
 import { loadConfig, type AppConfig } from '../../config.js';
 import type { SandboxRun } from '../../store/types.js';
 import type { SandboxRunContext } from '../sandbox-pool.js';
+import { captureLogs } from '../../testing/logger.js';
 import {
   DaytonaSandboxProvider,
   DaytonaWorkerRunner,
   daytonaSandboxCreateParams,
   daytonaSandboxName,
-  renderShellEnvironment,
+  unusedResourceOverrides,
 } from './daytona-worker.js';
 
 describe('DaytonaWorkerRunner', () => {
   test('When it is constructed without credentials then should defer authentication until a run', () => {
     assert.doesNotThrow(() => new DaytonaWorkerRunner(daytonaConfig(), {}));
   });
+});
 
+describe('DaytonaWorkerRunner.run', () => {
   test('When a run finishes then should drive it on a Daytona sandbox and delete it', async () => {
     const fake = fakeSandbox({ streamedStdout: '{"type":"turn.completed"}\n' });
     const config = daytonaConfig();
@@ -117,6 +120,18 @@ describe('DaytonaSandboxProvider.create', () => {
       assert.equal(fake.deleteCalls, testCase.wantDeletes);
     });
   }
+
+  test('When a repo sized its sandbox then should warn that the size is not used', async () => {
+    const config = daytonaConfig();
+    config.worker.repos = { 'acme/repo': { resources: { cpuCores: 8, memoryMb: 16384 } } };
+    const provider = providerWith(fakeSandbox(), () => undefined, config);
+    const logs = captureLogs(provider, 'log');
+
+    await provider.create({}, new AbortController().signal);
+
+    assert.equal(logs.at(0)?.level, 'warn');
+    assert.deepEqual(logs.at(0)?.fields, { configured: ['acme/repo'] });
+  });
 
   test('When the configured credential is absent then should reject before calling the API', async () => {
     const provider = new DaytonaSandboxProvider(daytonaConfig(), {});
@@ -272,12 +287,22 @@ describe('DaytonaSession.exec', () => {
       wantDeletedSessions: 1,
     },
     {
-      name: 'When the command completes with no exit code then should read it as a failure',
+      // The stream closes on any socket close, so an exit status that is not
+      // recorded yet must be waited for, never read as a failure.
+      name: 'When the exit code lands after the stream closes then should wait for it',
+      sandbox: { sessionExitCode: 7, pollsBeforeExitCode: 2 },
+      command: 'long-command',
+      stream: true,
+      wantExitCode: 7,
+      wantStdout: '',
+      wantDeletedSessions: 1,
+    },
+    {
+      name: 'When no exit code is ever recorded then should return error',
       sandbox: { sessionExitCode: null },
       command: 'long-command',
       stream: true,
-      wantExitCode: 1,
-      wantStdout: '',
+      wantError: /never reported an exit status/,
       wantDeletedSessions: 1,
     },
     {
@@ -500,15 +525,6 @@ describe('daytonaSandboxName', () => {
   });
 });
 
-describe('renderShellEnvironment', () => {
-  test('When values contain shell syntax and a name is invalid then should quote values and omit the name', () => {
-    assert.equal(
-      renderShellEnvironment({ SAFE_NAME: "one'two", 'NOT-SAFE': 'value' }),
-      "export SAFE_NAME='one'\\''two'\n",
-    );
-  });
-});
-
 interface FakeSandbox extends Sandbox {
   execCommands: string[];
   sessionCommands: string[];
@@ -518,9 +534,13 @@ interface FakeSandbox extends Sandbox {
   deleteCalls: number;
 }
 
-function providerWith(fake: FakeSandbox, onCreate: () => void = () => undefined) {
+function providerWith(
+  fake: FakeSandbox,
+  onCreate: () => void = () => undefined,
+  config: AppConfig = daytonaConfig(),
+) {
   return new DaytonaSandboxProvider(
-    daytonaConfig(),
+    config,
     { DAYTONA_API_KEY: 'key' },
     {
       createClient: () => ({
@@ -543,6 +563,8 @@ interface FakeSandboxOptions {
   streamedStderr?: string;
   // null is how a command that never reported an exit code reads back.
   sessionExitCode?: number | null;
+  // Reads that answer with no exit status before the recorded one appears.
+  pollsBeforeExitCode?: number;
   missingCommandId?: boolean;
   logsError?: Error;
   holdLogsOpen?: boolean;
@@ -554,6 +576,7 @@ function fakeSandbox(options: FakeSandboxOptions = {}): FakeSandbox {
   const sessionCommands: string[] = [];
   const createdSessions: string[] = [];
   const deletedSessions: string[] = [];
+  let exitCodeReads = 0;
   let deleteCalls = 0;
   const sandbox = {
     id: 'sandbox-1',
@@ -609,9 +632,11 @@ function fakeSandbox(options: FakeSandboxOptions = {}): FakeSandbox {
         if (options.streamedStdout) onStdout(options.streamedStdout);
         if (options.streamedStderr) onStderr(options.streamedStderr);
       },
-      getSessionCommand: async () => ({
-        exitCode: options.sessionExitCode === undefined ? 0 : options.sessionExitCode,
-      }),
+      getSessionCommand: async () => {
+        exitCodeReads += 1;
+        if (exitCodeReads <= (options.pollsBeforeExitCode ?? 0)) return { exitCode: null };
+        return { exitCode: options.sessionExitCode === undefined ? 0 : options.sessionExitCode };
+      },
       deleteSession: async (sessionId: string) => {
         deletedSessions.push(sessionId);
       },
@@ -633,6 +658,62 @@ function applyRootMove(command: string, files: Map<string, Uint8Array>): void {
   files.delete(move[1]!);
   files.set(move[2]!, content);
 }
+
+describe('unusedResourceOverrides', () => {
+  const cases: Array<{
+    name: string;
+    configure(config: AppConfig): void;
+    want: string[];
+  }> = [
+    {
+      name: 'When nothing is sized then should name nothing',
+      configure: () => undefined,
+      want: [],
+    },
+    {
+      name: 'When a repo is sized then should name that repo',
+      configure: (config) => {
+        config.worker.repos = { 'acme/repo': { resources: { cpuCores: 8, memoryMb: 16384 } } };
+      },
+      want: ['acme/repo'],
+    },
+    {
+      name: 'When only the default is sized then should name the default',
+      configure: (config) => {
+        config.worker.default.resources = { cpuCores: 8, memoryMb: 16384 };
+      },
+      want: ['default'],
+    },
+    {
+      name: 'When both are sized then should name the default first',
+      configure: (config) => {
+        config.worker.default.resources = { cpuCores: 8, memoryMb: 16384 };
+        config.worker.repos = { 'acme/repo': { resources: { cpuCores: 4, memoryMb: 8192 } } };
+      },
+      want: ['default', 'acme/repo'],
+    },
+    {
+      // A repo entry without resources takes the size it is given, so it is not
+      // something the operator asked for in vain.
+      name: 'When a repo is mapped without a size then should name nothing',
+      configure: (config) => {
+        config.worker.repos = { 'acme/repo': { image: 'snapshot-2' } };
+      },
+      want: [],
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      const config = daytonaConfig();
+      config.worker.default.resources = undefined;
+      config.worker.repos = {};
+      testCase.configure(config);
+
+      assert.deepEqual(unusedResourceOverrides(config), testCase.want);
+    });
+  }
+});
 
 function daytonaConfig(): AppConfig {
   const config = loadConfig();

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   Daytona,
@@ -8,7 +9,23 @@ import {
 } from '@daytona/sdk';
 
 import type { AppConfig } from '../../config.js';
-import { assertExecSucceeded, normalizeRemotePath, shellQuote } from './sandbox-utils.js';
+import { logger } from '../../platform/logger.js';
+import {
+  assertExecSucceeded,
+  buildGitCloneCommand,
+  concatBytes,
+  normalizeRemotePath,
+  numberOption,
+  renderShellEnvironment,
+  shellQuote,
+  streamToBytes,
+  stringOption,
+  stringRecord,
+  throwIfAborted,
+  WORKER_HOME,
+  WORKER_USER,
+  workerEnvironment,
+} from './sandbox-utils.js';
 import type {
   SandboxExecOutput,
   SandboxExecResult,
@@ -18,12 +35,6 @@ import type {
 import { SandboxWorkerRunner, type SandboxWorkerRunnerDeps } from './sandbox-worker.js';
 
 type SandboxWriteStreamOptions = NonNullable<Parameters<SandboxSession['fs']['writeStream']>[2]>;
-
-// The agent user the prepared worker images ship, and where Codex auth is
-// forwarded to; every provider lands on the same layout so one image recipe
-// serves each.
-const WORKER_USER = 'tenki';
-const WORKER_HOME = '/home/tenki';
 
 // The run's environment (tokens included) is sourced from this file because the
 // sudo hop to the worker user strips inherited variables, and inlining them in
@@ -37,6 +48,11 @@ const EXEC_TIMEOUT_SECONDS = 300;
 // Creation waits for the runner to pull the worker snapshot, which can far
 // outlast the SDK's 60s default on a cold pull.
 const CREATE_TIMEOUT_SECONDS = 600;
+
+// How many times the exit status is re-read and how long between reads; together
+// they are the budget that has to outlast the daemon's recording gap.
+const EXIT_CODE_ATTEMPTS = 8;
+const EXIT_CODE_POLL_MS = 250;
 
 // Command results the session consumes, structural because the SDK does not
 // re-export its ExecuteResponse type from the package root.
@@ -59,10 +75,20 @@ export class DaytonaWorkerRunner extends SandboxWorkerRunner {
   }
 }
 
+// unusedResourceOverrides names what an operator sized in vain: a Daytona sandbox
+// takes its CPU and memory from the snapshot, so the config's never reach it.
+export function unusedResourceOverrides(config: AppConfig): string[] {
+  const repos = Object.entries(config.worker.repos)
+    .filter(([, target]) => target.resources !== undefined)
+    .map(([repo]) => repo);
+  return config.worker.default.resources === undefined ? repos : ['default', ...repos];
+}
+
 export class DaytonaSandboxProvider implements SandboxProvider {
   readonly name = 'Daytona';
   readonly apiTarget: string;
   private readonly createClient: () => DaytonaClient;
+  private readonly log = logger.child('worker');
 
   constructor(
     private readonly config: AppConfig,
@@ -84,6 +110,10 @@ export class DaytonaSandboxProvider implements SandboxProvider {
 
   async create(options: Record<string, unknown>, signal: AbortSignal): Promise<SandboxSession> {
     throwIfAborted(signal);
+    const configured = unusedResourceOverrides(this.config);
+    if (configured.length > 0) {
+      this.log.warn('worker.resources does not apply on the Daytona runner', { configured });
+    }
     const client = this.createClient();
     const params = daytonaSandboxCreateParams(options);
     const sandbox = await client.create(params, { timeout: CREATE_TIMEOUT_SECONDS });
@@ -143,11 +173,7 @@ export class DaytonaSession implements SandboxSession {
   readonly git = {
     clone: async (url: string, options: { directory?: string } = {}) => {
       const directory = options.directory ?? `${WORKER_HOME}/workspace/repo`;
-      const credentialHelper =
-        '!f() { if [ "$1" = get ]; then echo username=x-access-token; echo "password=$GITHUB_TOKEN"; fi; }; f';
-      const result = await this.execStreaming(
-        `git -c credential.helper=${shellQuote(credentialHelper)} clone ${shellQuote(url)} ${shellQuote(directory)}`,
-      );
+      const result = await this.execStreaming(buildGitCloneCommand(url, directory));
       assertExecSucceeded(result, 'clone repository');
     },
   };
@@ -257,9 +283,8 @@ export class DaytonaSession implements SandboxSession {
       await Promise.race([logs, aborted]);
       onOutput?.({ data: new Uint8Array(), isStderr: false, isFinal: true });
 
-      const completed = await process.getSessionCommand(sessionId, commandId);
       return {
-        exitCode: completed.exitCode ?? 1,
+        exitCode: await this.awaitExitCode(sessionId, commandId),
         stdout: concatBytes(stdout),
         stderr: concatBytes(stderr),
       };
@@ -267,6 +292,24 @@ export class DaytonaSession implements SandboxSession {
       if (abortHandler) this.signal.removeEventListener('abort', abortHandler);
       await process.deleteSession(sessionId).catch(() => undefined);
     }
+  }
+
+  // awaitExitCode waits for the status Daytona records once the command ends; the
+  // log stream closes on any socket close, so it can still be absent here, and
+  // reading that as a failure would discard a finished Codex run.
+  private async awaitExitCode(sessionId: string, commandId: string): Promise<number> {
+    const process = this.sandbox.process;
+    for (let attempt = 0; attempt < EXIT_CODE_ATTEMPTS; attempt += 1) {
+      throwIfAborted(this.signal);
+      const completed = await process.getSessionCommand(sessionId, commandId);
+      if (typeof completed.exitCode === 'number') return completed.exitCode;
+      await delay(EXIT_CODE_POLL_MS);
+    }
+    throw new Error(
+      `Daytona never reported an exit status for the session command after ${
+        (EXIT_CODE_ATTEMPTS * EXIT_CODE_POLL_MS) / 1_000
+      }s.`,
+    );
   }
 }
 
@@ -325,13 +368,6 @@ export function daytonaSandboxName(value: string): string {
     .slice(0, 63)
     .replace(/-$/g, '');
   return normalized || `jardinero-${randomUUID().slice(0, 8)}`;
-}
-
-export function renderShellEnvironment(env: Record<string, string>): string {
-  return `${Object.entries(env)
-    .filter(([name]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
-    .map(([name, value]) => `export ${name}=${shellQuote(value)}`)
-    .join('\n')}\n`;
 }
 
 function daytonaApiTarget(apiUrl: string | undefined): string {
@@ -407,21 +443,6 @@ function assertDaytonaExecSucceeded(response: DaytonaExecResponse, label: string
   );
 }
 
-async function streamToBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  try {
-    for (;;) {
-      const next = await reader.read();
-      if (next.done) break;
-      chunks.push(next.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return concatBytes(chunks);
-}
-
 function bytesToReadableStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -429,16 +450,6 @@ function bytesToReadableStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
-}
-
-function concatBytes(chunks: Uint8Array[]): Uint8Array {
-  const result = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
 }
 
 function toBuffer(content: string | Uint8Array): Buffer {
@@ -451,35 +462,4 @@ function sanitizeLabels(labels: Record<string, string>): Record<string, string> 
       .slice(0, 64)
       .map(([key, value]) => [key.slice(0, 63), value.slice(0, 63)]),
   );
-}
-
-function stringRecord(value: unknown): Record<string, string> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string',
-    ),
-  );
-}
-
-function stringOption(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function numberOption(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function workerEnvironment(env: Record<string, string>): Record<string, string> {
-  return {
-    ...env,
-    HOME: WORKER_HOME,
-    USER: WORKER_USER,
-    LOGNAME: WORKER_USER,
-    PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-  };
-}
-
-function throwIfAborted(signal: AbortSignal): void {
-  if (signal.aborted) throw new Error('Run aborted.');
 }

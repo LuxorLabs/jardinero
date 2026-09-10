@@ -11,7 +11,6 @@ import {
   FreestyleWorkerRunner,
   freestyleSlug,
   freestyleVmCreateOptions,
-  renderShellEnvironment,
 } from './freestyle-worker.js';
 
 describe('FreestyleWorkerRunner', () => {
@@ -52,6 +51,7 @@ describe('FreestyleSandboxProvider.create', () => {
     aborted?: boolean;
     abortAfterCreate?: boolean;
     resizeError?: Error;
+    rootExecStatusCode?: number;
     wantCreateCalls: number;
     wantResize?: Record<string, number>;
     wantDeletes: number;
@@ -98,11 +98,27 @@ describe('FreestyleSandboxProvider.create', () => {
       wantDeletes: 1,
       wantError: /Run aborted/,
     },
+    {
+      // A snapshot the worker user cannot be prepared on is unusable, so the VM
+      // goes away instead of running the agent on a broken box.
+      name: 'When the worker user cannot be prepared then should delete the VM',
+      options: {},
+      rootExecStatusCode: 1,
+      wantCreateCalls: 1,
+      wantDeletes: 1,
+      wantError: /prepare Freestyle worker user failed with exit code 1/,
+    },
   ];
 
   for (const testCase of cases) {
     test(testCase.name, async () => {
-      const fake = fakeVm({ resources: testCase.resources, resizeError: testCase.resizeError });
+      const fake = fakeVm({
+        resources: testCase.resources,
+        resizeError: testCase.resizeError,
+        ...(testCase.rootExecStatusCode === undefined
+          ? {}
+          : { rootExecStatusCode: testCase.rootExecStatusCode }),
+      });
       let createCalls = 0;
       const controller = new AbortController();
       const provider = providerWith(fake, () => {
@@ -290,6 +306,17 @@ describe('FreestyleSession.exec', () => {
       wantPtySignals: ['sigkill'],
       wantPtyCloses: 1,
     },
+    {
+      // Deleting the VM is what really stops the command, so a socket that is
+      // already gone must not turn the abort into an unhandled failure.
+      name: 'When the kill fails on an abort then should still abort the run',
+      vm: { holdPtyOpen: true, ptySignalError: new Error('socket closed') },
+      command: 'long-command',
+      stream: true,
+      abortWhileRunning: true,
+      wantError: /Run aborted/,
+      wantPtyCloses: 1,
+    },
   ];
 
   for (const testCase of cases) {
@@ -472,15 +499,6 @@ describe('freestyleSlug', () => {
   });
 });
 
-describe('renderShellEnvironment', () => {
-  test('When values contain shell syntax and a name is invalid then should quote values and omit the name', () => {
-    assert.equal(
-      renderShellEnvironment({ SAFE_NAME: "one'two", 'NOT-SAFE': 'value' }),
-      "export SAFE_NAME='one'\\''two'\n",
-    );
-  });
-});
-
 interface FakeVm extends Vm {
   resizeCalls: Array<Record<string, number>>;
   deleteCalls: number;
@@ -518,6 +536,9 @@ interface FakeVmOptions {
   resizeError?: Error;
   // null is how the provider reports a command its timeout killed.
   execStatusCode?: number | null;
+  // The root-level prepare and chown commands, which run before any session exec.
+  rootExecStatusCode?: number;
+  ptySignalError?: Error;
   streamedStdout?: string;
   streamedStderr?: string;
   ptyExitCode?: number;
@@ -611,6 +632,7 @@ function fakeVm(options: FakeVmOptions = {}): FakeVm {
           return {
             sessionId: 7,
             signal: (signal: string) => {
+              if (options.ptySignalError) throw options.ptySignalError;
               ptySignals.push(signal);
             },
           };
@@ -627,8 +649,12 @@ function fakeVm(options: FakeVmOptions = {}): FakeVm {
       // Only the session's own exec names a linuxUser; the root-level prepare and
       // chown commands have to keep succeeding whatever the case scripts.
       const isSessionExec = typeof request !== 'string' && request.linuxUser !== undefined;
-      const statusCode =
-        isSessionExec && options.execStatusCode !== undefined ? options.execStatusCode : 0;
+      // A null status is a real value here; the provider uses it for a timeout.
+      const statusCode = isSessionExec
+        ? options.execStatusCode === undefined
+          ? 0
+          : options.execStatusCode
+        : (options.rootExecStatusCode ?? 0);
       return { stdout: '', stderr: '', statusCode };
     },
   } as unknown as FakeVm;

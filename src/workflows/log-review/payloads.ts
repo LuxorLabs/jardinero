@@ -26,7 +26,6 @@ export function logReviewerPayload(
     ...optional('service', instance.serviceName),
     ...optional('environment', instance.environmentName),
     ...optional('namespace', target?.namespace ?? null),
-    ...optional('cluster', target?.clusters[0] ?? null),
     ...(target && target.clusters.length > 0 ? { clusters: target.clusters } : {}),
     services: target ? target.services : targets.flatMap((candidate) => candidate.services),
     ...(target?.permissionSignals ? { permission_signals: target.permissionSignals } : {}),

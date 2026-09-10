@@ -55,6 +55,8 @@ describe('buildWorkerPrompt', () => {
     assert.match(prompt, /ready_for_implementation true for issues/);
     assert.match(prompt, /source_log_review_run_id is this run id/);
     assert.match(prompt, /capture a clickable Grafana deep link/);
+    assert.match(prompt, /the clusters in its `clusters` list/);
+    assert.match(prompt, /blocked only when none of the listed clusters answers/);
     assert.match(prompt, /evidence_links is an array of \{source, url, description\} objects/);
     assert.match(
       prompt,

@@ -27,7 +27,7 @@ const BILLING_TARGET = {
   },
 };
 
-// Spans namespaces, so it configures none and is queried by cluster alone.
+// Spans namespaces, so it configures none and is queried by its clusters alone.
 const SPANNING_TARGET = {
   repo: 'acme/gadgets',
   clusters: ['demo-a'],
@@ -50,7 +50,6 @@ describe('logReviewerPayload', () => {
         service: 'production',
         environment: 'production',
         namespace: 'production',
-        cluster: PRODUCTION_TARGET.clusters[0],
         clusters: PRODUCTION_TARGET.clusters,
         services: PRODUCTION_TARGET.services,
       },
@@ -65,7 +64,6 @@ describe('logReviewerPayload', () => {
         service: 'billing',
         environment: 'billing',
         namespace: 'billing',
-        cluster: BILLING_TARGET.clusters[0],
         clusters: BILLING_TARGET.clusters,
         services: BILLING_TARGET.services,
         permission_signals: BILLING_TARGET.permissionSignals,
@@ -74,13 +72,12 @@ describe('logReviewerPayload', () => {
     {
       // The target spans namespaces so it configures none, and the scan stores that as null:
       // both ways of saying "no namespace" have to find the same target.
-      name: 'When the target configures no namespace then should still carry its cluster',
+      name: 'When the target configures no namespace then should still carry its clusters',
       repository: SPANNING_TARGET.repo,
       want: {
         repo: SPANNING_TARGET.repo,
         lookback_min: LOG_REVIEW.lookbackMin,
         dry_run: LOG_REVIEW.dryRun,
-        cluster: SPANNING_TARGET.clusters[0],
         clusters: SPANNING_TARGET.clusters,
         services: SPANNING_TARGET.services,
       },

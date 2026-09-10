@@ -76,6 +76,9 @@ SANDBOX_DISK_GB=30
 base_image="${base_image:-${BASE_IMAGE:-}}"
 case "${base_image:-}" in *[!a-zA-Z0-9._:/@-]*) die "invalid base image ref: $base_image" ;; esac
 
+SNAPSHOT_POLL_SEC=5
+SNAPSHOT_DURABLE_TIMEOUT_SEC=900
+
 CODEX_VERSION="${CODEX_VERSION:-latest}"
 case "$IMAGE_NAME" in *[!a-zA-Z0-9._-]*|"") die "invalid IMAGE_NAME: $IMAGE_NAME" ;; esac
 case "$CODEX_VERSION" in *[!a-zA-Z0-9._-]*) die "invalid CODEX_VERSION: $CODEX_VERSION" ;; esac
@@ -186,6 +189,23 @@ create_sandbox() { # $1=name  [extra tenki-create args...] -> prints id
   fi
 }
 
+# Waiting for the R2 upload in-band earns a gateway 524 on any image this size, so it
+# is polled instead; `compressed_bytes` reads 0 until the upload lands, then its size.
+wait_snapshot_durable() { # $1=snapshot-id
+  local waited=0 state bytes
+  while [ "$waited" -lt "$SNAPSHOT_DURABLE_TIMEOUT_SEC" ]; do
+    read -r state bytes <<<"$(tenki sandbox snapshot get "$1" --output json 2>/dev/null \
+      | jq -r '"\(.state // "UNKNOWN") \(.compressed_bytes // 0)"')"
+    case "$state" in
+      READY) [ "${bytes:-0}" -gt 0 ] && return 0 ;;
+      FAILED|ERROR|DELETED) die "snapshot $1 reported state $state" ;;
+    esac
+    sleep "$SNAPSHOT_POLL_SEC"
+    waited=$((waited + SNAPSHOT_POLL_SEC))
+  done
+  die "snapshot $1 did not become durable within ${SNAPSHOT_DURABLE_TIMEOUT_SEC}s"
+}
+
 # `tenki sandbox exec` exits 0 even when the remote command fails, so the real
 # status is smuggled out in a sentinel line and returned to the caller.
 exec_checked() { # $1=session $2=remote-script-path
@@ -216,9 +236,11 @@ else
   exec_checked "$sid" /home/tenki/setup.sh || die "toolchain setup failed for $repo"
 
   echo ">> snapshotting"
-  snap="$(tenki sandbox snapshot create "$sid" --wait-durable --output json | jq -r '.id // .snapshot.id // empty')"
+  snap="$(tenki sandbox snapshot create "$sid" --no-wait --output json | jq -r '.id // .snapshot.id // empty')"
   [ -n "$snap" ] || die "could not parse snapshot id"
+  # Set before the wait so a snapshot that never turns durable is still reclaimed.
   snapshot_created=1
+  wait_snapshot_durable "$snap"
   echo ">> snapshot $snap"
 fi
 

@@ -329,7 +329,6 @@ describe('InstanceSandboxTaskFactory.buildTask', () => {
           service: SCAN_TARGET.namespace,
           environment: SCAN_TARGET.namespace,
           namespace: SCAN_TARGET.namespace,
-          cluster: SCAN_TARGET.clusters[0],
           clusters: SCAN_TARGET.clusters,
           services: TENKI_SERVICES,
         },

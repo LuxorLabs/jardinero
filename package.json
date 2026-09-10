@@ -27,35 +27,34 @@
     "test": "pnpm run build:test && node --test --test-timeout=120000 \"dist/src/**/*.test.js\" \"dist/test/**/*.test.js\""
   },
   "dependencies": {
-    "@daytona/sdk": "0.207.1",
+    "@daytona/sdk": "0.207.0",
     "@tenkicloud/sandbox": "1.0.2",
     "dotenv": "17.4.2",
     "freestyle": "0.2.2",
-    "prom-client": "15.1.3",
     "yaml": "2.9.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.8",
+    "@biomejs/biome": "2.5.10",
     "@changesets/changelog-github": "1.0.0",
-    "@changesets/cli": "3.0.0",
+    "@changesets/cli": "3.0.1",
     "@radix-ui/react-label": "2.1.15",
     "@radix-ui/react-select": "2.3.7",
     "@radix-ui/react-slot": "1.3.3",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "25.9.5",
     "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.4",
-    "@vitejs/plugin-react": "6.0.5",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "lucide-react": "1.31.0",
+    "lucide-react": "1.33.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "3.6.0",
     "tailwindcss": "4.3.3",
     "tsx": "4.23.12",
     "typescript": "7.0.2",
-    "vite": "8.2.1"
+    "vite": "8.2.2"
   },
   "engines": {
     "node": ">=24.0.0"

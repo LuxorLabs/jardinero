@@ -1188,6 +1188,13 @@ function workerReposAt(raw: RawConfig): Record<string, WorkerRepoTarget> {
 function modelGenerationsAt(raw: RawConfig): Record<string, ModelGeneration> {
   // Code owns the generation-to-seat mapping; config may override or add generations.
   const merged: Record<string, ModelGeneration> = {
+    // gpt-6 pins `verify` instead of letting it inherit, so the seat that judges the
+    // work is not the model that wrote it.
+    'gpt-6': {
+      implementation: 'gpt-6-astra',
+      triage: 'gpt-5.6-terra',
+      verify: 'gpt-5.6-sol',
+    },
     'gpt-5.6': { implementation: 'gpt-5.6-sol', triage: 'gpt-5.6-terra' },
     'gpt-5.5': { implementation: 'gpt-5.5' },
   };

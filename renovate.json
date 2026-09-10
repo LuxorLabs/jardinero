@@ -7,8 +7,10 @@
   "configMigration": true,
   "rebaseWhen": "conflicted",
   "lockFileMaintenance": {
+    "description": "No Renovate age gate here: pnpm enforces the cooldown for lock file refreshes, and it is the only side that sees the transitive versions pnpm picks. Gating here only warned when a release carried no timestamp.",
     "enabled": true,
-    "schedule": ["every weekend"]
+    "schedule": ["every weekend"],
+    "minimumReleaseAge": null
   },
   "prConcurrentLimit": 5,
   "minimumReleaseAge": "14 days",

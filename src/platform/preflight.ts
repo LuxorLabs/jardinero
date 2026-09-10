@@ -144,6 +144,16 @@ export async function runPreflight(config: AppConfig, env = process.env): Promis
         `${config.worker.freestyleApiKeyEnv} is configured.`,
       ),
     );
+  } else if (config.worker.runner === 'daytona') {
+    checks.push(await daytonaSdkCheck());
+    checks.push(
+      envCheck(
+        env,
+        config.worker.daytonaApiKeyEnv,
+        'daytona_auth',
+        `${config.worker.daytonaApiKeyEnv} is configured.`,
+      ),
+    );
   }
 
   if (config.worker.runner !== 'mock') {
@@ -303,6 +313,24 @@ async function freestyleSdkCheck(): Promise<PreflightCheck> {
       name: 'freestyle_sdk',
       status: 'error',
       detail: `Cannot import freestyle: ${message}`,
+    };
+  }
+}
+
+async function daytonaSdkCheck(): Promise<PreflightCheck> {
+  try {
+    await import('@daytona/sdk');
+    return {
+      name: 'daytona_sdk',
+      status: 'ok',
+      detail: '@daytona/sdk is installed and importable.',
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      name: 'daytona_sdk',
+      status: 'error',
+      detail: `Cannot import @daytona/sdk: ${message}`,
     };
   }
 }

@@ -1,5 +1,6 @@
 import type { AppConfig } from '../../config.js';
 import type { SandboxRunner } from '../sandbox-pool.js';
+import { DaytonaWorkerRunner } from './daytona-worker.js';
 import { FreestyleWorkerRunner } from './freestyle-worker.js';
 import { MockWorkerRunner } from './mock-worker.js';
 import { TenkiWorkerRunner } from './tenki-worker.js';
@@ -10,6 +11,9 @@ export function createWorkerRunner(config: AppConfig): SandboxRunner {
   }
   if (config.worker.runner === 'freestyle') {
     return new FreestyleWorkerRunner(config);
+  }
+  if (config.worker.runner === 'daytona') {
+    return new DaytonaWorkerRunner(config);
   }
   return new MockWorkerRunner();
 }

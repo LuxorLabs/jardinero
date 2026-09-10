@@ -11,7 +11,7 @@ environment variables, never their values. See [`secrets.md`](secrets.md).
 
 ## Workers
 
-`worker.runner` is `mock`, `tenki` or `freestyle`. `mock` dispatches nothing and is the default, which is what makes the repository runnable with no accounts at all. Both real runners require `worker.default.image`; without one, boot fails rather than failing opaquely on the first run. A Tenki image is a registry ref, while a Freestyle image is a snapshot id, your snapshot slug or a public `owner/slug`.
+`worker.runner` is `mock`, `tenki`, `freestyle` or `daytona`. `mock` dispatches nothing and is the default, which is what makes the repository runnable with no accounts at all. Every real runner requires `worker.default.image`; without one, boot fails rather than failing opaquely on the first run. A Tenki image is a registry ref, a Freestyle image is a snapshot id, your snapshot slug or a public `owner/slug`, and a Daytona image is a snapshot name.
 
 Per-repository overrides win for a matching run repository:
 
@@ -26,9 +26,11 @@ worker:
       resources: { cpu_cores: 8, memory_mb: 16384 }
 ```
 
-Worker files are written under `worker.workspace_path`, which defaults to `/home/tenki/workspace`. The Freestyle runner creates the `tenki` user when a VM starts so the same prepared image and Codex-auth layout work with either provider.
+Worker files are written under `worker.workspace_path`, which defaults to `/home/tenki/workspace`. The Freestyle and Daytona runners create the `tenki` user when a sandbox starts so the same prepared image and Codex-auth layout work with every provider.
 
 `worker.freestyle_api_key_env` defaults to `FREESTYLE_API_KEY`. `worker.freestyle_api_url_env` defaults to `FREESTYLE_API_URL` and is only needed for an API endpoint override. Freestyle VMs receive outbound Internet access, the configured CPU and memory floor, the run metadata, and a TTL five minutes beyond Jardinero's wall-clock deadline. `worker.sandbox_reaper_interval_min` is Tenki-only because that provider exposes workspace-wide reconciliation; the Freestyle TTL is its crash-cleanup backstop.
+
+`worker.daytona_api_key_env` defaults to `DAYTONA_API_KEY`. `worker.daytona_api_url_env` defaults to `DAYTONA_API_URL` and is only needed for an API endpoint override; the SDK's own `DAYTONA_TARGET` region variable passes through untouched. A Daytona sandbox's CPU and memory come from its snapshot, so per-repository `resources` overrides do not apply on this runner. Sandboxes are created ephemeral with inactivity auto-stop disabled and a hard TTL five minutes beyond Jardinero's wall-clock deadline, which is the crash-cleanup backstop: a stopped or expired sandbox deletes itself.
 
 ### Model auth
 

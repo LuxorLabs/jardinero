@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 
 import { loadConfig } from '../../config.js';
 import { createWorkerRunner } from './index.js';
+import { DaytonaWorkerRunner } from './daytona-worker.js';
 import { FreestyleWorkerRunner } from './freestyle-worker.js';
 import { MockWorkerRunner } from './mock-worker.js';
 import { TenkiWorkerRunner } from './tenki-worker.js';
@@ -20,6 +21,11 @@ describe('createWorkerRunner', () => {
       name: 'When the runner is `freestyle` then should build the Freestyle runner',
       runner: 'freestyle',
       want: FreestyleWorkerRunner,
+    },
+    {
+      name: 'When the runner is `daytona` then should build the Daytona runner',
+      runner: 'daytona',
+      want: DaytonaWorkerRunner,
     },
     {
       name: 'When the runner is `mock` then should build the mock runner',

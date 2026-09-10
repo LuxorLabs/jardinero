@@ -33,7 +33,15 @@ describe('runPreflight', () => {
       env: { ORCHESTRATOR_ADMIN_TOKEN: 'admin' },
       wantChecks: { worker_runner: 'ok', admin_auth: 'ok', grafana_mcp: 'ok' },
       wantStatus: 'ok',
-      wantAbsent: ['tenki_sdk', 'tenki_auth', 'freestyle_sdk', 'freestyle_auth', 'codex_auth'],
+      wantAbsent: [
+        'tenki_sdk',
+        'tenki_auth',
+        'freestyle_sdk',
+        'freestyle_auth',
+        'daytona_sdk',
+        'daytona_auth',
+        'codex_auth',
+      ],
     },
     {
       name: 'When the admin token is missing then should return error',
@@ -146,7 +154,7 @@ describe('runPreflight', () => {
         CODEX_ACCESS_TOKEN: 'x',
       },
       wantChecks: { freestyle_sdk: 'ok', freestyle_auth: 'ok', codex_auth: 'ok' },
-      wantAbsent: ['tenki_sdk', 'tenki_auth'],
+      wantAbsent: ['tenki_sdk', 'tenki_auth', 'daytona_sdk', 'daytona_auth'],
     },
     {
       name: 'When the Freestyle API key is missing then should return error',
@@ -156,6 +164,29 @@ describe('runPreflight', () => {
       },
       env: { ORCHESTRATOR_ADMIN_TOKEN: 'admin', CODEX_ACCESS_TOKEN: 'x' },
       wantChecks: { freestyle_auth: 'error' },
+    },
+    {
+      name: 'When the runner is `daytona` then should require its SDK and API key',
+      configure: (config) => {
+        config.worker.runner = 'daytona';
+        config.worker.codexAuthMode = 'access_token';
+      },
+      env: {
+        ORCHESTRATOR_ADMIN_TOKEN: 'admin',
+        DAYTONA_API_KEY: 'daytona',
+        CODEX_ACCESS_TOKEN: 'x',
+      },
+      wantChecks: { daytona_sdk: 'ok', daytona_auth: 'ok', codex_auth: 'ok' },
+      wantAbsent: ['tenki_sdk', 'tenki_auth', 'freestyle_sdk', 'freestyle_auth'],
+    },
+    {
+      name: 'When the Daytona API key is missing then should return error',
+      configure: (config) => {
+        config.worker.runner = 'daytona';
+        config.worker.codexAuthMode = 'access_token';
+      },
+      env: { ORCHESTRATOR_ADMIN_TOKEN: 'admin', CODEX_ACCESS_TOKEN: 'x' },
+      wantChecks: { daytona_auth: 'error' },
     },
     {
       // Nothing warns when every credential is present, and that is the only path

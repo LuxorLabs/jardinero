@@ -1,6 +1,6 @@
 # Architecture
 
-Jardinero is a TypeScript/Node control plane for autonomous engineering agents. It receives events (GitHub, Linear, cron, the operator), turns each one into work it can track, runs that work in ephemeral Tenki sandboxes or persistent Freestyle VMs that run Codex, verifies what those agents produce, and shows an operator what happened.
+Jardinero is a TypeScript/Node control plane for autonomous engineering agents. It receives events (GitHub, Linear, cron, the operator), turns each one into work it can track, runs that work in ephemeral Tenki or Daytona sandboxes or persistent Freestyle VMs that run Codex, verifies what those agents produce, and shows an operator what happened.
 
 Everything runs in one process, over one SQLite database.
 
@@ -33,7 +33,7 @@ Jardinero process
 │   ├── engine-commands.ts   the only seam transport has into them
 │   ├── sandbox-pool.ts      caps, kill, run lifecycle
 │   ├── scheduler.ts         cron scans, PR polling, backups, reaper
-│   └── worker/              the WorkerRunner boundary: Tenki, Freestyle or Mock
+│   └── worker/              the WorkerRunner boundary: Tenki, Freestyle, Daytona or Mock
 │
 └── Store                    src/store/ + db/schema.sql
     ├── SQLite data/state.db (WAL, foreign keys on)
@@ -47,7 +47,7 @@ Jardinero process
 1. `loadConfig()`, then the Loki log sink if it is enabled.
 2. The GitHub App token refresher for either real worker runner, and the Linear one when the LinearImplementer workflow is on. A failed Linear mint degrades to skipped write-backs instead of killing the process.
 3. `new Store(config.store)` and `store.initializeAfterBoot()`: open SQLite, apply `db/schema.sql`, and reconcile sandbox runs a crashed process left `running` into `orphaned`.
-4. `createWorkerRunner(config)`: the configured Tenki, Freestyle or mock runner.
+4. `createWorkerRunner(config)`: the configured Tenki, Freestyle, Daytona or mock runner.
 5. `new Orchestrator({...})`, which builds the pool and the five workflow engines, then `createEngineCommands(...)` over it.
 6. `new Scheduler(...)` and `createApiServer(...)`.
 7. `orchestrator.start()`: recover every open instance, then start the periodic check.
@@ -109,7 +109,7 @@ interface SandboxRunner {
 }
 ```
 
-`createWorkerRunner(config)` returns the Tenki runner (`worker.runner: "tenki"`), the Freestyle runner (`"freestyle"`) or the mock one (`"mock"`, for local smoke tests). Both real runners pick the image for the run's repo (`worker.repos[repo].image`, else `worker.default.image`), clone the repo under `worker.workspace_path`, write the prompt and task, forward Codex auth and, for a scan, the Grafana MCP credentials, run Codex while streaming events back, and parse what came out: cost, the PR it opened, the findings it reported, or a verifier verdict. A side effect is checked against the run's repo, branch and agent commit trailer before it is trusted. Freestyle's five-minute one-shot execution limit is avoided for Codex by using a persistent PTY session and streaming its combined terminal output; every VM also receives a hard TTL beyond the run deadline, so a process crash does not leave it running indefinitely.
+`createWorkerRunner(config)` returns the Tenki runner (`worker.runner: "tenki"`), the Freestyle runner (`"freestyle"`), the Daytona runner (`"daytona"`) or the mock one (`"mock"`, for local smoke tests). Every real runner picks the image for the run's repo (`worker.repos[repo].image`, else `worker.default.image`), clones the repo under `worker.workspace_path`, writes the prompt and task, forwards Codex auth and, for a scan, the Grafana MCP credentials, runs Codex while streaming events back, and parses what came out: cost, the PR it opened, the findings it reported, or a verifier verdict. A side effect is checked against the run's repo, branch and agent commit trailer before it is trusted. Freestyle's five-minute one-shot execution limit is avoided for Codex by using a persistent PTY session and streaming its combined terminal output; every VM also receives a hard TTL beyond the run deadline, so a process crash does not leave it running indefinitely. Daytona's one-shot cap is avoided the same way with a background session streaming stdout and stderr separately; its sandboxes are created ephemeral with the same hard TTL, so an expired or stopped one deletes itself.
 
 ## Observability
 

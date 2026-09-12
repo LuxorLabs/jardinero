@@ -35,6 +35,11 @@
   ],
   "packageRules": [
     {
+      "description": "A major needs a proper read of its changelog, which rarely happens the week it lands. Park it on the dashboard so it stops holding a concurrency slot, and tick it there when someone is ready to do that work.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
       "description": "Manage github-actions SHA pins manually; a digest-bump PR would run CI with the new SHA before anyone reviews it.",
       "matchManagers": ["github-actions"],
       "enabled": false
@@ -55,6 +60,13 @@
       "matchDepTypes": ["dependencies"],
       "matchUpdateTypes": ["patch"],
       "groupName": "dependencies (patch)"
+    },
+    {
+      "description": "A 0.x release makes no compatibility promise, so its patches break like a major does; freestyle 0.2.2 to 0.2.7 dropped a field the worker passed. Each gets its own PR rather than riding in the batch above, where one broken member holds up the safe ones.",
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["patch"],
+      "matchCurrentVersion": "<1.0.0",
+      "groupName": null
     },
     {
       "groupName": "react",

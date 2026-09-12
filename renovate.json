@@ -62,9 +62,9 @@
       "groupName": "dependencies (patch)"
     },
     {
-      "description": "A 0.x release makes no compatibility promise, so its patches break like a major does; freestyle 0.2.2 to 0.2.7 dropped a field the worker passed. Each gets its own PR rather than riding in the batch above, where one broken member holds up the safe ones.",
+      "description": "A 0.x release makes no compatibility promise, so a minor or a patch there breaks like a major does; freestyle 0.2.2 to 0.2.7 dropped a field the worker passed. Each gets its own PR rather than riding in a batch, where one broken member holds up the safe ones.",
       "matchDepTypes": ["dependencies"],
-      "matchUpdateTypes": ["patch"],
+      "matchUpdateTypes": ["minor", "patch"],
       "matchCurrentVersion": "<1.0.0",
       "groupName": null
     },

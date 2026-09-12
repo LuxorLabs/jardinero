@@ -7,10 +7,14 @@
   "configMigration": true,
   "rebaseWhen": "conflicted",
   "lockFileMaintenance": {
-    "description": "No Renovate age gate here: pnpm enforces the cooldown for lock file refreshes, and it is the only side that sees the transitive versions pnpm picks. Gating here only warned when a release carried no timestamp.",
+    "description": [
+      "No Renovate age gate here: pnpm enforces the cooldown for lock file refreshes, and it is the only side that sees the transitive versions pnpm picks. Gating here only warned when a release carried no timestamp.",
+      "A refresh is only true of the tree it resolved against, so every merge to main leaves this branch describing a package.json that has moved. Rebasing on the base branch regenerates it, which keeps its green check a statement about the merge someone is actually about to make."
+    ],
     "enabled": true,
     "schedule": ["every weekend"],
-    "minimumReleaseAge": null
+    "minimumReleaseAge": null,
+    "rebaseWhen": "behind-base-branch"
   },
   "prConcurrentLimit": 5,
   "minimumReleaseAge": "14 days",
@@ -38,6 +42,11 @@
       "description": "A major needs a proper read of its changelog, which rarely happens the week it lands. Park it on the dashboard so it stops holding a concurrency slot, and tick it there when someone is ready to do that work.",
       "matchUpdateTypes": ["major"],
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "A lock file refresh carries no update anyone is waiting on, so it is created last and takes one of the concurrency slots above only when a real update does not need it.",
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "prPriority": -1
     },
     {
       "description": "Manage github-actions SHA pins manually; a digest-bump PR would run CI with the new SHA before anyone reviews it.",

@@ -3,7 +3,7 @@
 # pinned to match Dockerfile.prod and .nvmrc.
 ARG NODE_VERSION=24-bookworm-slim
 # Must match `packageManager` in package.json.
-ARG PNPM_VERSION=11.23.0
+ARG PNPM_VERSION=12.0.0
 
 FROM node:${NODE_VERSION}
 ARG PNPM_VERSION

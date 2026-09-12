@@ -465,7 +465,7 @@ describe('freestyleVmCreateOptions', () => {
       const options = freestyleVmCreateOptions(testCase.input);
 
       testCase.check(options);
-      assert.deepEqual(options.persistence, { type: 'persistent' });
+      assert.equal(options.autoDeleteSeconds, -1);
       assert.equal(options.automaticRestart, true);
       assert.deepEqual(options.firewall, {
         rules: [{ action: 'allow', source: {}, destination: { public: true } }],

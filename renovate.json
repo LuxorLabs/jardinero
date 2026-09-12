@@ -19,6 +19,20 @@
   "vulnerabilityAlerts": {
     "labels": ["security"]
   },
+  "customManagers": [
+    {
+      "description": "The pnpm pin is repeated outside package.json, where the npm manager never sees it; same depName as `packageManager` so both move in one PR.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Dockerfile\\.dev$/",
+        "/^Dockerfile\\.prod$/",
+        "/^tenki-images/recipes/node-repo-example\\.sh$/"
+      ],
+      "matchStrings": ["PNPM_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "pnpm",
+      "datasourceTemplate": "npm"
+    }
+  ],
   "packageRules": [
     {
       "description": "Manage github-actions SHA pins manually; a digest-bump PR would run CI with the new SHA before anyone reviews it.",

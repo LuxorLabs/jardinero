@@ -306,10 +306,11 @@ export function freestyleVmCreateOptions(options: Record<string, unknown>): Crea
     slug: freestyleSlug(name),
     displayName: name.slice(0, 63),
     ...(image ? { snapshotId: image } : {}),
-    // A run is many calls against one VM, and an ephemeral VM is deleted the moment
-    // it stops, so any transient stop would take the clone with it. The run deletes
-    // the VM itself; the TTL below reclaims it when the orchestrator never gets there.
-    persistence: { type: 'persistent' },
+    // A run is many calls against one VM, and `0` here would make it ephemeral,
+    // deleted the moment it stops, so any transient stop would take the clone with
+    // it. The run deletes the VM itself; the TTL below reclaims it when the
+    // orchestrator never gets there.
+    autoDeleteSeconds: -1,
     automaticRestart: true,
     ttlSeconds: Math.ceil(maxDurationMs / 1_000) + 300,
     metadata: sanitizeMetadata(stringRecord(options.metadata)),

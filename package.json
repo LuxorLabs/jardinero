@@ -52,7 +52,7 @@
     "react-dom": "19.2.8",
     "tailwind-merge": "3.6.0",
     "tailwindcss": "4.3.3",
-    "tsx": "4.23.12",
+    "tsx": "4.23.13",
     "typescript": "7.0.2",
     "vite": "8.2.2"
   },

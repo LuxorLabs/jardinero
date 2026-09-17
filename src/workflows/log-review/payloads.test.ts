@@ -37,6 +37,7 @@ const SPANNING_TARGET = {
 const CONFIG = loadConfig();
 CONFIG.workflows.logReviewer.repos = [PRODUCTION_TARGET, BILLING_TARGET, SPANNING_TARGET];
 const LOG_REVIEW = CONFIG.workflows.logReviewer;
+const IGNORE_LOG_PATTERNS = LOG_REVIEW.ignoreLogPatterns;
 
 describe('logReviewerPayload', () => {
   const cases: LogReviewerCase[] = [
@@ -52,6 +53,7 @@ describe('logReviewerPayload', () => {
         namespace: 'production',
         clusters: PRODUCTION_TARGET.clusters,
         services: PRODUCTION_TARGET.services,
+        ignore_log_patterns: IGNORE_LOG_PATTERNS,
       },
     },
     {
@@ -67,6 +69,7 @@ describe('logReviewerPayload', () => {
         clusters: BILLING_TARGET.clusters,
         services: BILLING_TARGET.services,
         permission_signals: BILLING_TARGET.permissionSignals,
+        ignore_log_patterns: IGNORE_LOG_PATTERNS,
       },
     },
     {
@@ -80,6 +83,7 @@ describe('logReviewerPayload', () => {
         dry_run: LOG_REVIEW.dryRun,
         clusters: SPANNING_TARGET.clusters,
         services: SPANNING_TARGET.services,
+        ignore_log_patterns: IGNORE_LOG_PATTERNS,
       },
     },
     {
@@ -90,6 +94,7 @@ describe('logReviewerPayload', () => {
         lookback_min: LOG_REVIEW.lookbackMin,
         dry_run: LOG_REVIEW.dryRun,
         services: [...PRODUCTION_TARGET.services, ...BILLING_TARGET.services],
+        ignore_log_patterns: IGNORE_LOG_PATTERNS,
       },
     },
     {
@@ -100,6 +105,7 @@ describe('logReviewerPayload', () => {
         lookback_min: LOG_REVIEW.lookbackMin,
         dry_run: LOG_REVIEW.dryRun,
         services: [],
+        ignore_log_patterns: IGNORE_LOG_PATTERNS,
       },
     },
   ];

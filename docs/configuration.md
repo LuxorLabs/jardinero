@@ -113,6 +113,8 @@ and narrows with `repo=<owner/name>` and `namespace=<ns>`. Those repositories, p
 every repository named in the Linear routing, are registered at boot so an instance
 always has a repository row to point at.
 
+`workflows.log_reviewer.ignore_log_patterns` is a list of substrings every Loki query must exclude. Omit it to keep the code defaults, which drop sandbox-provider noise such as Tenki create/wait failures. Set it to `[]` to query with no exclusions.
+
 Log access is a remote Grafana MCP server configured under `mcp.grafana`. This
 workflow is Grafana plus Loki plus Kubernetes; there is no adapter for another
 telemetry stack.

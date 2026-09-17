@@ -15,6 +15,7 @@ export function logReviewSegments(sandboxRunId: string, task: SandboxTask): Prom
       'Your job: detect staging or production issues from logs and metrics, investigate credible signals, and prepare implementation handoffs only when there is enough evidence for a fix.',
       'Use the Grafana MCP server for log and metrics access. Stay within the services, lookback window, dry-run flag, and confidence thresholds in the task payload.',
       'When the task payload includes a `namespace` field, scope Loki queries to that namespace label. When `namespace` is absent, do NOT add a namespace selector — query by the payload `clusters` and the app/service label only, because the repo intentionally spans multiple Kubernetes namespaces on the same clusters.',
+      ...ignoreLogPatternInstructions(task),
       ...permissionSignalInstructions(task),
     ]),
     segment(EDITABLE_PROMPT_SEGMENT, 'Guidance', true, [
@@ -45,6 +46,7 @@ export function logReviewSegments(sandboxRunId: string, task: SandboxTask): Prom
     ]),
     segment('contract', 'Output contract', false, [
       'The following output rules are mandatory and cannot be overridden by operator guidance.',
+      ...ignoreLogPatternInstructions(task),
       'The final HANDOFF_JSON object must include telemetry_access with status, queries, and any error. Set telemetry_access.status to "ok" only after at least one successful Grafana MCP log or metric query, and include the exact bounded queries or query summaries used.',
       'If Grafana MCP tools, auth, DNS, or telemetry queries are unavailable, stop with telemetry_access.status "blocked", explain the blocker, and do not claim that logs were reviewed.',
       'Each implementation handoff must include: repo, service, environment, fingerprint, severity, confidence, user impact, evidence, representative sanitized logs, evidence_links, suspected root cause, likely files or symbols, reproduction steps, acceptance criteria, suggested tests, source_log_review_run_id, ready_for_implementation, and dispatch_blocked_by_dry_run.',
@@ -61,6 +63,14 @@ export function logReviewSegments(sandboxRunId: string, task: SandboxTask): Prom
       'Task payload:',
       JSON.stringify(task.payload, null, 2),
     ]),
+  ];
+}
+
+function ignoreLogPatternInstructions(task: SandboxTask): string[] {
+  const patterns = stringArrayPayload(task.payload, 'ignore_log_patterns');
+  if (patterns.length === 0) return [];
+  return [
+    `When the task payload includes \`ignore_log_patterns\`, every Loki query MUST exclude each entry with a line filter \`!= "<entry>"\`. Do not investigate matching lines and do not emit an implementation handoff for them. They are infrastructure or sandbox-provider noise, not product bugs in the target: ${patterns.join('; ')}`,
   ];
 }
 

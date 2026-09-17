@@ -64,7 +64,14 @@ function dispatchAgent(
     instance.sandboxRunId = sandboxRun.id;
     // The pool is in memory, so a crash between the row and this line leaves a
     // sandbox run in pending that the periodic check starts again.
-    engine.pool.startSandbox(sandboxRun.id);
+    if (!engine.pool.startSandbox(sandboxRun.id)) {
+      // The row is released with the pointer: a run left pending is reaped as
+      // orphaned later, and that reads as a run that failed instead of one that
+      // never started.
+      engine.store.finishSandboxRun(sandboxRun.id, { runState: 'skipped' });
+      instance.sandboxRunId = null;
+      return [state];
+    }
     return [state];
   } catch (error) {
     // The write failed, so nothing was started and staying here is correct;

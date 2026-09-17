@@ -87,11 +87,11 @@ describe('handleStateFiImplementing', () => {
       want: { state: 'fi_implementing' },
     },
     {
-      name: 'When the pool refuses the sandbox then should stay implementing',
+      name: 'When the pool refuses the sandbox then should stay without keeping a run',
       arrange: () => {
         pool.refuseToStart = true;
       },
-      want: { state: 'fi_implementing' },
+      want: { state: 'fi_implementing', releasedRun: true },
     },
     {
       name: 'When the runs of this pass keep dying then should ask a person',
@@ -120,6 +120,13 @@ describe('handleStateFiImplementing', () => {
       assert.equal(nextState, c.want.state);
       assert.equal(instance.needsHumanReason, c.want.needsHumanReason ?? null);
       assert.equal(pool.started.length, c.want.startedRuns ?? 0);
+      if (c.want.releasedRun) {
+        assert.equal(instance.sandboxRunId, null);
+        assert.deepEqual(
+          store.listSandboxRuns(10).map((run) => run.runState),
+          ['skipped'],
+        );
+      }
     });
   }
 });
@@ -177,5 +184,6 @@ interface HandlerCase {
     verifierIssues?: string;
     needsHumanReason?: string;
     errorName?: string;
+    releasedRun?: boolean;
   };
 }

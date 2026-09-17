@@ -106,12 +106,20 @@ describe('LinearImplementer states that own an agent', () => {
       want: { state: 'li_implementing' },
     },
     {
-      name: 'When the pool refuses the verifier then should stay verifying',
+      name: 'When the pool refuses the implementer then should stay without keeping a run',
+      handler: handleStateLiImplementing,
+      arrange: () => {
+        pool.refuseToStart = true;
+      },
+      want: { state: 'li_implementing', releasedRun: true },
+    },
+    {
+      name: 'When the pool refuses the verifier then should stay without keeping a run',
       handler: handleStateLiVerifying,
       arrange: () => {
         pool.refuseToStart = true;
       },
-      want: { state: 'li_verifying' },
+      want: { state: 'li_verifying', releasedRun: true },
     },
     {
       name: 'When the dispatch cannot be recorded then should stay with the failure',
@@ -135,6 +143,13 @@ describe('LinearImplementer states that own an agent', () => {
         pool.started[0] ? store.getSandboxRun(pool.started[0])?.agentName : undefined,
         c.want.agentName,
       );
+      if (c.want.releasedRun) {
+        assert.equal(instance.sandboxRunId, null);
+        assert.deepEqual(
+          store.listSandboxRuns(10).map((run) => run.runState),
+          ['skipped'],
+        );
+      }
     });
   }
 });
@@ -172,5 +187,6 @@ interface DispatchCase {
     startedRuns?: number;
     agentName?: string;
     errorName?: string;
+    releasedRun?: boolean;
   };
 }

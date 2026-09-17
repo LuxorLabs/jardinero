@@ -64,6 +64,26 @@ describe('buildWorkerPrompt', () => {
     );
     assert.match(prompt, /HANDOFF_JSON:/);
     assert.doesNotMatch(prompt, /If a later non-dry-run task opens a PR/);
+    assert.doesNotMatch(prompt, /ignore_log_patterns/);
+  });
+
+  test('When `ignore_log_patterns` is set then should require Loki queries to exclude them', () => {
+    const prompt = buildWorkerPrompt(
+      'run-458',
+      task('log_review', {
+        repo: 'ExampleOrg/example-service',
+        services: ['api'],
+        lookback_min: 60,
+        dry_run: false,
+        ignore_log_patterns: ['api.tenki.cloud', '[unavailable] HTTP 502'],
+      }),
+    );
+
+    assert.match(prompt, /ignore_log_patterns/);
+    assert.match(prompt, /api\.tenki\.cloud/);
+    assert.match(prompt, /\[unavailable\] HTTP 502/);
+    assert.match(prompt, /!= "<entry>"/);
+    assert.match(prompt, /Do not investigate matching lines/);
   });
 
   test('When the focus is permission 4xx then should treat those patterns as product signals', () => {

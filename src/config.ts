@@ -133,6 +133,7 @@ export interface AppConfig {
       maxConcurrentRuns: number;
       investigationConfidenceThreshold: number;
       dryRun: boolean;
+      ignoreLogPatterns: string[];
       checkWaitMs: Partial<Record<LogReviewerState, number>>;
     };
     fixImplementer: {
@@ -300,6 +301,14 @@ const DEFAULT_PR_MAINTAINER_CHECK_WAIT_MS: Partial<Record<PrMaintainerState, num
   prm_waiting: 300_000,
 };
 
+const DEFAULT_LOG_REVIEW_IGNORE_LOG_PATTERNS: string[] = [
+  'api.tenki.cloud',
+  'create Tenki sandbox',
+  'wait for Tenki sandbox',
+  'not ready within wait budget',
+  '[unavailable] HTTP 502',
+];
+
 const DEFAULT_LOG_REVIEWER_CHECK_WAIT_MS: Partial<Record<LogReviewerState, number>> = {
   lr_pending: 60_000,
   lr_working: 120_000,
@@ -422,6 +431,7 @@ export function loadConfig(
           0.7,
         ),
         dryRun: booleanAt(raw, ['workflows', 'log_reviewer', 'dry_run'], false),
+        ignoreLogPatterns: ignoreLogPatternsAt(raw),
         checkWaitMs: checkWaitMsAt(
           raw,
           ['workflows', 'log_reviewer', 'check_wait_ms'],
@@ -847,6 +857,12 @@ function stringListAt(raw: RawConfig, keys: string[]): string[] {
     throw new Error(`${keys.join('.')} must be a list of non-empty strings`);
   }
   return value.map((item) => item.trim());
+}
+
+function ignoreLogPatternsAt(raw: RawConfig): string[] {
+  const keys = ['workflows', 'log_reviewer', 'ignore_log_patterns'];
+  if (valueAt(raw, keys) === undefined) return [...DEFAULT_LOG_REVIEW_IGNORE_LOG_PATTERNS];
+  return stringListAt(raw, keys);
 }
 
 function positiveNumberAt(raw: RawConfig, keys: string[], fallback: number): number {

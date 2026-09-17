@@ -80,6 +80,17 @@ describe('onScheduledScan', () => {
       want: { state: 'lr_working', instances: 1 },
       askStaysOpen: true,
     },
+    {
+      name: 'When a scan is still pending after a setup failure then should not open a second one',
+      arrange: async () => {
+        await onScheduledScan(engine, { repositoryId });
+        const runId = pool.started[0];
+        pool.started.length = 0;
+        await onSandboxRunFailed(engine, runId);
+      },
+      want: { state: 'lr_pending', instances: 1 },
+      askStaysOpen: true,
+    },
   ];
 
   for (const c of cases) {
@@ -150,9 +161,14 @@ describe('onSandboxRunSucceeded', () => {
 describe('onSandboxRunFailed', () => {
   const cases: RunOutcomeCase[] = [
     {
-      // Nothing to remember about a failed scan: the next tick asks again.
-      name: 'When the scan failed then should end the instance failed',
+      name: 'When the sandbox died before Codex then should keep the same scan pending',
       from: 'lr_working',
+      want: { state: 'lr_pending' },
+    },
+    {
+      name: 'When Codex ran and the scan failed then should end the instance failed',
+      from: 'lr_working',
+      codexStarted: true,
       want: { state: 'lr_failed' },
     },
     {
@@ -221,15 +237,35 @@ describe('onPeriodicCheck', () => {
       want: { state: 'lr_working' },
     },
     {
-      name: 'When the run failed without telling us then should end it failed',
+      name: 'When the run failed without telling us then should retry the same scan',
       from: 'lr_working',
       attachFinishedRun: 'failed',
+      want: { state: 'lr_working', startedRuns: 1 },
+    },
+    {
+      name: 'When Codex ran and the run failed without telling us then should end it failed',
+      from: 'lr_working',
+      attachFinishedRun: 'failed',
+      codexStarted: true,
       want: { state: 'lr_failed' },
     },
     {
-      name: 'When the run died with the process then should end it failed',
+      name: 'When the run was aborted then should end it failed',
+      from: 'lr_working',
+      attachFinishedRun: 'aborted',
+      want: { state: 'lr_failed' },
+    },
+    {
+      name: 'When the run died with the process then should retry the same scan',
       from: 'lr_working',
       attachLostRun: true,
+      want: { state: 'lr_working', startedRuns: 1 },
+    },
+    {
+      name: 'When Codex ran and the run died with the process then should end it failed',
+      from: 'lr_working',
+      attachLostRun: true,
+      codexStarted: true,
       want: { state: 'lr_failed' },
     },
     {
@@ -265,9 +301,16 @@ describe('onSystemRecovery', () => {
       want: { state: 'lr_working' },
     },
     {
-      name: 'When the run died with the process then should end it failed',
+      name: 'When the run died with the process then should retry the same scan',
       from: 'lr_working',
       attachLostRun: true,
+      want: { state: 'lr_working', startedRuns: 1 },
+    },
+    {
+      name: 'When Codex ran and the run died with the process then should end it failed',
+      from: 'lr_working',
+      attachLostRun: true,
+      codexStarted: true,
       want: { state: 'lr_failed' },
     },
     {
@@ -347,6 +390,7 @@ function attachRun(instance: LogReviewer, c: RunOutcomeCase): string {
     instance.sandboxRunId = runId;
     setState(engine, instance, instance.workflowState);
   }
+  if (c.codexStarted) recordCodexStarted(instance.id, runId);
   return runId;
 }
 
@@ -361,6 +405,7 @@ function arrangePeriodic(instance: LogReviewer, c: PeriodicCase): void {
     setState(engine, instance, instance.workflowState);
     pool.startSandbox(runId);
     pool.started.length = 0;
+    if (c.codexStarted) recordCodexStarted(instance.id, runId);
     if (c.attachLostRun) pool.loseFromPool(runId);
     if (c.attachFinishedRun) {
       store.finishSandboxRun(runId, { runState: c.attachFinishedRun });
@@ -368,6 +413,15 @@ function arrangePeriodic(instance: LogReviewer, c: PeriodicCase): void {
     }
   }
   c.arrange?.(instance);
+}
+
+function recordCodexStarted(workflowInstanceId: string, sandboxRunId: string): void {
+  store.appendEvent({
+    eventType: 'agent.started',
+    workflowType: 'log_reviewer',
+    workflowInstanceId,
+    sandboxRunId,
+  });
 }
 
 function assertOutcome(
@@ -402,6 +456,7 @@ interface RunOutcomeCase {
   from: LogReviewerState;
   detachRun?: boolean;
   foreignRun?: boolean;
+  codexStarted?: boolean;
   want: Want;
 }
 
@@ -413,6 +468,7 @@ interface PeriodicCase {
   attachLostRun?: boolean;
   attachFinishedRun?: Exclude<SandboxRunState, 'pending' | 'running'>;
   keepInPool?: boolean;
+  codexStarted?: boolean;
   arrange?: (instance: LogReviewer) => void;
   want: Want;
 }

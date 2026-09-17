@@ -98,6 +98,13 @@ describe('loadConfig', () => {
             maxConcurrentRuns: 2,
             investigationConfidenceThreshold: 0.7,
             dryRun: false,
+            ignoreLogPatterns: [
+              'api.tenki.cloud',
+              'create Tenki sandbox',
+              'wait for Tenki sandbox',
+              'not ready within wait budget',
+              '[unavailable] HTTP 502',
+            ],
             checkWaitMs: { lr_pending: 60_000, lr_working: 120_000 },
           },
           fixImplementer: {
@@ -429,6 +436,35 @@ describe('PR maintainer config the loader refuses', () => {
 
 // Every renamed or removed key went with no back-compat shim, so a stale deploy config
 // must fail loud at boot instead of running on the code default.
+describe('Log reviewer config', () => {
+  const cases: Array<{ name: string; yaml: string; want: string[] }> = [
+    {
+      name: 'When `ignore_log_patterns` is set then should use that list',
+      yaml: `
+    ignore_log_patterns:
+      - "foo error"
+      - "bar noise"
+`,
+      want: ['foo error', 'bar noise'],
+    },
+    {
+      name: 'When `ignore_log_patterns` is empty then should carry no patterns',
+      yaml: `
+    ignore_log_patterns: []
+`,
+      want: [],
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      const config = loadWorkflowConfig('log_reviewer', testCase.yaml);
+
+      assert.deepEqual(config.workflows.logReviewer.ignoreLogPatterns, testCase.want);
+    });
+  }
+});
+
 describe('Log reviewer config the loader refuses', () => {
   test('When a repo and namespace are configured twice then should return error', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'jardinero-config-'));
@@ -455,6 +491,33 @@ workflows:
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test('When `ignore_log_patterns` is not a list then should return error', () => {
+    assert.throws(
+      () =>
+        loadWorkflowConfig(
+          'log_reviewer',
+          `
+    ignore_log_patterns: "api.tenki.cloud"
+`,
+        ),
+      /workflows\.log_reviewer\.ignore_log_patterns must be a list of non-empty strings/,
+    );
+  });
+
+  test('When an `ignore_log_patterns` entry is blank then should return error', () => {
+    assert.throws(
+      () =>
+        loadWorkflowConfig(
+          'log_reviewer',
+          `
+    ignore_log_patterns:
+      - "  "
+`,
+        ),
+      /workflows\.log_reviewer\.ignore_log_patterns must be a list of non-empty strings/,
+    );
   });
 
   test('When a repo with no namespace is configured twice then should name only the repo', () => {

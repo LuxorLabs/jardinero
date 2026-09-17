@@ -28,6 +28,7 @@ export function logReviewerPayload(
     ...optional('namespace', target?.namespace ?? null),
     ...(target && target.clusters.length > 0 ? { clusters: target.clusters } : {}),
     services: target ? target.services : targets.flatMap((candidate) => candidate.services),
+    ignore_log_patterns: logReview.ignoreLogPatterns,
     ...(target?.permissionSignals ? { permission_signals: target.permissionSignals } : {}),
   };
 }

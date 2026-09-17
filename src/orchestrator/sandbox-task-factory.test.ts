@@ -331,6 +331,7 @@ describe('InstanceSandboxTaskFactory.buildTask', () => {
           namespace: SCAN_TARGET.namespace,
           clusters: SCAN_TARGET.clusters,
           services: TENKI_SERVICES,
+          ignore_log_patterns: LOG_REVIEW.ignoreLogPatterns,
         },
       },
     },

@@ -166,7 +166,7 @@ describe('FreestyleSandboxProvider.create', () => {
 describe('FreestyleSandboxProvider.apiTarget', () => {
   const cases = [
     {
-      name: 'When no override exists then should name the public API',
+      name: 'When no override exists then should name the host the SDK defaults to',
       value: undefined,
       want: 'api.freestyle.sh',
     },

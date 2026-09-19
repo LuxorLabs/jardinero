@@ -1,0 +1,176 @@
+name: Smoke Tenki
+
+# Drives scripts/tenki-smoke.ts against a real Tenki sandbox, which is the only
+# thing that can catch a provider change the SDK's types do not describe: a
+# default that moves, a permission the guest agent stops granting, a create
+# option the API starts refusing.
+#
+# One workflow per provider, so each binds its own GitHub Environment and no
+# provider's credentials are readable from another provider's job.
+
+on:
+  schedule:
+    # Nightly. Off the hour; GitHub drops scheduled runs at peak times.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      include_codex:
+        description: 'Also forward Codex auth and run a model turn'
+        type: boolean
+        default: false
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    # Narrows the event; the decide job below is what actually rules on it.
+    paths:
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'scripts/tenki-smoke.ts'
+      - 'src/adapters/tenki/**'
+      - 'src/orchestrator/worker/tenki-worker.ts'
+      - '.github/workflows/smoke-tenki.yml'
+
+# Never cancel in flight: the script deletes its sandbox in a `finally`, and a
+# cancelled job skips it. Queue instead, and let overlapping runs serialise.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TENKI_PACKAGE: '@tenkicloud/sandbox'
+
+jobs:
+  decide:
+    name: Decide
+    runs-on: tenki-standard-small-2c-4g
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The head commit, not the merge preview, and with the history the
+          # merge base below needs.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      # Reads the two package.json files below; no other workflow assumes a
+      # JSON tool is on the runner, so this one does not either.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'smoke:tenki') }}
+        run: |
+          set -euo pipefail
+          decide() { echo "run=$1" >> "$GITHUB_OUTPUT"; echo "reason=$2" >> "$GITHUB_OUTPUT"; }
+
+          if [ "$EVENT" != "pull_request" ]; then
+            decide true "$EVENT"
+            exit 0
+          fi
+
+          # A fork's job cannot read the environment's credentials, and handing
+          # them to one would mean running a stranger's code against our account.
+          if [ "$IS_FORK" = "true" ]; then
+            decide false "fork pull request; provider credentials are not available"
+            exit 0
+          fi
+
+          if [ "$HAS_LABEL" = "true" ]; then
+            decide true "the smoke:tenki label is set"
+            exit 0
+          fi
+
+          # Against the merge base, never the base tip: a branch that forked
+          # before someone else bumped this dependency has not changed it.
+          git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+          merge_base=$(git merge-base "origin/$BASE_REF" HEAD)
+          git show "$merge_base:package.json" > "$RUNNER_TEMP/base-package.json"
+          read_dep() { node -p "require('$1').dependencies[process.env.TENKI_PACKAGE] ?? 'absent'"; }
+          base=$(read_dep "$RUNNER_TEMP/base-package.json")
+          head=$(read_dep "$PWD/package.json")
+          if [ "$base" != "$head" ]; then
+            decide true "$TENKI_PACKAGE $base -> $head"
+          else
+            decide false "$TENKI_PACKAGE unchanged at $base"
+          fi
+
+      - name: Report
+        env:
+          RUN: ${{ steps.decide.outputs.run }}
+          REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          echo "Run smoke: \`$RUN\` ($REASON)" >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    name: Smoke
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    runs-on: tenki-standard-small-2c-4g
+    timeout-minutes: 20
+    # Binds the provider's credentials to this job alone. Add required reviewers
+    # on the environment to hold a run for a person before it spends anything.
+    environment: tenki-smoke
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # An unconfigured environment skips rather than fails, so a fork or a
+      # clone that runs no Tenki is not held to a credential it has no reason
+      # to hold. The summary is what keeps that skip from being invisible.
+      - id: preflight
+        env:
+          TENKI_API_KEY: ${{ secrets.TENKI_API_KEY }}
+          SMOKE_IMAGE: ${{ vars.TENKI_SMOKE_IMAGE }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${TENKI_API_KEY:-}" ] || missing="$missing TENKI_API_KEY(secret)"
+          [ -n "${SMOKE_IMAGE:-}" ] || missing="$missing TENKI_SMOKE_IMAGE(variable)"
+          if [ -n "$missing" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipped: the tenki-smoke environment is missing$missing"
+            echo "Skipped: the \`tenki-smoke\` environment is missing$missing" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.preflight.outputs.ready == 'true'
+        run: make install
+
+      # The image is the one provider-specific value the script cannot default,
+      # and it belongs to the environment rather than to the repository.
+      - if: steps.preflight.outputs.ready == 'true'
+        name: Write smoke config
+        env:
+          SMOKE_IMAGE: ${{ vars.TENKI_SMOKE_IMAGE }}
+        run: |
+          set -euo pipefail
+          printf 'worker:\n  runner: "tenki"\n  default:\n    image: "%s"\n' "$SMOKE_IMAGE" \
+            > "$RUNNER_TEMP/smoke.yaml"
+          cat "$RUNNER_TEMP/smoke.yaml"
+
+      - if: steps.preflight.outputs.ready == 'true'
+        name: Run smoke
+        env:
+          CONFIG_PATH: ${{ runner.temp }}/smoke.yaml
+          TENKI_API_KEY: ${{ secrets.TENKI_API_KEY }}
+          # Only needed for a credential that reaches more than one workspace.
+          TENKI_WORKSPACE_ID: ${{ secrets.TENKI_WORKSPACE_ID }}
+          TENKI_API_URL: ${{ vars.TENKI_API_URL }}
+          # Codex is its own axis and its own credentials; the sandbox contract
+          # is what this run is here to check.
+          CODEX_FLAG: ${{ inputs.include_codex && ' ' || '--skip-codex' }}
+        run: pnpm run smoke:tenki $CODEX_FLAG

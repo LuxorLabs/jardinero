@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import type { Vm } from 'freestyle';
+import { DEFAULT_BASE_URL, type Vm } from 'freestyle';
 
 import { loadConfig, type AppConfig } from '../../config.js';
+import { WORKER_USER } from './sandbox-utils.js';
 import type { SandboxRun } from '../../store/types.js';
 import type { SandboxRunContext } from '../sandbox-pool.js';
 import {
@@ -55,6 +56,7 @@ describe('FreestyleSandboxProvider.create', () => {
     wantCreateCalls: number;
     wantResize?: Record<string, number>;
     wantDeletes: number;
+    wantExecUsers: string[];
     wantError?: RegExp;
   }> = [
     {
@@ -63,6 +65,7 @@ describe('FreestyleSandboxProvider.create', () => {
       aborted: true,
       wantCreateCalls: 0,
       wantDeletes: 0,
+      wantExecUsers: [],
       wantError: /Run aborted/,
     },
     {
@@ -72,6 +75,7 @@ describe('FreestyleSandboxProvider.create', () => {
       wantCreateCalls: 1,
       wantResize: { cpu: 4, memory: 8192 },
       wantDeletes: 0,
+      wantExecUsers: ['root'],
     },
     {
       name: 'When the snapshot already meets the requested size then should leave it unchanged',
@@ -79,6 +83,7 @@ describe('FreestyleSandboxProvider.create', () => {
       resources: { cpu: 4, memory: 8192 },
       wantCreateCalls: 1,
       wantDeletes: 0,
+      wantExecUsers: ['root'],
     },
     {
       name: 'When resize fails after creation then should delete the VM',
@@ -88,6 +93,7 @@ describe('FreestyleSandboxProvider.create', () => {
       wantCreateCalls: 1,
       wantResize: { cpu: 4 },
       wantDeletes: 1,
+      wantExecUsers: [],
       wantError: /resize failed/,
     },
     {
@@ -96,6 +102,7 @@ describe('FreestyleSandboxProvider.create', () => {
       abortAfterCreate: true,
       wantCreateCalls: 1,
       wantDeletes: 1,
+      wantExecUsers: [],
       wantError: /Run aborted/,
     },
     {
@@ -106,6 +113,7 @@ describe('FreestyleSandboxProvider.create', () => {
       rootExecStatusCode: 1,
       wantCreateCalls: 1,
       wantDeletes: 1,
+      wantExecUsers: ['root'],
       wantError: /prepare Freestyle worker user failed with exit code 1/,
     },
   ];
@@ -138,6 +146,10 @@ describe('FreestyleSandboxProvider.create', () => {
       assert.equal(createCalls, testCase.wantCreateCalls);
       assert.deepEqual(fake.resizeCalls[0], testCase.wantResize);
       assert.equal(fake.deleteCalls, testCase.wantDeletes);
+      assert.deepEqual(
+        fake.execCommands.map((call) => call.linuxUser),
+        testCase.wantExecUsers,
+      );
     });
   }
 
@@ -154,9 +166,9 @@ describe('FreestyleSandboxProvider.create', () => {
 describe('FreestyleSandboxProvider.apiTarget', () => {
   const cases = [
     {
-      name: 'When no override exists then should name the public API',
+      name: 'When no override exists then should name the host the SDK defaults to',
       value: undefined,
-      want: 'beta-api.freestyle.sh',
+      want: new URL(DEFAULT_BASE_URL).host,
     },
     {
       name: 'When an override is a URL then should name its host',
@@ -359,8 +371,8 @@ describe('FreestyleSession.exec', () => {
 
       if (testCase.wantExecCommand) {
         assert.ok(
-          fake.execCommands.includes(testCase.wantExecCommand),
-          fake.execCommands.join(','),
+          fake.execCommands.some((call) => call.command === testCase.wantExecCommand),
+          fake.execCommands.map((call) => call.command).join(','),
         );
       }
       if (testCase.wantChunks) assert.deepEqual(chunks, testCase.wantChunks);
@@ -389,9 +401,14 @@ describe('FreestyleSession file access', () => {
     const direct = await session.readFile('/tmp/direct');
     assert.equal(typeof direct === 'string' ? direct : new TextDecoder().decode(direct), 'direct');
     assert.equal(await new Response(await session.fs.readStream('/tmp/stream')).text(), 'streamed');
-    assert.ok(fake.execCommands.includes("chown tenki:tenki '/tmp/direct'"));
-    assert.ok(fake.execCommands.includes("chown tenki:tenki '/tmp/stream'"));
-    assert.ok(fake.execCommands.includes("chown tenki:tenki '/tmp/directory'"));
+    assert.deepEqual(
+      fake.execCommands.filter((call) => call.command.startsWith('chown tenki:tenki')),
+      [
+        { command: "chown tenki:tenki '/tmp/direct'", linuxUser: 'root' },
+        { command: "chown tenki:tenki '/tmp/stream'", linuxUser: 'root' },
+        { command: "chown tenki:tenki '/tmp/directory'", linuxUser: 'root' },
+      ],
+    );
   });
 });
 
@@ -502,7 +519,7 @@ describe('freestyleSlug', () => {
 interface FakeVm extends Vm {
   resizeCalls: Array<Record<string, number>>;
   deleteCalls: number;
-  execCommands: string[];
+  execCommands: Array<{ command: string; linuxUser?: string }>;
   ptyCommands: string[];
   ptySignals: string[];
   ptyCloseCalls: number;
@@ -552,7 +569,7 @@ function fakeVm(options: FakeVmOptions = {}): FakeVm {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const resizeCalls: Array<Record<string, number>> = [];
-  const execCommands: string[] = [];
+  const execCommands: Array<{ command: string; linuxUser?: string }> = [];
   const ptyCommands: string[] = [];
   const ptySignals: string[] = [];
   let deleteCalls = 0;
@@ -645,10 +662,11 @@ function fakeVm(options: FakeVmOptions = {}): FakeVm {
     }),
     exec: async (request: string | { command: string; linuxUser?: string }) => {
       const command = typeof request === 'string' ? request : request.command;
-      execCommands.push(command);
-      // Only the session's own exec names a linuxUser; the root-level prepare and
-      // chown commands have to keep succeeding whatever the case scripts.
-      const isSessionExec = typeof request !== 'string' && request.linuxUser !== undefined;
+      const linuxUser = typeof request === 'string' ? undefined : request.linuxUser;
+      execCommands.push({ command, ...(linuxUser === undefined ? {} : { linuxUser }) });
+      // Only the session's own exec runs as the worker user; the root-level prepare
+      // and chown commands have to keep succeeding whatever the case scripts.
+      const isSessionExec = linuxUser === WORKER_USER;
       // A null status is a real value here; the provider uses it for a timeout.
       const statusCode = isSessionExec
         ? options.execStatusCode === undefined

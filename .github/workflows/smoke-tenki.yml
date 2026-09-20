@@ -121,11 +121,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
-      # An unconfigured environment skips rather than fails, so a fork or a
-      # clone that runs no Tenki is not held to a credential it has no reason
-      # to hold. The summary is what keeps that skip from being invisible.
       - id: preflight
         env:
+          EVENT: ${{ github.event_name }}
           TENKI_API_KEY: ${{ secrets.TENKI_API_KEY }}
           SMOKE_IMAGE: ${{ vars.TENKI_SMOKE_IMAGE }}
         run: |
@@ -133,13 +131,23 @@ jobs:
           missing=""
           [ -n "${TENKI_API_KEY:-}" ] || missing="$missing TENKI_API_KEY(secret)"
           [ -n "${SMOKE_IMAGE:-}" ] || missing="$missing TENKI_SMOKE_IMAGE(variable)"
-          if [ -n "$missing" ]; then
+          if [ -z "$missing" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A pull request in a clone that runs no Tenki is not held to a
+          # credential it has no reason to hold, so it skips and says so.
+          if [ "$EVENT" = "pull_request" ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Skipped: the tenki-smoke environment is missing$missing"
             echo "Skipped: the \`tenki-smoke\` environment is missing$missing" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # A schedule or a dispatch asked for this check, so an environment it
+          # cannot read is a failure: a green nightly that quietly stopped
+          # booting a sandbox is how the whole thing rots without anyone noticing.
+          echo "::error::the tenki-smoke environment is missing$missing"
+          exit 1
 
       - if: steps.preflight.outputs.ready == 'true'
         run: make install

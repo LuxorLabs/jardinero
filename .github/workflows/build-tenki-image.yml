@@ -51,6 +51,50 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The runner image is a published product and cannot carry a CLI for one
+      # repository's sake, so the build installs its own. The binary it leaves
+      # behind runs with a credential in the next step, so the step refuses to
+      # hand it on unless it is the exact build pinned below.
+      - name: Install the tenki CLI
+        env:
+          TENKI_VERSION: '1.7.0'
+          # The linux/amd64 build at TENKI_VERSION. Pinned here rather than
+          # taken from the bucket's .sha256 sidecar, which a swapped artifact
+          # would be swapped alongside; it only moves when the version does.
+          TENKI_SHA256: '4f353535c543a750c0b32ef74a0a3c7c5c3959130e8648926e685b5bc403b737'
+          # A self-hosted runner outlives the job, so the install goes to the
+          # job's own temp rather than into a home directory the next job sees.
+          TENKI_INSTALL_DIR: ${{ runner.temp }}/tenki-bin
+        run: |
+          set -euo pipefail
+          # Named separately so a digest mismatch always means what it says.
+          [ "$(uname -m)" = "x86_64" ] || {
+            echo "::error::the pinned digest is the linux/amd64 build; this runner is $(uname -m)"
+            exit 1
+          }
+          installer="$RUNNER_TEMP/tenki-install.sh"
+          curl -fsSL https://tenki.cloud/install.sh -o "$installer"
+          mkdir -p "$TENKI_INSTALL_DIR"
+          bash "$installer" --version "$TENKI_VERSION"
+          binary="$TENKI_INSTALL_DIR/tenki"
+          [ -x "$binary" ] || {
+            echo "::error::install.sh left no tenki in $TENKI_INSTALL_DIR"
+            exit 1
+          }
+          actual="$(sha256sum "$binary" | cut -d' ' -f1)"
+          [ "$actual" = "$TENKI_SHA256" ] || {
+            echo "::error::tenki $TENKI_VERSION is $actual, not the pinned $TENKI_SHA256"
+            exit 1
+          }
+          echo "tenki $TENKI_VERSION verified: $actual"
+          echo "$TENKI_INSTALL_DIR" >> "$GITHUB_PATH"
+          # build.sh needs this to read every API response, so a missing jq
+          # fails the build several minutes in rather than here.
+          command -v jq >/dev/null 2>&1 || {
+            echo "::error::jq is required by tenki-images/build.sh and is not on this runner"
+            exit 1
+          }
+
       - name: Build and publish
         env:
           TENKI_API_KEY: ${{ secrets.TENKI_API_KEY }}

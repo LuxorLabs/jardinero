@@ -174,6 +174,14 @@ pnpm run smoke:tenki
 
 It creates a real sandbox on your image, writes and reads a file, runs a command, forwards your Codex auth and asks the model for a short answer. If that passes, the expensive half of the setup is done.
 
+CI runs the same script, minus the Codex turn, from [`.github/workflows/smoke-tenki.yml`](../.github/workflows/smoke-tenki.yml): nightly, on demand, and on any pull request that changes the `@tenkicloud/sandbox` version or carries the `smoke:tenki` label. It is the only tier that sees a provider change the SDK's types do not describe, so it is what a dependency bump is measured against.
+
+Its credentials live in a `tenki-smoke` GitHub Environment rather than in repository secrets, so one provider's job cannot read another's. The environment needs the `TENKI_API_KEY` secret and a `TENKI_SMOKE_IMAGE` variable holding the image to boot; add `TENKI_WORKSPACE_ID` when the credential reaches more than one workspace, and a `TENKI_API_URL` variable to point at another endpoint. Without those the job skips and says so in the run summary, which keeps a fork from owing a credential it has no use for.
+
+`TENKI_SMOKE_IMAGE` holds an image built from the default recipe, `make tenki-image REPO=default`, so a fork can build its own from this repository rather than from a recipe that lives on one person's machine.
+
+It names one tag rather than tracking a channel, so rebuild it now and then. Left alone it measures a current SDK against an ageing guest, which is the one thing that would let a guest-side change slip past the check.
+
 ### Building it on Freestyle
 
 Choose the recipe exactly as above, then render its shared base plus repository toolchain into one setup script. `--no-verify` prevents the Tenki build driver's canary body from being appended; you will verify the resulting snapshot on Freestyle instead.

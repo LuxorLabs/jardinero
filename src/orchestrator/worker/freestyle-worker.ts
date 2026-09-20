@@ -358,8 +358,11 @@ async function prepareWorkerUser(vm: Vm, workspacePath: string): Promise<void> {
     `mkdir -p ${shellQuote(WORKER_HOME)} ${shellQuote(workspacePath)}`,
     `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(WORKER_HOME)} ${shellQuote(workspacePath)}`,
     // Codex auth forwarding shells out to sudo unconditionally, so a snapshot
-    // without it fails much later, mid-run, with a raw shell error.
-    `command -v sudo >/dev/null 2>&1 || { echo 'the worker snapshot must provide sudo' >&2; exit 1; }`,
+    // without it fails much later, mid-run, with a raw shell error. The guard is
+    // a compound command because these segments are joined with `&&`, and a bare
+    // trailing `||` would bind to the whole chain and blame sudo for any earlier
+    // failure.
+    `if ! command -v sudo >/dev/null 2>&1; then echo 'the worker snapshot must provide sudo' >&2; exit 1; fi`,
     `printf '%s\\n' '${WORKER_USER} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/jardinero-worker`,
     'chmod 0440 /etc/sudoers.d/jardinero-worker',
   ].join(' && ');

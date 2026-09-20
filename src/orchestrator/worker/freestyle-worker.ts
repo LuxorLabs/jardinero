@@ -39,6 +39,11 @@ type SandboxWriteStreamOptions = NonNullable<Parameters<SandboxSession['fs']['wr
 // can outlast it goes through the PTY instead.
 const EXEC_TIMEOUT_MS = 300_000;
 
+// Provisioning creates the worker user, chowns what the file API wrote as root
+// and installs sudoers, none of which a normal user may do. The provider runs a
+// command with no user as uid 1000 when the snapshot has one, so root is named.
+const ROOT_USER = 'root';
+
 interface FreestyleClient {
   vms: {
     create(options: CreateVmOptions): Promise<{
@@ -202,9 +207,10 @@ export class FreestyleSession implements SandboxSession {
     const scriptPath = `${runDir}/run.sh`;
     const envPath = `${runDir}/env.sh`;
 
-    const prepare = await this.vm.exec(
-      `mkdir -p ${shellQuote(runDir)} && chown -R ${WORKER_USER}:${WORKER_USER} ${shellQuote(runDir)}`,
-    );
+    const prepare = await this.vm.exec({
+      command: `mkdir -p ${shellQuote(runDir)} && chown -R ${WORKER_USER}:${WORKER_USER} ${shellQuote(runDir)}`,
+      linuxUser: ROOT_USER,
+    });
     assertFreestyleExecSucceeded(prepare, 'prepare PTY command');
     await this.vm.fs.writeFile(envPath, renderShellEnvironment(workerEnvironment(this.env)), {
       mode: 0o600,
@@ -221,9 +227,10 @@ export class FreestyleSession implements SandboxSession {
       ].join('\n'),
       { mode: 0o700 },
     );
-    const ownership = await this.vm.exec(
-      `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(envPath)} ${shellQuote(scriptPath)}`,
-    );
+    const ownership = await this.vm.exec({
+      command: `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(envPath)} ${shellQuote(scriptPath)}`,
+      linuxUser: ROOT_USER,
+    });
     assertFreestyleExecSucceeded(ownership, 'prepare PTY command ownership');
 
     type PtyTerminal = { exitCode: number } | { error: Error };
@@ -293,7 +300,10 @@ export class FreestyleSession implements SandboxSession {
   }
 
   private async chownWorker(path: string): Promise<void> {
-    const result = await this.vm.exec(`chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(path)}`);
+    const result = await this.vm.exec({
+      command: `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(path)}`,
+      linuxUser: ROOT_USER,
+    });
     assertFreestyleExecSucceeded(result, `set worker ownership on ${path}`);
   }
 }
@@ -353,7 +363,7 @@ async function prepareWorkerUser(vm: Vm, workspacePath: string): Promise<void> {
     `printf '%s\\n' '${WORKER_USER} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/jardinero-worker`,
     'chmod 0440 /etc/sudoers.d/jardinero-worker',
   ].join(' && ');
-  const result = await vm.exec({ command, timeoutMs: 60_000 });
+  const result = await vm.exec({ command, linuxUser: ROOT_USER, timeoutMs: 60_000 });
   assertFreestyleExecSucceeded(result, 'prepare Freestyle worker user');
 }
 

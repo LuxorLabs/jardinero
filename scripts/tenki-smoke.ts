@@ -3,22 +3,15 @@ import '../src/env.js';
 import { randomUUID } from 'node:crypto';
 import { loadConfig, resolveSeatModel, resolveWorkerImage } from '../src/config.js';
 import { forwardHostCodexAuthToSandbox } from '../src/adapters/codex/codex-auth.js';
-import { terminateTenkiSessionInChild } from '../src/adapters/tenki/tenki-terminate.js';
-import {
-  JARDINERO_SANDBOX_APP,
-  resolveWorkspaceScope,
-  SANDBOX_METADATA,
-} from '../src/adapters/tenki/tenki-scope.js';
+import { JARDINERO_SANDBOX_APP, SANDBOX_METADATA } from '../src/adapters/tenki/tenki-scope.js';
+import { TenkiSandboxProvider } from '../src/orchestrator/worker/tenki-worker.js';
 import {
   assertExecSucceeded,
   normalizeRemotePath,
   remoteJoin,
   shellQuote,
 } from '../src/orchestrator/worker/sandbox-utils.js';
-
-type TenkiSdk = typeof import('@tenkicloud/sandbox');
-type TenkiSession = import('@tenkicloud/sandbox').Session;
-type TenkiExecResult = import('@tenkicloud/sandbox').ExecResult;
+import type { SandboxExecResult, SandboxSession } from '../src/types.js';
 
 interface CliOptions {
   skipCodex: boolean;
@@ -28,20 +21,22 @@ interface CliOptions {
 
 const config = loadConfig();
 const options = parseCliOptions(process.argv.slice(2));
-const sdk = await loadTenkiSdk();
 const workspacePath = normalizeRemotePath(config.worker.workspacePath);
+const provider = new TenkiSandboxProvider(config, process.env);
+const runAbort = new AbortController();
 
-const sandbox = new sdk.TenkiSandbox(sandboxOptions());
-let session: TenkiSession | undefined;
+let session: SandboxSession | undefined;
 let completed = false;
+let teardownError: unknown;
 
 try {
   const createOptions = createSessionOptions();
-  Object.assign(createOptions, await resolveWorkspaceScope(config, process.env, sandbox));
   console.log('creating Tenki sandbox session');
   console.log(redactedJson(createOptions));
-  session = await sandbox.createAndWait(createOptions);
-  console.log(`session ready: ${session.id ?? '<unknown-id>'}`);
+  session = await provider.create(createOptions, runAbort.signal);
+  console.log(`session created: ${session.id}`);
+  await provider.waitReady(session, runAbort.signal);
+  console.log('session ready');
 
   await ensureWorkspace(session);
 
@@ -84,32 +79,24 @@ try {
   completed = true;
 } finally {
   if (session) {
-    const closingSession = session;
     console.log('terminating session');
-    await terminateTenkiSessionInChild(closingSession.id, {
-      authToken: process.env[config.worker.tenkiApiKeyEnv],
-      baseUrl: process.env[config.worker.tenkiApiUrlEnv],
-      cwd: config.rootDir,
-      timeoutMs: config.worker.sessionCloseTimeoutMs,
-    }).catch(async (error: unknown) => {
-      console.error(`terminate failed: ${error instanceof Error ? error.message : String(error)}`);
+    await provider.terminate(session).catch((error: unknown) => {
+      teardownError = error;
+      console.error(`terminate failed: ${message(error)}`);
     });
   }
 }
 
-if (completed) {
-  process.exit(0);
+// `terminate` is part of the provider contract this exists to check, and a
+// sandbox left running costs money until its TTL, so a failed teardown fails
+// the run. Only reachable when the body succeeded, so its error still wins.
+if (teardownError) {
+  throw teardownError;
 }
 
-async function loadTenkiSdk(): Promise<TenkiSdk> {
-  try {
-    return await import('@tenkicloud/sandbox');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Unable to load @tenkicloud/sandbox (${message}). Run pnpm install to install @tenkicloud/sandbox.`,
-    );
-  }
+if (completed) {
+  console.log('tenki smoke ok');
+  process.exit(0);
 }
 
 function createSessionOptions(): Record<string, unknown> {
@@ -134,7 +121,6 @@ function createSessionOptions(): Record<string, unknown> {
       purpose: 'tenki-smoke',
       ...githubRunMetadata(),
     },
-    tags: [JARDINERO_SANDBOX_APP],
   };
   const image = resolveWorkerImage(config, undefined);
   if (image) {
@@ -154,16 +140,6 @@ function githubRunMetadata(): Record<string, string> {
   return {
     github_run_url: `${server}/${repo}/actions/runs/${runId}${attempt ? `/attempts/${attempt}` : ''}`,
   };
-}
-
-function sandboxOptions(): Record<string, string> {
-  const apiKey = process.env[config.worker.tenkiApiKeyEnv];
-  const options: Record<string, string> = {};
-  if (apiKey) options.authToken = apiKey;
-  if (process.env[config.worker.tenkiApiUrlEnv]) {
-    options.baseUrl = process.env[config.worker.tenkiApiUrlEnv]!;
-  }
-  return options;
 }
 
 function parseCliOptions(args: string[]): CliOptions {
@@ -221,13 +197,13 @@ function redact(value: unknown): unknown {
   return output;
 }
 
-async function prepareCodexAuth(session: TenkiSession): Promise<void> {
-  if (!session.exec) return;
+async function prepareCodexAuth(target: SandboxSession): Promise<void> {
+  if (!target.exec) return;
   if (config.worker.codexAuthMode === 'capsule') {
-    await forwardHostCodexAuthToSandbox(session);
+    await forwardHostCodexAuthToSandbox(target);
   } else if (config.worker.codexAuthMode === 'access_token') {
     const result = await execShell(
-      session,
+      target,
       `printenv ${shellQuote(config.worker.codexAccessTokenEnv)} | ${shellQuote(
         config.worker.codexCommand,
       )} login --with-access-token`,
@@ -235,15 +211,15 @@ async function prepareCodexAuth(session: TenkiSession): Promise<void> {
     assertExecSucceeded(result, 'Codex access token login');
   } else if (config.worker.codexAuthMode === 'api_key') {
     const result = await execShell(
-      session,
+      target,
       `printenv ${shellQuote(config.worker.codexApiKeyEnv)} | ${shellQuote(config.worker.codexCommand)} login --with-api-key`,
     );
     assertExecSucceeded(result, 'Codex API key login');
   }
 }
 
-async function ensureWorkspace(session: TenkiSession): Promise<void> {
-  const result = await execShell(session, `mkdir -p ${shellQuote(workspacePath)}`);
+async function ensureWorkspace(target: SandboxSession): Promise<void> {
+  const result = await execShell(target, `mkdir -p ${shellQuote(workspacePath)}`);
   assertExecSucceeded(result, 'prepare smoke workspace');
 }
 
@@ -270,13 +246,17 @@ function codexSmokeCommand(promptPath: string): string {
   return args.join(' ');
 }
 
-function execShell(session: TenkiSession, command: string): Promise<TenkiExecResult> {
-  if (!session.exec) {
+function execShell(target: SandboxSession, command: string): Promise<SandboxExecResult> {
+  if (!target.exec) {
     throw new Error('exec unavailable on SDK session');
   }
-  return session.exec('sh', { args: ['-lc', command] });
+  return target.exec('sh', { args: ['-lc', command] });
 }
 
 function readText(value: string | Uint8Array): string {
   return typeof value === 'string' ? value : new TextDecoder().decode(value);
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

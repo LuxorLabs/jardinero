@@ -132,6 +132,7 @@ function createSessionOptions(): Record<string, unknown> {
     metadata: {
       [SANDBOX_METADATA.app]: JARDINERO_SANDBOX_APP,
       purpose: 'tenki-smoke',
+      ...githubRunMetadata(),
     },
     tags: [JARDINERO_SANDBOX_APP],
   };
@@ -140,6 +141,19 @@ function createSessionOptions(): Record<string, unknown> {
     options.image = image;
   }
   return options;
+}
+
+// A smoke sandbox carries no run_id, so the reaper never reclaims one the script
+// drops; naming the CI run is what lets an operator trace a stray back to it.
+function githubRunMetadata(): Record<string, string> {
+  const server = process.env.GITHUB_SERVER_URL;
+  const repo = process.env.GITHUB_REPOSITORY;
+  const runId = process.env.GITHUB_RUN_ID;
+  if (!server || !repo || !runId) return {};
+  const attempt = process.env.GITHUB_RUN_ATTEMPT;
+  return {
+    github_run_url: `${server}/${repo}/actions/runs/${runId}${attempt ? `/attempts/${attempt}` : ''}`,
+  };
 }
 
 function sandboxOptions(): Record<string, string> {
@@ -191,6 +205,9 @@ function redactedJson(value: unknown): string {
 }
 
 function redact(value: unknown): unknown {
+  // Object.entries sees a Uint8Array as an object, so exec output would print as
+  // one JSON field per byte; a five-line `ls` becomes hundreds of log lines.
+  if (value instanceof Uint8Array) return readText(value);
   if (Array.isArray(value)) return value.map(redact);
   if (typeof value !== 'object' || value === null) return value;
   const output: Record<string, unknown> = {};

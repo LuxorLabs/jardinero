@@ -1,0 +1,177 @@
+name: Smoke Freestyle
+
+# Drives scripts/freestyle-smoke.ts against a real Freestyle VM, which is the
+# only thing that can catch a provider change the SDK's types do not describe: a
+# default that moves, a permission the guest agent stops granting, a create
+# option the API starts refusing.
+#
+# One workflow per provider, so each binds its own GitHub Environment and no
+# provider's credentials are readable from another provider's job.
+
+on:
+  schedule:
+    # Nightly, and twenty minutes off Smoke Tenki so the two do not contend for
+    # the same runners. Off the hour; GitHub drops scheduled runs at peak times.
+    - cron: '37 6 * * *'
+  workflow_dispatch: {}
+  # No `paths` filter: it is evaluated for every activity type, so one would
+  # drop the `labeled` event on a pull request that changes no listed path and
+  # make the override below unreachable. The decide job is the only gate.
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+# Never cancel in flight: the script deletes its VM in a `finally`, and a
+# cancelled job skips it. Queue instead, and let overlapping runs serialise.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FREESTYLE_PACKAGE: 'freestyle'
+
+jobs:
+  decide:
+    name: Decide
+    runs-on: tenki-standard-small-2c-4g
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The head commit, not the merge preview, and with the history the
+          # merge base below needs.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      # Reads the two package.json files below; no other workflow assumes a
+      # JSON tool is on the runner, so this one does not either.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'smoke:freestyle') }}
+        run: |
+          set -euo pipefail
+          decide() { echo "run=$1" >> "$GITHUB_OUTPUT"; echo "reason=$2" >> "$GITHUB_OUTPUT"; }
+
+          if [ "$EVENT" != "pull_request" ]; then
+            decide true "$EVENT"
+            exit 0
+          fi
+
+          # A fork's job cannot read the environment's credentials, and handing
+          # them to one would mean running a stranger's code against our account.
+          if [ "$IS_FORK" = "true" ]; then
+            decide false "fork pull request; provider credentials are not available"
+            exit 0
+          fi
+
+          if [ "$HAS_LABEL" = "true" ]; then
+            decide true "the smoke:freestyle label is set"
+            exit 0
+          fi
+
+          # Against the merge base, never the base tip: a branch that forked
+          # before someone else bumped this dependency has not changed it.
+          git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+          merge_base=$(git merge-base "origin/$BASE_REF" HEAD)
+          git show "$merge_base:package.json" > "$RUNNER_TEMP/base-package.json"
+          # One bounded line: this value reaches GITHUB_OUTPUT, where a newline in
+          # a version string would write an output line of the attacker's choosing.
+          read_dep() { node -p "String(require('$1').dependencies[process.env.FREESTYLE_PACKAGE] ?? 'absent').replace(/[\s\`]+/g, ' ').slice(0, 64)"; }
+          base=$(read_dep "$RUNNER_TEMP/base-package.json")
+          head=$(read_dep "$PWD/package.json")
+          if [ "$base" != "$head" ]; then
+            decide true "$FREESTYLE_PACKAGE $base -> $head"
+          else
+            decide false "$FREESTYLE_PACKAGE unchanged at $base"
+          fi
+
+      - name: Report
+        env:
+          RUN: ${{ steps.decide.outputs.run }}
+          REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          echo "Run smoke: \`$RUN\` (\`$REASON\`)" >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    name: Smoke
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    runs-on: tenki-standard-small-2c-4g
+    timeout-minutes: 20
+    # Binds the provider's credentials to this job alone, and deliberately with
+    # neither a branch gate nor required reviewers: reviewers hold the nightly
+    # for an approval nobody is prompted to give, and a branch gate drops the
+    # pre-merge check this exists for. Write access therefore reaches the key.
+    environment: freestyle-smoke
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - id: preflight
+        env:
+          EVENT: ${{ github.event_name }}
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          SMOKE_IMAGE: ${{ vars.FREESTYLE_SMOKE_IMAGE }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${FREESTYLE_API_KEY:-}" ] || missing="$missing FREESTYLE_API_KEY(secret)"
+          [ -n "${SMOKE_IMAGE:-}" ] || missing="$missing FREESTYLE_SMOKE_IMAGE(variable)"
+          if [ -z "$missing" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A pull request in a clone that runs no Freestyle is not held to a
+          # credential it has no reason to hold, so it skips and says so.
+          if [ "$EVENT" = "pull_request" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipped: the freestyle-smoke environment is missing$missing"
+            echo "Skipped: the \`freestyle-smoke\` environment is missing$missing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # A schedule or a dispatch asked for this check, so an environment it
+          # cannot read is a failure: a green nightly that quietly stopped
+          # booting a VM is how the whole thing rots without anyone noticing.
+          echo "::error::the freestyle-smoke environment is missing$missing"
+          exit 1
+
+      - if: steps.preflight.outputs.ready == 'true'
+        run: make install
+
+      # The snapshot is what makes this faithful rather than decorative: the
+      # provisioning the script checks behaves differently on a base image than
+      # on one that already carries a uid 1000 user.
+      - if: steps.preflight.outputs.ready == 'true'
+        name: Write smoke config
+        env:
+          SMOKE_IMAGE: ${{ vars.FREESTYLE_SMOKE_IMAGE }}
+        run: |
+          set -euo pipefail
+          printf 'worker:\n  runner: "freestyle"\n  default:\n    image: "%s"\n' "$SMOKE_IMAGE" \
+            > "$RUNNER_TEMP/smoke.yaml"
+          cat "$RUNNER_TEMP/smoke.yaml"
+
+      # The script deletes the VM itself; the provider's TTL is what reclaims one
+      # this step is killed before it reaches that.
+      - if: steps.preflight.outputs.ready == 'true'
+        name: Run smoke
+        env:
+          CONFIG_PATH: ${{ runner.temp }}/smoke.yaml
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          FREESTYLE_API_URL: ${{ vars.FREESTYLE_API_URL }}
+        run: pnpm run smoke:freestyle

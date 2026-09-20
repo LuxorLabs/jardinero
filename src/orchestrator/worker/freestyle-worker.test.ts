@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import type { Vm } from 'freestyle';
+import { DEFAULT_BASE_URL, type Vm } from 'freestyle';
 
 import { loadConfig, type AppConfig } from '../../config.js';
 import { WORKER_USER } from './sandbox-utils.js';
@@ -166,9 +166,9 @@ describe('FreestyleSandboxProvider.create', () => {
 describe('FreestyleSandboxProvider.apiTarget', () => {
   const cases = [
     {
-      name: 'When no override exists then should name the public API',
+      name: 'When no override exists then should name the host the SDK defaults to',
       value: undefined,
-      want: 'beta-api.freestyle.sh',
+      want: new URL(DEFAULT_BASE_URL).host,
     },
     {
       name: 'When an override is a URL then should name its host',

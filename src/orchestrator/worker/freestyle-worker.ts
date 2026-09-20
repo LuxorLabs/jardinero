@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  DEFAULT_BASE_URL,
   Freestyle,
   type CreateVmOptions,
   type ExecResult,
@@ -342,9 +343,10 @@ export function freestyleSlug(value: string): string {
 }
 
 function freestyleApiTarget(baseUrl: string | undefined): string {
-  if (!baseUrl) return 'beta-api.freestyle.sh';
   try {
-    return new URL(baseUrl).host || 'Freestyle API';
+    // The SDK's own default, never a copy of it: an operator reading this host
+    // in a step or an error has to see where the client actually went.
+    return new URL(baseUrl || DEFAULT_BASE_URL).host || 'Freestyle API';
   } catch {
     return 'Freestyle API';
   }

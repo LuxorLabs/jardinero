@@ -152,9 +152,9 @@ logs: ## Follow local dev stack logs
 #-------------------------------------------------------------------------------
 
 .PHONY: tenki-image
-tenki-image: ## Build and publish a Tenki worker image; pass REPO=<repo>
+tenki-image: ## Build and publish a Tenki worker image; pass REPO=<repo>, FLAGS="<build.sh flags>"
 	@test -n "$(REPO)" || { echo "REPO is required, e.g. make tenki-image REPO=my-repo" >&2; exit 1; }
-	@$(if $(CODEX_VERSION),CODEX_VERSION=$(CODEX_VERSION),) tenki-images/build.sh "$(REPO)" $(FLAGS)
+	@$(if $(CODEX_VERSION),CODEX_VERSION="$(CODEX_VERSION)",) tenki-images/build.sh "$(REPO)" $(FLAGS)
 
 #-------------------------------------------------------------------------------
 # Housekeeping

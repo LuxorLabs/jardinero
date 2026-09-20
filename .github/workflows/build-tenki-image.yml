@@ -1,0 +1,103 @@
+name: Build Tenki image
+
+# Drives tenki-images/build.sh from CI, so refreshing an image is an action
+# anyone with write access can take rather than one that depends on a laptop
+# holding the tenki CLI and the right credentials.
+#
+# Dispatch only for now. A schedule is the point of the stable tag below, but it
+# is worth having watched a few runs before one fires unattended: a failed
+# rebuild poisons whatever consumes the tag, and telling that apart from a real
+# failure in the consumer is the confusing case.
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Recipe name under tenki-images/recipes (without .sh)'
+        type: string
+        default: default
+      tag:
+        description: 'Channel tag to publish'
+        type: string
+        default: smoke
+      dated:
+        description: 'Append a UTC timestamp, making the tag a new immutable ref'
+        type: boolean
+        default: false
+      codex_version:
+        description: 'Codex CLI version to bake; blank bakes latest'
+        type: string
+        default: ''
+
+# One build per tag at a time: two runs publishing the same ref would race over
+# what the tag ends up pointing at.
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.repo }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    # The toolchain install happens inside the Tenki sandbox being baked, not
+    # here; this runner only drives the CLI.
+    runs-on: tenki-standard-small-2c-4g
+    timeout-minutes: 60
+    # The same credential the smoke uses. Split this into its own environment if
+    # publishing to the registry ever wants a narrower key than booting a sandbox.
+    environment: tenki-smoke
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and publish
+        env:
+          TENKI_API_KEY: ${{ secrets.TENKI_API_KEY }}
+          REPO: ${{ inputs.repo }}
+          TAG: ${{ inputs.tag }}
+          DATED: ${{ inputs.dated }}
+          CODEX_VERSION: ${{ inputs.codex_version }}
+        run: |
+          set -euo pipefail
+          [ -n "${TENKI_API_KEY:-}" ] || {
+            echo "::error::the tenki-smoke environment is missing TENKI_API_KEY"
+            exit 1
+          }
+          # Each value on its own, never concatenated: an empty tag beside a
+          # real repo reads as valid together, and the empty `--tag` then eats
+          # the next flag as its channel, publishing under `--no-date-<stamp>`.
+          for value in "$REPO" "$TAG"; do
+            case "$value" in
+              '' | *[!a-zA-Z0-9._-]*)
+                echo "::error::repo and tag must be non-empty and match [A-Za-z0-9._-]"
+                exit 1
+                ;;
+            esac
+          done
+          # Empty is meaningful here; it bakes latest.
+          case "$CODEX_VERSION" in
+            *[!a-zA-Z0-9._-]*)
+              echo "::error::codex_version must match [A-Za-z0-9._-]"
+              exit 1
+              ;;
+          esac
+
+          flags="--tag $TAG"
+          # A bare channel is overwritten in place, so whatever points at it
+          # follows the rebuild without anyone editing a reference.
+          [ "$DATED" = "true" ] || flags="$flags --no-date"
+
+          {
+            echo "Recipe: \`$REPO\`"
+            echo ""
+            echo "Tag: \`$TAG\`$([ "$DATED" = "true" ] && echo ' plus a UTC timestamp' || echo ' (overwritten in place)')"
+            echo ""
+            echo "The published ref is in the build log."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$CODEX_VERSION" ]; then
+            make tenki-image REPO="$REPO" FLAGS="$flags" CODEX_VERSION="$CODEX_VERSION"
+          else
+            make tenki-image REPO="$REPO" FLAGS="$flags"
+          fi

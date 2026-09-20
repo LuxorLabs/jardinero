@@ -43,6 +43,14 @@ make tenki-image REPO=<name> CODEX_VERSION=0.139.0  # pin the Codex CLI
 
 On success it prints the published ref, which is what goes in `worker.repos.<owner>/<repo>.image`, or `worker.default.image` for anything with no entry of its own. See [`../docs/configuration.md`](../docs/configuration.md).
 
+`FLAGS` forwards anything else to `build.sh`, so `make tenki-image REPO=<name> FLAGS="--tag smoke --no-date"` reaches the flags below without dropping to the script.
+
+## Building from CI
+
+[`.github/workflows/build-tenki-image.yml`](../.github/workflows/build-tenki-image.yml) runs the same build on dispatch, for whoever does not have the `tenki` CLI and a key to hand. It takes the recipe, the tag, whether to date it and an optional Codex version, and reads `TENKI_API_KEY` from the `tenki-smoke` environment. The runner has to provide `tenki` and `jq`; `build.sh` says which is missing if it does not.
+
+Leave the date off for anything a consumer points at by name. A bare channel is overwritten in place, so a rebuild reaches that consumer without anyone editing a reference, which is what lets the refresh be a scheduled job later rather than a standing chore. The cost is that the tag no longer identifies its contents, so keep the date for an image you need to be able to name again.
+
 ## Canary verification
 
 If `recipes/<repo>.verify.sh` exists, `build.sh` spawns a sandbox from the fresh snapshot, clones `REPO_SLUG`, and runs that script with the working directory at the repository root before publishing. If it fails, nothing is published.

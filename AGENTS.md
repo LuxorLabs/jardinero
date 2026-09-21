@@ -24,7 +24,7 @@ Read [`docs/architecture.md`](docs/architecture.md) first for the components, th
 | `src/adapters/*` | One directory per outside service: `github/`, `linear/`, `tenki/`, `codex/`, `grafana/` |
 | `src/platform/*` | Cross-cutting primitives with no domain knowledge: logger, time, ids, json, url parsing, locks, preflight |
 | `web/` | Operator dashboard SPA (React + TypeScript, Vite, Tailwind, shadcn/ui) |
-| `scripts/` | One-shot CLIs: `smoke:tenki`, `ui:preview`, `discord:register`, `codex:refresh` |
+| `scripts/` | One-shot CLIs: `smoke:tenki`, `smoke:freestyle`, `smoke:daytona`, `ui:preview`, `discord:register`, `codex:refresh` |
 | `src/**/*.test.ts` | Unit tests, co-located with the module they cover |
 | `src/testing/` | Shared test harnesses; never imported by production code |
 | `test/functional/api/` | Suites that enter through HTTP, by subject |

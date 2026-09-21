@@ -15,6 +15,7 @@
     "dev:web": "vite",
     "codex:refresh": "tsx scripts/refresh-codex-auth.ts",
     "discord:register": "tsx scripts/discord-register.ts",
+    "smoke:daytona": "tsx scripts/daytona-smoke.ts",
     "smoke:freestyle": "tsx scripts/freestyle-smoke.ts",
     "smoke:tenki": "tsx scripts/tenki-smoke.ts",
     "ui:preview": "tsx scripts/ui-preview.ts",

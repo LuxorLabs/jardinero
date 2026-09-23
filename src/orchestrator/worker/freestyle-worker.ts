@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  DEFAULT_BASE_URL,
   Freestyle,
   type CreateVmOptions,
   type ExecResult,
@@ -38,6 +39,11 @@ type SandboxWriteStreamOptions = NonNullable<Parameters<SandboxSession['fs']['wr
 // The provider caps a one-shot exec at five minutes, which is why anything that
 // can outlast it goes through the PTY instead.
 const EXEC_TIMEOUT_MS = 300_000;
+
+// Provisioning creates the worker user, chowns what the file API wrote as root
+// and installs sudoers, none of which a normal user may do. The provider runs a
+// command with no user as uid 1000 when the snapshot has one, so root is named.
+const ROOT_USER = 'root';
 
 interface FreestyleClient {
   vms: {
@@ -202,9 +208,10 @@ export class FreestyleSession implements SandboxSession {
     const scriptPath = `${runDir}/run.sh`;
     const envPath = `${runDir}/env.sh`;
 
-    const prepare = await this.vm.exec(
-      `mkdir -p ${shellQuote(runDir)} && chown -R ${WORKER_USER}:${WORKER_USER} ${shellQuote(runDir)}`,
-    );
+    const prepare = await this.vm.exec({
+      command: `mkdir -p ${shellQuote(runDir)} && chown -R ${WORKER_USER}:${WORKER_USER} ${shellQuote(runDir)}`,
+      linuxUser: ROOT_USER,
+    });
     assertFreestyleExecSucceeded(prepare, 'prepare PTY command');
     await this.vm.fs.writeFile(envPath, renderShellEnvironment(workerEnvironment(this.env)), {
       mode: 0o600,
@@ -221,9 +228,10 @@ export class FreestyleSession implements SandboxSession {
       ].join('\n'),
       { mode: 0o700 },
     );
-    const ownership = await this.vm.exec(
-      `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(envPath)} ${shellQuote(scriptPath)}`,
-    );
+    const ownership = await this.vm.exec({
+      command: `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(envPath)} ${shellQuote(scriptPath)}`,
+      linuxUser: ROOT_USER,
+    });
     assertFreestyleExecSucceeded(ownership, 'prepare PTY command ownership');
 
     type PtyTerminal = { exitCode: number } | { error: Error };
@@ -293,7 +301,10 @@ export class FreestyleSession implements SandboxSession {
   }
 
   private async chownWorker(path: string): Promise<void> {
-    const result = await this.vm.exec(`chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(path)}`);
+    const result = await this.vm.exec({
+      command: `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(path)}`,
+      linuxUser: ROOT_USER,
+    });
     assertFreestyleExecSucceeded(result, `set worker ownership on ${path}`);
   }
 }
@@ -332,9 +343,10 @@ export function freestyleSlug(value: string): string {
 }
 
 function freestyleApiTarget(baseUrl: string | undefined): string {
-  if (!baseUrl) return 'beta-api.freestyle.sh';
   try {
-    return new URL(baseUrl).host || 'Freestyle API';
+    // The SDK's own default, never a copy of it: an operator reading this host
+    // in a step or an error has to see where the client actually went.
+    return new URL(baseUrl || DEFAULT_BASE_URL).host || 'Freestyle API';
   } catch {
     return 'Freestyle API';
   }
@@ -348,12 +360,15 @@ async function prepareWorkerUser(vm: Vm, workspacePath: string): Promise<void> {
     `mkdir -p ${shellQuote(WORKER_HOME)} ${shellQuote(workspacePath)}`,
     `chown ${WORKER_USER}:${WORKER_USER} ${shellQuote(WORKER_HOME)} ${shellQuote(workspacePath)}`,
     // Codex auth forwarding shells out to sudo unconditionally, so a snapshot
-    // without it fails much later, mid-run, with a raw shell error.
-    `command -v sudo >/dev/null 2>&1 || { echo 'the worker snapshot must provide sudo' >&2; exit 1; }`,
+    // without it fails much later, mid-run, with a raw shell error. The guard is
+    // a compound command because these segments are joined with `&&`, and a bare
+    // trailing `||` would bind to the whole chain and blame sudo for any earlier
+    // failure.
+    `if ! command -v sudo >/dev/null 2>&1; then echo 'the worker snapshot must provide sudo' >&2; exit 1; fi`,
     `printf '%s\\n' '${WORKER_USER} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/jardinero-worker`,
     'chmod 0440 /etc/sudoers.d/jardinero-worker',
   ].join(' && ');
-  const result = await vm.exec({ command, timeoutMs: 60_000 });
+  const result = await vm.exec({ command, linuxUser: ROOT_USER, timeoutMs: 60_000 });
   assertFreestyleExecSucceeded(result, 'prepare Freestyle worker user');
 }
 

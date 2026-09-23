@@ -101,13 +101,15 @@ pnpm exec freestyle vm list
 
 ### Daytona
 
-Create an API key in the [Daytona dashboard](https://app.daytona.io/dashboard/keys), then install the [Daytona CLI](https://www.daytona.io/docs/en/getting-started/) for step 4's snapshot build.
+Create an API key in the [Daytona dashboard](https://app.daytona.io/dashboard/keys) with `Sandboxes` read, write and delete and `Snapshots` read and write, then install the [Daytona CLI](https://www.daytona.io/docs/en/tools/cli/) for step 4's snapshot build.
 
 | Variable | What to put in it |
 |---|---|
 | `DAYTONA_API_KEY` | Your API key. |
 
-**Check it.** With the variable exported, the CLI lists the sandboxes the key can reach:
+Run `daytona login`, choose to use an API key, and paste the one from the previous step.
+
+**Check it.** With the variable exported, and the CLI authenticated, it lists the sandboxes the key can reach:
 
 ```bash
 set -a; . ./.env; set +a
@@ -174,18 +176,31 @@ pnpm run smoke:tenki
 
 It creates a real sandbox on your image, writes and reads a file, runs a command, forwards your Codex auth and asks the model for a short answer. If that passes, the expensive half of the setup is done.
 
+CI runs the same script, minus the Codex turn, from [`.github/workflows/smoke-tenki.yml`](../.github/workflows/smoke-tenki.yml): nightly, on demand, and on any pull request that changes the `@tenkicloud/sandbox` version or carries the `smoke:tenki` label. It is the only tier that sees a provider change the SDK's types do not describe, so it is what a dependency bump is measured against.
+
+Its credentials live in a `tenki-smoke` GitHub Environment rather than in repository secrets, so one provider's job cannot read another's. The environment needs the `TENKI_API_KEY` secret and a `TENKI_SMOKE_IMAGE` variable holding the image to boot; add `TENKI_WORKSPACE_ID` when the credential reaches more than one workspace. Without those two the job skips and says so in the run summary.
+
+`TENKI_SMOKE_IMAGE` holds an image built from the default recipe, `make tenki-image REPO=default`, so a fork can build its own from this repository rather than from a recipe that lives on one person's machine.
+
+It names one tag rather than tracking a channel, so rebuild it now and then. Left alone it measures a current SDK against an ageing guest, which is the one thing that would let a guest-side change slip past the check.
+
 ### Building it on Freestyle
 
 Choose the recipe exactly as above, then render its shared base plus repository toolchain into one setup script. `--no-verify` prevents the Tenki build driver's canary body from being appended; you will verify the resulting snapshot on Freestyle instead.
 
 ```bash
 tenki-images/build.sh <name> --dry-run --no-verify > /tmp/jardinero-worker-setup.sh
-vm_id="$(pnpm exec freestyle vm create --snapshot-id freestyle/ubuntu --slug jardinero-image-build --internet --output json | jq -r .id)"
-pnpm exec freestyle vm fs write "$vm_id" /root/jardinero-worker-setup.sh /tmp/jardinero-worker-setup.sh
-pnpm exec freestyle vm ssh "$vm_id" --exec "bash /root/jardinero-worker-setup.sh"
-pnpm exec freestyle vm snapshot create "$vm_id" --slug <snapshot-slug> --output json
-pnpm exec freestyle vm delete "$vm_id"
+pnpm exec freestyle snapshot create \
+  --base freestyle/ubuntu \
+  --script /tmp/jardinero-worker-setup.sh \
+  --linux-user root \
+  --slug <snapshot-slug> \
+  --output json
 ```
+
+That one command creates the VM, streams the setup to your terminal, captures the snapshot and deletes the VM; `--keep-vm` keeps it for a look instead. The snapshot record is the only thing on stdout, so it pipes to `jq` while the setup is still printing to stderr.
+
+`--linux-user root` is not optional despite the CLI's help offering root as the default: a base image that already carries a uid 1000 user gets that user instead, and the setup installs packages and writes under `/etc`.
 
 The snapshot must contain `git`, `gh`, Node 24, Codex, `sudo` and the repository toolchain. The runner creates the `tenki` user, injects the run credentials, and grows CPU or memory when the configured floor exceeds the snapshot's current size. Freestyle resources are grow-only, so choose `freestyle/ubuntu-sm` as the build base if log-review runs must stay at their 2 vCPU and 4 GiB shape.
 
@@ -200,18 +215,25 @@ worker:
 
 **Check it.** Boot a clean VM from the snapshot and run the recipe's `*.verify.sh` from a fresh clone, then delete the canary VM. With Jardinero running, `/setup` must report `freestyle_sdk`, `freestyle_auth` and `codex_auth` as `ok` before the first paid run.
 
+CI runs `pnpm run smoke:freestyle` from [`.github/workflows/smoke-freestyle.yml`](../.github/workflows/smoke-freestyle.yml): nightly, on demand, and on any pull request that changes the `freestyle` version or carries the `smoke:freestyle` label. It drives the provider rather than the SDK, so what it checks is how Jardinero calls Freestyle, which is where a guest-side default that moves actually bites.
+
+Its credentials live in a `freestyle-smoke` GitHub Environment rather than in repository secrets, so one provider's job cannot read another's. The environment needs the `FREESTYLE_API_KEY` secret and a `FREESTYLE_SMOKE_IMAGE` variable holding the snapshot to boot. Without those two the job skips and says so in the run summary.
+
+The environment has no required reviewers and no branch rule, both deliberately: a reviewer holds the nightly for an approval nobody is prompted to give, and a branch rule drops the pre-merge check the workflow exists for. Anyone who can push a branch can therefore reach the key, which is the trade this makes; narrow repository write access if that is not a trade you want.
+
 ### Building it on Daytona
 
 Daytona snapshots are built from a Dockerfile, so render the recipe's shared base plus repository toolchain into one setup script and bake it into an image. `--no-verify` keeps the Tenki canary body out; you will verify the snapshot on Daytona instead.
 
 ```bash
-tenki-images/build.sh <name> --dry-run --no-verify > jardinero-worker-setup.sh
-cat > Dockerfile <<'EOF'
+build_dir="$(mktemp -d /tmp/jardinero-worker.XXXXXX)"
+tenki-images/build.sh <name> --dry-run --no-verify > "$build_dir/jardinero-worker-setup.sh"
+cat > "$build_dir/Dockerfile" <<'EOF'
 FROM ubuntu:24.04
 COPY jardinero-worker-setup.sh /root/jardinero-worker-setup.sh
 RUN bash /root/jardinero-worker-setup.sh
 EOF
-daytona snapshot create <snapshot-name> --dockerfile Dockerfile --cpu 4 --memory 8 --disk 10
+(cd "$build_dir" && daytona snapshot create <snapshot-name> --dockerfile Dockerfile --cpu 4 --memory 8 --disk 10)
 ```
 
 The snapshot must contain `git`, `gh`, Node 24, Codex, `sudo` and the repository toolchain. The runner creates the `tenki` user and injects the run credentials when a sandbox starts. A Daytona sandbox's CPU, memory and disk are fixed by its snapshot, so per-repository `resources` overrides in the config do not apply here; size the snapshot for the heaviest gate it must run, staying within your organization's per-sandbox limits (creation refuses loudly beyond them, e.g. disk past the default 10 GB cap). See [Daytona's snapshot docs](https://www.daytona.io/docs/en/snapshots/) for registry-image and dashboard alternatives.
@@ -226,6 +248,12 @@ worker:
 ```
 
 **Check it.** Create a sandbox from the snapshot, run the recipe's `*.verify.sh` from a fresh clone inside it, then delete it. With Jardinero running, `/setup` must report `daytona_sdk`, `daytona_auth` and `codex_auth` as `ok` before the first paid run.
+
+CI runs `pnpm run smoke:daytona` from [`.github/workflows/smoke-daytona.yml`](../.github/workflows/smoke-daytona.yml): nightly, on demand, and on any pull request that changes the `@daytona/sdk` version or carries the `smoke:daytona` label.
+
+Its credentials live in a `daytona-smoke` GitHub Environment rather than in repository secrets, so one provider's job cannot read another's. The environment needs the `DAYTONA_API_KEY` secret and a `DAYTONA_SMOKE_IMAGE` variable holding the snapshot to boot. Without those two the job skips and says so in the run summary.
+
+The environment has no required reviewers and no branch rule, both deliberately: a reviewer holds the nightly for an approval nobody is prompted to give, and a branch rule drops the pre-merge check the workflow exists for. Anyone who can push a branch can therefore reach the key, which is the trade this makes; narrow repository write access if that is not a trade you want.
 
 ## 5. Put it behind a public URL
 

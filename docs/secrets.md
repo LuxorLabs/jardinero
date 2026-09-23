@@ -31,7 +31,7 @@ Reacting and replying needs write on Pull requests and Issues. Which events the 
 
 | Variable | What it is |
 |---|---|
-| `TENKI_API_KEY` | Your Tenki API key. Only optional when the runtime supplies ambient SDK auth to the process. |
+| `TENKI_API_KEY` | Your Tenki API key. Only optional when the runtime supplies ambient SDK auth to the process. It reaches every sandbox in its workspace and not only the ones it created: the client lists and gets any session, and a session exposes `exec` and `readFile`. Point it at a workspace whose sandboxes hold nothing you would mind it reading. |
 | `TENKI_API_URL` | Only to override the SDK default. |
 | `TENKI_WORKSPACE_ID` | Required for a service token that spans workspaces; startup refuses rather than let the server pick. A workspace API key carries its own workspace, and the server infers it. |
 

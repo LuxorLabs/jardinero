@@ -128,7 +128,10 @@ verify_enabled=""
 [ -z "$no_verify" ] && [ -f "$verify_script" ] && verify_enabled=1
 
 if [ -n "$dry_run" ]; then
-  echo "# repo=$repo image=$IMAGE_NAME:$tag base=${base_image:-stock} codex=$CODEX_VERSION cpu=$SANDBOX_CPU mem=${SANDBOX_MEMORY_MB}MB disk=${SANDBOX_DISK_GB}GB verify=${verify_enabled:-0}"
+  # To stderr, not stdout: the setup is redirected to a file and run as a script
+  # by the Freestyle and Daytona builds, and a line above its `#!` leaves the
+  # shebang on line 2, where it is a comment rather than an interpreter.
+  echo "# repo=$repo image=$IMAGE_NAME:$tag base=${base_image:-stock} codex=$CODEX_VERSION cpu=$SANDBOX_CPU mem=${SANDBOX_MEMORY_MB}MB disk=${SANDBOX_DISK_GB}GB verify=${verify_enabled:-0}" >&2
   cat "$composed"
   [ -n "$verify_enabled" ] && { echo "# ===== canary: recipes/$repo.verify.sh (in $REPO_SLUG) ====="; cat "$verify_script"; }
   exit 0

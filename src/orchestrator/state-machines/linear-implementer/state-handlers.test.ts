@@ -147,7 +147,7 @@ describe('LinearImplementer states that own an agent', () => {
         assert.equal(instance.sandboxRunId, null);
         assert.deepEqual(
           store.listSandboxRuns(10).map((run) => run.runState),
-          ['skipped'],
+          [],
         );
       }
     });

@@ -69,7 +69,7 @@ describe('handleStateRrPending', () => {
       arrange: () => {
         pool.refuseToStart = true;
       },
-      want: { state: 'rr_pending' },
+      want: { state: 'rr_pending', droppedRun: true },
     },
     {
       name: 'When the dispatch cannot be recorded then should answer `rr_pending` with the failure',
@@ -88,6 +88,10 @@ describe('handleStateRrPending', () => {
       assert.equal(error?.constructor.name, c.want.errorName);
       assert.equal(nextState, c.want.state);
       assert.equal(pool.started.length, c.want.startedRuns ?? 0);
+      if (c.want.droppedRun) {
+        assert.equal(instance.sandboxRunId, null);
+        assert.deepEqual(store.listSandboxRuns(10), []);
+      }
     });
   }
 });
@@ -111,5 +115,6 @@ interface PendingCase {
     state: RequestRouterState;
     startedRuns?: number;
     errorName?: string;
+    droppedRun?: boolean;
   };
 }

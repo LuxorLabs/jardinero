@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { Store } from '../../../store/store.js';
 import type { FixImplementer, FixImplementerState } from '../../../store/types.js';
+import { countConsecutiveLostRuns } from '../execution.js';
 import { FakeGitHub, FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
 import { createTestStore } from '../../../testing/store.js';
 import { FixImplementerStateEngine } from './service.js';
@@ -88,10 +89,12 @@ describe('handleStateFiImplementing', () => {
     },
     {
       name: 'When the pool refuses the sandbox then should stay without keeping a run',
-      arrange: () => {
+      arrange: (instance) => {
+        store.finishSandboxRun(startRunFor(instance), { runState: 'failed' });
+        store.finishSandboxRun(startRunFor(instance), { runState: 'failed' });
         pool.refuseToStart = true;
       },
-      want: { state: 'fi_implementing', releasedRun: true },
+      want: { state: 'fi_implementing', releasedRun: true, lostRuns: 2 },
     },
     {
       name: 'When the runs of this pass keep dying then should ask a person',
@@ -124,7 +127,11 @@ describe('handleStateFiImplementing', () => {
         assert.equal(instance.sandboxRunId, null);
         assert.deepEqual(
           store.listSandboxRuns(10).map((run) => run.runState),
-          ['skipped'],
+          ['failed', 'failed'],
+        );
+        assert.equal(
+          countConsecutiveLostRuns(store, 'fix_implementer', instance.id, instance.stateChangedAt),
+          c.want.lostRuns,
         );
       }
     });
@@ -185,5 +192,6 @@ interface HandlerCase {
     needsHumanReason?: string;
     errorName?: string;
     releasedRun?: boolean;
+    lostRuns?: number;
   };
 }

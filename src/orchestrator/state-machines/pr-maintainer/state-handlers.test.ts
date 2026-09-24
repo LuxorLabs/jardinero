@@ -82,7 +82,7 @@ describe('handleStatePrmPending', () => {
       arrange: () => {
         pool.refuseToStart = true;
       },
-      want: { state: 'prm_pending', attemptCount: 1 },
+      want: { state: 'prm_pending', attemptCount: 1, droppedRun: true },
     },
     {
       name: 'When the dispatch cannot be recorded then should answer `prm_pending` with the failure',
@@ -103,6 +103,10 @@ describe('handleStatePrmPending', () => {
       assert.equal(pool.started.length, c.want.startedRuns ?? 0);
       assert.equal(instance.attemptCount, c.want.attemptCount ?? 0);
       assert.equal(instance.needsHumanReason, c.want.needsHumanReason ?? null);
+      if (c.want.droppedRun) {
+        assert.equal(instance.sandboxRunId, null);
+        assert.deepEqual(store.listSandboxRuns(10), []);
+      }
     });
   }
 });
@@ -189,6 +193,7 @@ interface PendingCase {
     attemptCount?: number;
     needsHumanReason?: string;
     errorName?: string;
+    droppedRun?: boolean;
   };
 }
 

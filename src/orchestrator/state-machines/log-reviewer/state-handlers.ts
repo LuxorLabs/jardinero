@@ -32,10 +32,9 @@ export function handleStateLrPending(
     // The pool is in memory, so a crash between the row and this line leaves a
     // sandbox run in pending that the periodic check starts again.
     if (!engine.pool.startSandbox(sandboxRun.id)) {
-      // The row is released with the pointer: a run left pending is reaped as
-      // orphaned later, and that reads as a run that failed instead of one that
-      // never started.
-      engine.store.finishSandboxRun(sandboxRun.id, { runState: 'skipped' });
+      // A pending row is later orphaned and counted as a failure. Skipped is an
+      // answer, and that ends a loss streak, so a run that never started is removed.
+      engine.store.deleteSandboxRun(sandboxRun.id);
       instance.sandboxRunId = null;
       return ['lr_pending'];
     }

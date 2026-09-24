@@ -87,17 +87,14 @@ describe('handleStateLrPending', () => {
   }
 
   // A run left pending would be reaped as orphaned and take the scan to lr_failed.
-  test('When the pool refuses the sandbox then should release the run it recorded', () => {
+  test('When the pool refuses the sandbox then should drop the run it recorded', () => {
     const instance = openInstance();
     pool.refuseToStart = true;
 
     handleStateLrPending(engine, instance);
 
     assert.equal(instance.sandboxRunId, null);
-    assert.deepEqual(
-      store.listSandboxRuns(10).map((run) => run.runState),
-      ['skipped'],
-    );
+    assert.deepEqual(store.listSandboxRuns(10), []);
   });
 
   test('When the caps have no room then should create no sandbox run', () => {

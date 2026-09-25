@@ -1221,19 +1221,34 @@ function githubAppReposAt(raw: RawConfig): Record<string, GitHubAppCredentials> 
   if (value === undefined) return {};
   const obj = objectOrEmpty(value, 'github_app.repos');
   const result: Record<string, GitHubAppCredentials> = {};
+  const tokenEnvOwners = new Map<string, string>();
   for (const [repo, entry] of Object.entries(obj)) {
     const path = `github_app.repos.${repo}`;
     const e = objectOrEmpty(entry, path);
-    // All four are required: a half-named App falls back to the default credential and
+    const tokenEnv = repoTokenEnv(repo);
+    // Two repo names can normalize to one env var, and the second App would then mint
+    // over the first and push under its identity.
+    const owner = tokenEnvOwners.get(tokenEnv);
+    if (owner !== undefined) {
+      throw new Error(`github_app.repos.${repo} and ${owner} resolve to the same ${tokenEnv}`);
+    }
+    tokenEnvOwners.set(tokenEnv, repo);
+    // All three are required: a half-named App falls back to the default credential and
     // pushes as the identity the override exists to avoid.
     result[repo] = {
       appIdEnv: requiredStringAt(e, 'app_id_env', path),
       installIdEnv: requiredStringAt(e, 'install_id_env', path),
       privateKeyEnv: requiredStringAt(e, 'private_key_env', path),
-      tokenEnv: requiredStringAt(e, 'token_env', path),
+      tokenEnv,
     };
   }
   return result;
+}
+
+// repoTokenEnv is where a repo's minted token is published. The prefix keeps it clear of
+// `worker.github_token_env`, which the default App owns.
+function repoTokenEnv(repo: string): string {
+  return `JARDINERO_REPO_GITHUB_TOKEN_${repo.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
 }
 
 function requiredStringAt(obj: Record<string, unknown>, key: string, path: string): string {

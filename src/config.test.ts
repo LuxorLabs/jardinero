@@ -1515,7 +1515,7 @@ describe('githubAppReposAt', () => {
       want: {},
     },
     {
-      name: 'When a repo names its own App then should read all four env names',
+      name: 'When a repo names its own App then should read its three env names and derive its token',
       yaml: `
 github_app:
   repos:
@@ -1523,14 +1523,13 @@ github_app:
       app_id_env: "PUBLIC_APP_ID"
       install_id_env: "PUBLIC_INSTALL_ID"
       private_key_env: "PUBLIC_PRIVATE_KEY"
-      token_env: "PUBLIC_TOKEN"
 `,
       want: {
         'Acme/widgets': {
           appIdEnv: 'PUBLIC_APP_ID',
           installIdEnv: 'PUBLIC_INSTALL_ID',
           privateKeyEnv: 'PUBLIC_PRIVATE_KEY',
-          tokenEnv: 'PUBLIC_TOKEN',
+          tokenEnv: 'JARDINERO_REPO_GITHUB_TOKEN_ACME_WIDGETS',
         },
       },
     },
@@ -1542,7 +1541,6 @@ github_app:
     Acme/widgets:
       install_id_env: "PUBLIC_INSTALL_ID"
       private_key_env: "PUBLIC_PRIVATE_KEY"
-      token_env: "PUBLIC_TOKEN"
 `,
       wantError: /github_app\.repos\.Acme\/widgets\.app_id_env must be a non-empty string/,
     },
@@ -1554,7 +1552,6 @@ github_app:
     Acme/widgets:
       app_id_env: "PUBLIC_APP_ID"
       private_key_env: "PUBLIC_PRIVATE_KEY"
-      token_env: "PUBLIC_TOKEN"
 `,
       wantError: /install_id_env must be a non-empty string/,
     },
@@ -1566,22 +1563,25 @@ github_app:
     Acme/widgets:
       app_id_env: "PUBLIC_APP_ID"
       install_id_env: "PUBLIC_INSTALL_ID"
-      token_env: "PUBLIC_TOKEN"
 `,
       wantError: /private_key_env must be a non-empty string/,
     },
     {
-      name: 'When `token_env` is blank then should return error',
+      name: 'When two repos resolve to the same token env var then should return error',
       yaml: `
 github_app:
   repos:
-    Acme/widgets:
+    Acme/widgets-api:
       app_id_env: "PUBLIC_APP_ID"
       install_id_env: "PUBLIC_INSTALL_ID"
       private_key_env: "PUBLIC_PRIVATE_KEY"
-      token_env: "   "
+    Acme/widgets_api:
+      app_id_env: "OTHER_APP_ID"
+      install_id_env: "OTHER_INSTALL_ID"
+      private_key_env: "OTHER_PRIVATE_KEY"
 `,
-      wantError: /token_env must be a non-empty string/,
+      wantError:
+        /Acme\/widgets_api and Acme\/widgets-api resolve to the same JARDINERO_REPO_GITHUB_TOKEN_ACME_WIDGETS_API/,
     },
     {
       name: 'When the entry is not an object then should return error',
@@ -1613,19 +1613,18 @@ github_app:
       app_id_env: "PUBLIC_APP_ID"
       install_id_env: "PUBLIC_INSTALL_ID"
       private_key_env: "PUBLIC_PRIVATE_KEY"
-      token_env: "PUBLIC_TOKEN"
 `;
 
   const cases: Array<{ name: string; repo: string | undefined; want: string }> = [
     {
       name: 'When the repo names its own App then should read that App`s token',
       repo: 'Acme/widgets',
-      want: 'PUBLIC_TOKEN',
+      want: 'JARDINERO_REPO_GITHUB_TOKEN_ACME_WIDGETS',
     },
     {
       name: 'When the repo is spelled in another case then should still read that App`s token',
       repo: 'acme/WIDGETS',
-      want: 'PUBLIC_TOKEN',
+      want: 'JARDINERO_REPO_GITHUB_TOKEN_ACME_WIDGETS',
     },
     {
       name: 'When the repo names no App of its own then should read the default token',

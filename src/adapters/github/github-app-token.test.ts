@@ -199,8 +199,6 @@ describe('startGitHubAppTokenRefresher', () => {
     assert.deepEqual(logs.info, ['github app installation token minted']);
   });
 
-  // This certifies that one unreadable repo App does not take the orchestrator down:
-  // the default App is already minted, so the failure is named and the boot continues.
   test('When a repo App cannot be read then should log it and still boot', async () => {
     const logs = recordingLogger();
     const config = testConfig();

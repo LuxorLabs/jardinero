@@ -38,7 +38,7 @@ export TENKI_API_KEY=...
 # TENKI_WORKSPACE_SLUG only to override it.
 
 make tenki-image REPO=<name>                        # bakes Codex @latest
-make tenki-image REPO=<name> CODEX_VERSION=0.139.0  # pin the Codex CLI
+make tenki-image REPO=<name> CODEX_VERSION=0.157.0  # pin the Codex CLI
 ```
 
 On success it prints the published ref, which is what goes in `worker.repos.<owner>/<repo>.image`, or `worker.default.image` for anything with no entry of its own. See [`../docs/configuration.md`](../docs/configuration.md).

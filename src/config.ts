@@ -1187,7 +1187,7 @@ function workerDefaultAt(raw: RawConfig): WorkerTarget {
   return {
     image: typeof obj.image === 'string' ? obj.image : '',
     model: workerModelRefAt(obj.model, 'worker.default.model', {
-      generation: 'gpt-5.6',
+      generation: 'gpt-6',
       maxEffort: 'xhigh',
     }),
     ...(resources ? { resources } : {}),
@@ -1266,8 +1266,8 @@ function modelGenerationsAt(raw: RawConfig): Record<string, ModelGeneration> {
     // work is not the model that wrote it.
     'gpt-6': {
       implementation: 'gpt-6-astra',
-      triage: 'gpt-5.6-terra',
-      verify: 'gpt-5.6-sol',
+      triage: 'gpt-6-sol',
+      verify: 'gpt-6-sol',
     },
     'gpt-5.6': { implementation: 'gpt-5.6-sol', triage: 'gpt-5.6-terra' },
     'gpt-5.5': { implementation: 'gpt-5.5' },

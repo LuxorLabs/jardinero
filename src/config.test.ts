@@ -154,13 +154,13 @@ describe('loadConfig', () => {
           githubTokenEnv: 'GITHUB_TOKEN',
           gitAuthorName: '',
           gitAuthorEmail: '',
-          default: { image: '', model: { generation: 'gpt-5.6', maxEffort: 'xhigh' } },
+          default: { image: '', model: { generation: 'gpt-6', maxEffort: 'xhigh' } },
           repos: {},
           modelGenerations: {
             'gpt-6': {
               implementation: 'gpt-6-astra',
-              triage: 'gpt-5.6-terra',
-              verify: 'gpt-5.6-sol',
+              triage: 'gpt-6-sol',
+              verify: 'gpt-6-sol',
             },
             'gpt-5.6': { implementation: 'gpt-5.6-sol', triage: 'gpt-5.6-terra' },
             'gpt-5.5': { implementation: 'gpt-5.5' },

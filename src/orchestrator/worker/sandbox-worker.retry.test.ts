@@ -668,7 +668,7 @@ describe('SandboxWorkerRunner', () => {
         { exitCode: 0, stdout: '' },
       ],
       wantStatus: 'succeeded',
-      wantModels: ['gpt-5.6-terra', 'gpt-5.6-sol'],
+      wantModels: ['gpt-6-sol', 'gpt-6-astra'],
       wantRetries: 1,
     },
     {
@@ -678,7 +678,7 @@ describe('SandboxWorkerRunner', () => {
         { exitCode: 1, stdout: CAPACITY_STDOUT },
       ],
       wantStatus: 'failed',
-      wantModels: ['gpt-5.6-terra', 'gpt-5.6-sol'],
+      wantModels: ['gpt-6-sol', 'gpt-6-astra'],
       wantRetries: 1,
       // One tail per run, so what both attempts printed is in it.
       wantTail: `${CAPACITY_STDOUT}\n${CAPACITY_STDOUT}\n`,
@@ -687,7 +687,7 @@ describe('SandboxWorkerRunner', () => {
       name: 'When the run fails for another reason then should not try another model',
       codexExecResults: [{ exitCode: 1, stdout: 'error: repository checkout failed' }],
       wantStatus: 'failed',
-      wantModels: ['gpt-5.6-terra'],
+      wantModels: ['gpt-6-sol'],
       wantRetries: 0,
       wantTail: 'error: repository checkout failed\n',
     },

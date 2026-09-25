@@ -20,7 +20,7 @@
 #   TENKI_WORKSPACE_SLUG  optional   -> registry prefix; derived from the session
 #   RECIPES_DIR           optional   -> where the recipes live (default: recipes/)
 #   CODEX_VERSION         optional   -> Codex CLI to bake (default: latest).
-#                                        Pin to the version that ships GPT-5.6.
+#                                        GPT-6 needs 0.155.0 or later.
 #   GH_TOKEN / GITHUB_TOKEN  needed for canary clone of a private repo;
 #                            falls back to `gh auth token`.
 set -euo pipefail
@@ -176,14 +176,23 @@ trap cleanup EXIT
 
 create_sandbox() { # $1=name  [extra tenki-create args...] -> prints id
   local name="$1"; shift
-  local out id orphan
+  local out err id orphan rc=0
+  err="$(mktemp)"
   out="$(tenki sandbox create --name "$name" \
     --cpu "$SANDBOX_CPU" --memory-mb "$SANDBOX_MEMORY_MB" --disk-size-gb "$SANDBOX_DISK_GB" \
-    --sticky "$@" --output json 2>/dev/null)" || true
-  id="$(printf '%s' "$out" | jq -r '.id // .sandbox.id // empty')"
+    --sticky "$@" --output json 2>"$err")" || rc=$?
+  id="$(printf '%s' "$out" | jq -r '.id // .sandbox.id // empty' 2>/dev/null)"
   if [ -n "$id" ]; then
+    rm -f "$err"
     printf '%s\n' "$id"
   else
+    # stdout carries this function's result, so the create's own output goes to stderr.
+    {
+      echo "build.sh: tenki sandbox create exited $rc"
+      [ -s "$err" ] && sed 's/^/  stderr: /' "$err"
+      [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/  stdout: /'
+    } >&2
+    rm -f "$err"
     # An unparseable id with a --sticky sandbox means a billing leak unless it
     # is reclaimed by its unique name.
     orphan="$(tenki sandbox list --output json 2>/dev/null \

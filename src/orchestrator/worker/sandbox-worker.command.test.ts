@@ -17,17 +17,17 @@ describe('codexCommand', () => {
     wantEffort: string;
   }> = [
     {
-      name: 'When repo generation is 5 6 and seat is implementation then should use sol',
+      name: 'When repo generation is 6 and seat is implementation then should use astra',
       workflow: 'pr_maintain',
       payload: { repo: 'acme/ledger' },
-      wantModel: 'gpt-5.6-sol',
+      wantModel: 'gpt-6-astra',
       wantEffort: 'xhigh',
     },
     {
-      name: 'When repo generation is 5 6 and seat is triage then should use terra',
+      name: 'When repo generation is 6 and seat is triage then should use sol',
       workflow: 'log_review',
       payload: { repo: 'acme/ledger' },
-      wantModel: 'gpt-5.6-terra',
+      wantModel: 'gpt-6-sol',
       wantEffort: 'medium',
     },
     {
@@ -35,16 +35,14 @@ describe('codexCommand', () => {
       name: 'When the linear role is implement then should use the implementation seat',
       workflow: 'linear',
       payload: { repo: 'acme/ledger', role: 'implement' },
-      wantModel: 'gpt-5.6-sol',
+      wantModel: 'gpt-6-astra',
       wantEffort: 'xhigh',
     },
     {
-      // The verify seat has no generation entry, so it inherits the implementation tier
-      // while keeping its own pinned effort.
-      name: 'When the linear role is verify then should inherit the implementation tier',
+      name: 'When the linear role is verify then should use the verify tier',
       workflow: 'linear',
       payload: { repo: 'acme/ledger', role: 'verify', effort: 'high' },
-      wantModel: 'gpt-5.6-sol',
+      wantModel: 'gpt-6-sol',
       wantEffort: 'high',
     },
     {
@@ -52,14 +50,14 @@ describe('codexCommand', () => {
       name: 'When seat effort exceeds the repo cap then should clamp to xhigh',
       workflow: 'fix_implement',
       payload: { repo: 'acme/ledger', effort: 'max' },
-      wantModel: 'gpt-5.6-sol',
+      wantModel: 'gpt-6-astra',
       wantEffort: 'xhigh',
     },
     {
       name: 'When repo is unmapped then should use the default generation',
       workflow: 'pr_maintain',
       payload: { repo: 'acme/unmapped-repo' },
-      wantModel: 'gpt-5.6-sol',
+      wantModel: 'gpt-6-astra',
       wantEffort: 'xhigh',
     },
   ];

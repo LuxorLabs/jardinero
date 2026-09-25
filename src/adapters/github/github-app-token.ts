@@ -1,5 +1,5 @@
 import { createSign } from 'node:crypto';
-import type { AppConfig } from '../../config.js';
+import type { AppConfig, GitHubAppCredentials } from '../../config.js';
 
 // GitHub App authentication for the orchestrator: signs the App JWT, exchanges it
 // for an installation token, and refreshes it on a timer.
@@ -135,13 +135,65 @@ export async function refreshGitHubAppToken(opts: {
   nowSeconds: () => number;
 }): Promise<InstallationToken> {
   const { config, env, fetchImpl, nowSeconds } = opts;
-  const appId = env[config.githubApp.appIdEnv];
-  const installationId = env[config.githubApp.installIdEnv];
-  const privateKey = env[config.githubApp.privateKeyEnv];
+  return mintInstallationToken({
+    credentials: {
+      appIdEnv: config.githubApp.appIdEnv,
+      installIdEnv: config.githubApp.installIdEnv,
+      privateKeyEnv: config.githubApp.privateKeyEnv,
+      tokenEnv: config.worker.githubTokenEnv,
+    },
+    env,
+    fetchImpl,
+    nowSeconds,
+  });
+}
+
+// An unreachable App is reported rather than thrown: the default App is published by
+// then, and failing the boot over one repo would stop the repos that do work.
+export async function refreshRepoGitHubAppTokens(opts: {
+  config: AppConfig;
+  env: NodeJS.ProcessEnv;
+  fetchImpl: typeof fetch;
+  nowSeconds: () => number;
+}): Promise<Array<{ repo: string; error: Error }>> {
+  const { config, env, fetchImpl, nowSeconds } = opts;
+  const failures: Array<{ repo: string; error: Error }> = [];
+  for (const [repo, credentials] of Object.entries(config.githubApp.repos)) {
+    try {
+      await mintInstallationToken({ credentials, env, fetchImpl, nowSeconds });
+    } catch (error) {
+      failures.push({ repo, error: error instanceof Error ? error : new Error(String(error)) });
+    }
+  }
+  return failures;
+}
+
+function reportRepoTokenFailures(
+  logger: RefresherLogger,
+  failures: Array<{ repo: string; error: Error }>,
+): void {
+  for (const { repo, error } of failures) {
+    logger.error('repo github app installation token refresh failed', {
+      repo,
+      reason: error.message,
+    });
+  }
+}
+
+async function mintInstallationToken(opts: {
+  credentials: GitHubAppCredentials;
+  env: NodeJS.ProcessEnv;
+  fetchImpl: typeof fetch;
+  nowSeconds: () => number;
+}): Promise<InstallationToken> {
+  const { credentials, env, fetchImpl, nowSeconds } = opts;
+  const appId = env[credentials.appIdEnv];
+  const installationId = env[credentials.installIdEnv];
+  const privateKey = env[credentials.privateKeyEnv];
   const missing = [
-    !appId && config.githubApp.appIdEnv,
-    !installationId && config.githubApp.installIdEnv,
-    !privateKey && config.githubApp.privateKeyEnv,
+    !appId && credentials.appIdEnv,
+    !installationId && credentials.installIdEnv,
+    !privateKey && credentials.privateKeyEnv,
   ].filter(Boolean);
   if (missing.length > 0) {
     throw new Error(`GitHub App secrets missing from environment: ${missing.join(', ')}`);
@@ -150,8 +202,8 @@ export async function refreshGitHubAppToken(opts: {
   const pem = (privateKey as string).replace(/\\n/g, '\n');
   const jwt = buildAppJwt(appId as string, pem, nowSeconds());
   const token = await fetchInstallationToken(jwt, installationId as string, fetchImpl);
-  // Every GitHub consumer reads this env var, so this write is what distributes the token app-wide.
-  env[config.worker.githubTokenEnv] = token.token;
+  // Every GitHub consumer reads this env var, so this write is what distributes the token.
+  env[credentials.tokenEnv] = token.token;
   return token;
 }
 
@@ -165,6 +217,10 @@ export async function startGitHubAppTokenRefresher(
 
   await refreshGitHubAppToken({ config, env, fetchImpl, nowSeconds });
   logger.info('github app installation token minted');
+  reportRepoTokenFailures(
+    logger,
+    await refreshRepoGitHubAppTokens({ config, env, fetchImpl, nowSeconds }),
+  );
 
   // Schedule the next refresh only after the current one settles, so a slow
   // refresh can never overlap the next and race on the shared token.
@@ -174,7 +230,13 @@ export async function startGitHubAppTokenRefresher(
     if (stopped) return;
     timer = setTimeout(() => {
       refreshGitHubAppToken({ config, env, fetchImpl, nowSeconds })
-        .then(() => logger.info('github app installation token refreshed'))
+        .then(async () => {
+          logger.info('github app installation token refreshed');
+          reportRepoTokenFailures(
+            logger,
+            await refreshRepoGitHubAppTokens({ config, env, fetchImpl, nowSeconds }),
+          );
+        })
         .catch((error: unknown) =>
           logger.error('github app installation token refresh failed', {
             error: error instanceof Error ? error.message : String(error),

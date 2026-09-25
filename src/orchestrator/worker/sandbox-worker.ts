@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   CODEX_EFFORTS,
   clampEffort,
+  resolveGitHubTokenEnv,
   resolveSeatModel,
   resolveWorkerImage,
   resolveWorkerMaxEffort,
@@ -126,7 +127,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
   }
 
   async run(context: SandboxRunContext): Promise<WorkerResult> {
-    const missing = [this.config.worker.githubTokenEnv];
+    const missing = [resolveGitHubTokenEnv(this.config, this.repoFor(context))];
     if (this.config.worker.codexAuthMode === 'access_token') {
       missing.push(this.config.worker.codexAccessTokenEnv);
     } else if (this.config.worker.codexAuthMode === 'api_key') {
@@ -417,7 +418,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
         task: context.task,
         result,
         workerResult: { openedPrUrl: openedPrUrlCandidate, noPrOutcome: noPrParse?.outcome },
-        githubToken: this.env[this.config.worker.githubTokenEnv],
+        githubToken: this.env[resolveGitHubTokenEnv(this.config, this.repoFor(context))],
       });
       const verificationArtifact = await context.writeSandboxRunArtifact(
         'side-effect-verification.json',
@@ -487,7 +488,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
 
   private createOptions(context: SandboxRunContext): Record<string, unknown> {
     const env: Record<string, string> = {
-      GITHUB_TOKEN: this.env[this.config.worker.githubTokenEnv] ?? '',
+      GITHUB_TOKEN: this.env[resolveGitHubTokenEnv(this.config, this.repoFor(context))] ?? '',
       ORCHESTRATOR_RUN_ID: context.sandboxRun.id,
       ORCHESTRATOR_WORKFLOW: context.task.workflow,
     };
@@ -544,7 +545,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       // The reaper reclaims leaked sandboxes actively; this is the backstop for
       // any it misses (e.g. run row pruned, or the orchestrator stayed down).
       pauseRetentionMs: this.config.worker.sandboxPauseRetentionMs,
-      githubToken: this.env[this.config.worker.githubTokenEnv],
+      githubToken: this.env[resolveGitHubTokenEnv(this.config, this.repoFor(context))],
       env,
       // The reaper reads this back off each sandbox to decide ownership; the keys
       // come from SANDBOX_METADATA (tenki-scope) so producer and consumer agree.
@@ -642,7 +643,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
   // pullRequestHeadRef answers the branch a push has to land on, or nothing when the
   // lookup fails.
   private async pullRequestHeadRef(repo: string, prNumber: number): Promise<string | undefined> {
-    const token = this.env[this.config.worker.githubTokenEnv];
+    const token = this.env[resolveGitHubTokenEnv(this.config, repo)];
     if (!token) return undefined;
     try {
       return (await this.getPullRequestHead({ repo, pullRequestNumber: prNumber, token })).headRef;

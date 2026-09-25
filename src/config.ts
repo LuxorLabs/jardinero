@@ -42,6 +42,15 @@ const EFFORT_RANK: Record<CodexEffort, number> = {
 // seat inherits, and any seat may override it.
 export type ModelGeneration = Record<string, string>;
 
+// GitHubAppCredentials is the three env vars an App is read from, plus the one its
+// installation token is published to.
+export interface GitHubAppCredentials {
+  appIdEnv: string;
+  installIdEnv: string;
+  privateKeyEnv: string;
+  tokenEnv: string;
+}
+
 // WorkerModelRef is the generation and the effort ceiling a repo runs under. The
 // generation names a `model_generations` profile.
 export interface WorkerModelRef {
@@ -211,6 +220,7 @@ export interface AppConfig {
     privateKeyEnv: string;
     tokenRefreshMin: number;
     webhookSecretEnv: string;
+    repos: Record<string, GitHubAppCredentials>;
   };
   discord: {
     enabled: boolean;
@@ -570,6 +580,7 @@ export function loadConfig(
         'JARDINERO_AGENT_PRIVATE_KEY',
       ),
       tokenRefreshMin: numberAt(raw, ['github_app', 'token_refresh_min'], 10),
+      repos: githubAppReposAt(raw),
       webhookSecretEnv: stringAt(
         raw,
         ['github_app', 'webhook_secret_env'],
@@ -703,6 +714,26 @@ export function workerRepoTarget(
   if (!normalizedRepo) return undefined;
   for (const [key, target] of Object.entries(config.worker.repos)) {
     if (key.trim().toLowerCase() === normalizedRepo) return target;
+  }
+  return undefined;
+}
+
+// resolveGitHubTokenEnv answers the env var to read the token from: the repo's own App
+// when it has one, the default App otherwise.
+export function resolveGitHubTokenEnv(config: AppConfig, repo: string | undefined): string {
+  return githubAppCredentialsFor(config, repo)?.tokenEnv ?? config.worker.githubTokenEnv;
+}
+
+// githubAppCredentialsFor matches the repo case-insensitively, because the store
+// lowercases repository names and the config spells them as GitHub does.
+export function githubAppCredentialsFor(
+  config: AppConfig,
+  repo: string | undefined,
+): GitHubAppCredentials | undefined {
+  const normalizedRepo = (repo ?? '').trim().toLowerCase();
+  if (!normalizedRepo) return undefined;
+  for (const [key, credentials] of Object.entries(config.githubApp.repos)) {
+    if (key.trim().toLowerCase() === normalizedRepo) return credentials;
   }
   return undefined;
 }
@@ -1183,6 +1214,34 @@ function workerReposAt(raw: RawConfig): Record<string, WorkerRepoTarget> {
     result[repo] = target;
   }
   return result;
+}
+
+function githubAppReposAt(raw: RawConfig): Record<string, GitHubAppCredentials> {
+  const value = valueAt(raw, ['github_app', 'repos']);
+  if (value === undefined) return {};
+  const obj = objectOrEmpty(value, 'github_app.repos');
+  const result: Record<string, GitHubAppCredentials> = {};
+  for (const [repo, entry] of Object.entries(obj)) {
+    const path = `github_app.repos.${repo}`;
+    const e = objectOrEmpty(entry, path);
+    // All four are required: a half-named App falls back to the default credential and
+    // pushes as the identity the override exists to avoid.
+    result[repo] = {
+      appIdEnv: requiredStringAt(e, 'app_id_env', path),
+      installIdEnv: requiredStringAt(e, 'install_id_env', path),
+      privateKeyEnv: requiredStringAt(e, 'private_key_env', path),
+      tokenEnv: requiredStringAt(e, 'token_env', path),
+    };
+  }
+  return result;
+}
+
+function requiredStringAt(obj: Record<string, unknown>, key: string, path: string): string {
+  const value = obj[key];
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${path}.${key} must be a non-empty string`);
+  }
+  return value.trim();
 }
 
 function modelGenerationsAt(raw: RawConfig): Record<string, ModelGeneration> {

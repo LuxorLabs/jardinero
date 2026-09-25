@@ -16,6 +16,7 @@ import {
   personForGithubLogin,
   personForLinearUserId,
   repositoriesForDiscordChannel,
+  resolveGitHubTokenEnv,
   resolveSeatModel,
   resolveWorkerGeneration,
   resolveWorkerImage,
@@ -181,6 +182,7 @@ describe('loadConfig', () => {
           privateKeyEnv: 'JARDINERO_AGENT_PRIVATE_KEY',
           tokenRefreshMin: 10,
           webhookSecretEnv: 'JARDINERO_AGENT_WEBHOOK_SECRET',
+          repos: {},
         },
         discord: {
           enabled: false,
@@ -1503,6 +1505,150 @@ worker:
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+describe('githubAppReposAt', () => {
+  const cases: Array<{ name: string; yaml: string; want?: unknown; wantError?: RegExp }> = [
+    {
+      name: 'When no repo names its own App then should read no overrides',
+      yaml: '',
+      want: {},
+    },
+    {
+      name: 'When a repo names its own App then should read all four env names',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets:
+      app_id_env: "PUBLIC_APP_ID"
+      install_id_env: "PUBLIC_INSTALL_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+      token_env: "PUBLIC_TOKEN"
+`,
+      want: {
+        'Acme/widgets': {
+          appIdEnv: 'PUBLIC_APP_ID',
+          installIdEnv: 'PUBLIC_INSTALL_ID',
+          privateKeyEnv: 'PUBLIC_PRIVATE_KEY',
+          tokenEnv: 'PUBLIC_TOKEN',
+        },
+      },
+    },
+    {
+      name: 'When `app_id_env` is missing then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets:
+      install_id_env: "PUBLIC_INSTALL_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+      token_env: "PUBLIC_TOKEN"
+`,
+      wantError: /github_app\.repos\.Acme\/widgets\.app_id_env must be a non-empty string/,
+    },
+    {
+      name: 'When `install_id_env` is missing then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets:
+      app_id_env: "PUBLIC_APP_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+      token_env: "PUBLIC_TOKEN"
+`,
+      wantError: /install_id_env must be a non-empty string/,
+    },
+    {
+      name: 'When `private_key_env` is missing then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets:
+      app_id_env: "PUBLIC_APP_ID"
+      install_id_env: "PUBLIC_INSTALL_ID"
+      token_env: "PUBLIC_TOKEN"
+`,
+      wantError: /private_key_env must be a non-empty string/,
+    },
+    {
+      name: 'When `token_env` is blank then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets:
+      app_id_env: "PUBLIC_APP_ID"
+      install_id_env: "PUBLIC_INSTALL_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+      token_env: "   "
+`,
+      wantError: /token_env must be a non-empty string/,
+    },
+    {
+      name: 'When the entry is not an object then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets: "PUBLIC_APP_ID"
+`,
+      wantError: /github_app\.repos\.Acme\/widgets must be an object/,
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, () => {
+      if (c.wantError) {
+        assert.throws(() => loadYamlConfig(c.yaml), c.wantError);
+        return;
+      }
+      assert.deepEqual(loadYamlConfig(c.yaml).githubApp.repos, c.want);
+    });
+  }
+});
+
+describe('resolveGitHubTokenEnv', () => {
+  const OVERRIDE_YAML = `
+github_app:
+  repos:
+    Acme/widgets:
+      app_id_env: "PUBLIC_APP_ID"
+      install_id_env: "PUBLIC_INSTALL_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+      token_env: "PUBLIC_TOKEN"
+`;
+
+  const cases: Array<{ name: string; repo: string | undefined; want: string }> = [
+    {
+      name: 'When the repo names its own App then should read that App`s token',
+      repo: 'Acme/widgets',
+      want: 'PUBLIC_TOKEN',
+    },
+    {
+      name: 'When the repo is spelled in another case then should still read that App`s token',
+      repo: 'acme/WIDGETS',
+      want: 'PUBLIC_TOKEN',
+    },
+    {
+      name: 'When the repo names no App of its own then should read the default token',
+      repo: 'acme/gadgets',
+      want: 'GITHUB_TOKEN',
+    },
+    {
+      name: 'When no repo is given then should read the default token',
+      repo: undefined,
+      want: 'GITHUB_TOKEN',
+    },
+    {
+      name: 'When the repo is blank then should read the default token',
+      repo: '   ',
+      want: 'GITHUB_TOKEN',
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, () => {
+      assert.equal(resolveGitHubTokenEnv(loadYamlConfig(OVERRIDE_YAML), c.repo), c.want);
+    });
+  }
 });
 
 describe('resolveWorkerResources', () => {

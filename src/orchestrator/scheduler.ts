@@ -1,4 +1,4 @@
-import { type AppConfig, configuredRepositoryNames } from '../config.js';
+import { type AppConfig, configuredRepositoryNames, resolveGitHubTokenEnv } from '../config.js';
 import { type Logger, logger } from '../platform/logger.js';
 import type { SqliteBackupFailure, Store } from '../store/store.js';
 import { listOpenPullRequests } from '../adapters/github/github-pull-requests.js';
@@ -175,22 +175,22 @@ export class Scheduler {
   // sweepPullRequests announces every open pull request we may follow, which is the
   // safety net for a webhook that never arrived; the machine decides what is new.
   private sweepPullRequests(): void {
-    const token = this.env[this.config.worker.githubTokenEnv];
-    if (!token) {
-      this.log.error('cannot sweep pull requests', { reason: 'missing_github_token' });
-      return;
-    }
     if (this.prSweepInFlight) return;
     this.prSweepInFlight = true;
     void Promise.all(
-      configuredRepositoryNames(this.config).map((repo) => this.sweepRepository(repo, token)),
+      configuredRepositoryNames(this.config).map((repo) => this.sweepRepository(repo)),
     ).finally(() => {
       this.prSweepInFlight = false;
     });
   }
 
   // sweepRepository announces the followable pull requests of one repository.
-  private async sweepRepository(repo: string, token: string): Promise<void> {
+  private async sweepRepository(repo: string): Promise<void> {
+    const token = this.env[resolveGitHubTokenEnv(this.config, repo)];
+    if (!token) {
+      this.log.error('cannot sweep pull requests', { repo, reason: 'missing_github_token' });
+      return;
+    }
     try {
       const open = await listOpenPullRequests({ repo, token, fetchImpl: this.fetchImpl });
       const repository = this.store.upsertRepository(repo);

@@ -9,6 +9,7 @@ import {
   GitHubTokenError,
   isRetriableTokenError,
   refreshGitHubAppToken,
+  refreshRepoGitHubAppTokens,
   startGitHubAppTokenRefresher,
 } from './github-app-token.js';
 
@@ -122,6 +123,67 @@ describe('refreshGitHubAppToken', () => {
   }
 });
 
+describe('refreshRepoGitHubAppTokens', () => {
+  const PUBLIC_APP = {
+    appIdEnv: 'PUBLIC_APP_ID',
+    installIdEnv: 'PUBLIC_INSTALL_ID',
+    privateKeyEnv: 'PUBLIC_PRIVATE_KEY',
+    tokenEnv: 'PUBLIC_TOKEN',
+  };
+
+  test('When no repo names its own App then should mint nothing', async () => {
+    const env = {} as NodeJS.ProcessEnv;
+    const failures = await refreshRepoGitHubAppTokens({
+      config: testConfig(),
+      env,
+      fetchImpl: fakeFetch(201, { token: 'ghs_unused', expires_at: '2026-01-01T00:00:00Z' }),
+      nowSeconds: () => 1_700_000_000,
+    });
+    assert.deepEqual(failures, []);
+    assert.deepEqual(Object.keys(env), []);
+  });
+
+  test('When a repo names its own App then should write that App`s token', async () => {
+    const config = testConfig();
+    config.githubApp.repos = { 'Acme/widgets': PUBLIC_APP };
+    const env = {
+      PUBLIC_APP_ID: 'app-public',
+      PUBLIC_INSTALL_ID: '99',
+      PUBLIC_PRIVATE_KEY: privateKey,
+    } as NodeJS.ProcessEnv;
+
+    const failures = await refreshRepoGitHubAppTokens({
+      config,
+      env,
+      fetchImpl: fakeFetch(201, { token: 'ghs_public', expires_at: '2026-01-01T00:00:00Z' }),
+      nowSeconds: () => 1_700_000_000,
+    });
+
+    assert.deepEqual(failures, []);
+    assert.equal(env.PUBLIC_TOKEN, 'ghs_public');
+    assert.equal(env.GITHUB_TOKEN, undefined);
+  });
+
+  test('When one App is unreachable then should report it and leave the default token alone', async () => {
+    const config = testConfig();
+    config.githubApp.repos = { 'Acme/widgets': PUBLIC_APP };
+    const env = { GITHUB_TOKEN: 'ghs_default' } as NodeJS.ProcessEnv;
+
+    const failures = await refreshRepoGitHubAppTokens({
+      config,
+      env,
+      fetchImpl: fakeFetch(201, {}),
+      nowSeconds: () => 0,
+    });
+
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0]?.repo, 'Acme/widgets');
+    assert.match(failures[0]?.error.message ?? '', /secrets missing.*PUBLIC_APP_ID/);
+    assert.equal(env.GITHUB_TOKEN, 'ghs_default');
+    assert.equal(env.PUBLIC_TOKEN, undefined);
+  });
+});
+
 describe('startGitHubAppTokenRefresher', () => {
   test('When the first mint succeeds then should log it and expose a stop', async () => {
     const logs = recordingLogger();
@@ -135,6 +197,33 @@ describe('startGitHubAppTokenRefresher', () => {
     refresher.stop();
 
     assert.deepEqual(logs.info, ['github app installation token minted']);
+  });
+
+  test('When a repo App cannot be read then should log it and still boot', async () => {
+    const logs = recordingLogger();
+    const config = testConfig();
+    config.githubApp.repos = {
+      'Acme/widgets': {
+        appIdEnv: 'PUBLIC_APP_ID',
+        installIdEnv: 'PUBLIC_INSTALL_ID',
+        privateKeyEnv: 'PUBLIC_PRIVATE_KEY',
+        tokenEnv: 'PUBLIC_TOKEN',
+      },
+    };
+    const env = refresherEnv();
+
+    const refresher = await startGitHubAppTokenRefresher({
+      config,
+      env,
+      fetchImpl: fakeFetch(201, { token: 'ghs_1', expires_at: '2026-01-01T00:00:00Z' }),
+      nowSeconds: () => 1_700_000_000,
+      logger: logs.logger,
+    });
+    refresher.stop();
+
+    assert.deepEqual(logs.info, ['github app installation token minted']);
+    assert.deepEqual(logs.error, ['repo github app installation token refresh failed']);
+    assert.equal(env.GITHUB_TOKEN, 'ghs_1');
   });
 
   // The mint has to fail loudly at boot: a missing GitHub token makes every
@@ -279,6 +368,7 @@ function testConfig(): AppConfig {
       installIdEnv: 'INSTALL_ID',
       privateKeyEnv: 'PRIVATE_KEY',
       tokenRefreshMin: 10,
+      repos: {},
     },
   } as unknown as AppConfig;
 }

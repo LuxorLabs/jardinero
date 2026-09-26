@@ -20,6 +20,7 @@ beforeEach(() => {
   repositoryId = store.upsertRepository('acme/web.app').id;
   engine = new LogReviewerStateEngine(store, pool, new FakeLocker(), {
     scanWindowMs: 0,
+    maxIterations: 2,
     checkWaitMs: {},
   });
 });

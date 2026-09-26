@@ -130,11 +130,9 @@ export async function onSandboxRunFailed(
   try {
     switch (instance.workflowState) {
       case 'lr_working':
+        // Pending on the same instance keeps the cron from opening a second scan of the
+        // target; the periodic check dispatches it, which spaces out a run that keeps failing.
         instance.sandboxRunId = null;
-        // Codex never ran, so this scan read nothing. Stay on the same instance so the next tick retries it and a second cron cannot open another investigation.
-        if (sandboxReachedCodex(engine.store, sandboxRunId)) {
-          return setState(engine, instance, 'lr_failed');
-        }
         return setState(engine, instance, 'lr_pending');
 
       default:
@@ -219,7 +217,8 @@ function processSandboxRunWhileWorking(
       // the only thing that knows whether the sandbox is still alive.
       if (engine.pool.isExecuting(sandboxRun.id)) return undefined;
       engine.store.finishSandboxRun(sandboxRun.id, { runState: 'orphaned' });
-      return retryOrFailLogReview(engine, instance, sandboxRun.id);
+      instance.sandboxRunId = null;
+      return setStateAndRun(engine, instance, 'lr_pending');
 
     case 'succeeded':
       // The pool closes the run row before it hands the outcome over, so a run it still
@@ -231,37 +230,25 @@ function processSandboxRunWhileWorking(
       return setState(engine, instance, 'lr_done');
 
     case 'aborted':
+      // Someone stopped the run on purpose, so the scan is not taken again.
       instance.sandboxRunId = null;
       return setState(engine, instance, 'lr_failed');
 
     default:
-      return retryOrFailLogReview(engine, instance, instance.sandboxRunId);
+      // A periodic or recovery look already waited, so the retry dispatches now.
+      instance.sandboxRunId = null;
+      return setStateAndRun(engine, instance, 'lr_pending');
   }
 }
 
-function retryOrFailLogReview(
+function setStateAndRun(
   engine: LogReviewerStateEngine,
   instance: LogReviewer,
-  sandboxRunId: string | null,
+  state: LogReviewer['workflowState'],
 ): Error | undefined {
-  instance.sandboxRunId = null;
-  if (sandboxRunId && sandboxReachedCodex(engine.store, sandboxRunId)) {
-    return setState(engine, instance, 'lr_failed');
-  }
-  // A periodic or recovery look already waited. Dispatch now; a live
-  // onSandboxRunFailed stays pending so provider 502s cannot tight-loop sandboxes.
-  const error = setState(engine, instance, 'lr_pending');
-  if (error) return error;
+  const writeError = setState(engine, instance, state);
+  if (writeError) return writeError;
   return runLogReviewerFSM(engine, instance);
-}
-
-function sandboxReachedCodex(
-  store: LogReviewerStateEngine['store'],
-  sandboxRunId: string,
-): boolean {
-  return store
-    .listEventsForSandboxRun(sandboxRunId)
-    .some((event) => event.eventType === 'agent.started');
 }
 
 async function takeLogReviewerById(

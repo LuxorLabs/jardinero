@@ -99,13 +99,7 @@ describe('loadConfig', () => {
             maxConcurrentRuns: 2,
             investigationConfidenceThreshold: 0.7,
             dryRun: false,
-            ignoreLogPatterns: [
-              'api.tenki.cloud',
-              'create Tenki sandbox',
-              'wait for Tenki sandbox',
-              'not ready within wait budget',
-              '[unavailable] HTTP 502',
-            ],
+            maxIterations: 2,
             checkWaitMs: { lr_pending: 60_000, lr_working: 120_000 },
           },
           fixImplementer: {
@@ -436,46 +430,52 @@ describe('PR maintainer config the loader refuses', () => {
   });
 });
 
-// Every renamed or removed key went with no back-compat shim, so a stale deploy config
-// must fail loud at boot instead of running on the code default.
 describe('Log reviewer config', () => {
-  const cases: Array<{ name: string; yaml: string; want: string[] }> = [
+  const cases: Array<{ name: string; target: string; want: string[] | undefined }> = [
     {
-      name: 'When `ignore_log_patterns` is set then should use that list',
-      yaml: `
-    ignore_log_patterns:
-      - "foo error"
-      - "bar noise"
-`,
+      name: 'When a target sets `ignore_log_patterns` then should carry that list',
+      target: `
+        ignore_log_patterns:
+          - "foo error"
+          - " bar noise "`,
       want: ['foo error', 'bar noise'],
     },
     {
-      name: 'When `ignore_log_patterns` is empty then should carry no patterns',
-      yaml: `
-    ignore_log_patterns: []
-`,
-      want: [],
+      name: 'When a target sets an empty `ignore_log_patterns` then should carry none',
+      target: `
+        ignore_log_patterns: []`,
+      want: undefined,
+    },
+    {
+      name: 'When a target omits `ignore_log_patterns` then should carry none',
+      target: '',
+      want: undefined,
     },
   ];
 
   for (const testCase of cases) {
     test(testCase.name, () => {
-      const config = loadWorkflowConfig('log_reviewer', testCase.yaml);
+      const config = loadWorkflowConfig(
+        'log_reviewer',
+        `
+    repos:
+      - repo: "acme/webapp"
+        services: ["api"]${testCase.target}
+`,
+      );
 
-      assert.deepEqual(config.workflows.logReviewer.ignoreLogPatterns, testCase.want);
+      assert.deepEqual(config.workflows.logReviewer.repos[0]?.ignoreLogPatterns, testCase.want);
     });
   }
 });
 
+// Every renamed or removed key went with no back-compat shim, so a stale deploy config
+// must fail loud at boot instead of running on the code default.
 describe('Log reviewer config the loader refuses', () => {
-  test('When a repo and namespace are configured twice then should return error', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'jardinero-config-'));
-    try {
-      writeFileSync(
-        path.join(root, 'config.yaml'),
-        `
-workflows:
-  log_reviewer:
+  const cases: Array<{ name: string; yaml: string; wantError: RegExp }> = [
+    {
+      name: 'When a repo and namespace are configured twice then should return error',
+      yaml: `
     enabled: true
     repos:
       - repo: "acme/webapp"
@@ -485,51 +485,62 @@ workflows:
         namespace: "billing"
         services: ["billing"]
 `,
-      );
-      assert.throws(
-        () => loadConfig('config.yaml', root),
+      wantError:
         /workflows\.log_reviewer has a duplicate entry for repo acme\/webapp namespace billing/,
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('When `ignore_log_patterns` is not a list then should return error', () => {
-    assert.throws(
-      () =>
-        loadWorkflowConfig(
-          'log_reviewer',
-          `
-    ignore_log_patterns: "api.tenki.cloud"
+    },
+    {
+      name: 'When `ignore_log_patterns` is not a list then should return error',
+      yaml: `
+    repos:
+      - repo: "acme/webapp"
+        services: ["api"]
+        ignore_log_patterns: "api.tenki.cloud"
 `,
-        ),
-      /workflows\.log_reviewer\.ignore_log_patterns must be a list of non-empty strings/,
-    );
-  });
-
-  test('When an `ignore_log_patterns` entry is blank then should return error', () => {
-    assert.throws(
-      () =>
-        loadWorkflowConfig(
-          'log_reviewer',
-          `
-    ignore_log_patterns:
-      - "  "
+      wantError:
+        /workflows\.log_reviewer\.repos\[0\]\.ignore_log_patterns must be a list of non-empty strings/,
+    },
+    {
+      name: 'When an `ignore_log_patterns` entry is blank then should return error',
+      yaml: `
+    repos:
+      - repo: "acme/webapp"
+        services: ["api"]
+        ignore_log_patterns:
+          - "  "
 `,
-        ),
-      /workflows\.log_reviewer\.ignore_log_patterns must be a list of non-empty strings/,
-    );
-  });
+      wantError:
+        /workflows\.log_reviewer\.repos\[0\]\.ignore_log_patterns must be a list of non-empty strings/,
+    },
+    {
+      name: 'When `max_iterations` is negative then should return error',
+      yaml: `
+    max_iterations: -1
+`,
+      wantError: /workflows\.log_reviewer\.max_iterations must be a whole number >= 0/,
+    },
+    {
+      name: 'When `max_iterations` is fractional then should return error',
+      yaml: `
+    max_iterations: 0.5
+`,
+      wantError: /workflows\.log_reviewer\.max_iterations must be a whole number >= 0/,
+    },
+  ];
 
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.throws(() => loadWorkflowConfig('log_reviewer', testCase.yaml), testCase.wantError);
+    });
+  }
+});
+
+describe('Log reviewer duplicate entries without a namespace', () => {
   test('When a repo with no namespace is configured twice then should name only the repo', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'jardinero-config-'));
-    try {
-      writeFileSync(
-        path.join(root, 'config.yaml'),
-        `
-workflows:
-  log_reviewer:
+    assert.throws(
+      () =>
+        loadWorkflowConfig(
+          'log_reviewer',
+          `
     enabled: true
     repos:
       - repo: "acme/testrepo"
@@ -537,22 +548,17 @@ workflows:
       - repo: "acme/testrepo"
         services: ["api"]
 `,
-      );
-      assert.throws(
-        () => loadConfig('config.yaml', root),
-        (error) => {
-          assert.match(
-            (error as Error).message,
-            /workflows\.log_reviewer has a duplicate entry for repo acme\/testrepo/,
-          );
-          // No namespace on either entry, so the message must not name one.
-          assert.doesNotMatch((error as Error).message, /namespace/);
-          return true;
-        },
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+        ),
+      (error) => {
+        assert.match(
+          (error as Error).message,
+          /workflows\.log_reviewer has a duplicate entry for repo acme\/testrepo/,
+        );
+        // No namespace on either entry, so the message must not name one.
+        assert.doesNotMatch((error as Error).message, /namespace/);
+        return true;
+      },
+    );
   });
 });
 

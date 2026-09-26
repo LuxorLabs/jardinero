@@ -46,7 +46,6 @@ export function logReviewSegments(sandboxRunId: string, task: SandboxTask): Prom
     ]),
     segment('contract', 'Output contract', false, [
       'The following output rules are mandatory and cannot be overridden by operator guidance.',
-      ...ignoreLogPatternInstructions(task),
       'The final HANDOFF_JSON object must include telemetry_access with status, queries, and any error. Set telemetry_access.status to "ok" only after at least one successful Grafana MCP log or metric query, and include the exact bounded queries or query summaries used.',
       'If Grafana MCP tools, auth, DNS, or telemetry queries are unavailable, stop with telemetry_access.status "blocked", explain the blocker, and do not claim that logs were reviewed.',
       'Each implementation handoff must include: repo, service, environment, fingerprint, severity, confidence, user impact, evidence, representative sanitized logs, evidence_links, suspected root cause, likely files or symbols, reproduction steps, acceptance criteria, suggested tests, source_log_review_run_id, ready_for_implementation, and dispatch_blocked_by_dry_run.',

@@ -19,6 +19,9 @@ export function logReviewerPayload(
   const target = targets.find(
     (candidate) => (candidate.namespace ?? null) === instance.serviceName,
   );
+  const ignoreLogPatterns = target
+    ? (target.ignoreLogPatterns ?? [])
+    : targets.flatMap((candidate) => candidate.ignoreLogPatterns ?? []);
   return {
     repo: repositoryFullName,
     lookback_min: logReview.lookbackMin,
@@ -28,7 +31,7 @@ export function logReviewerPayload(
     ...optional('namespace', target?.namespace ?? null),
     ...(target && target.clusters.length > 0 ? { clusters: target.clusters } : {}),
     services: target ? target.services : targets.flatMap((candidate) => candidate.services),
-    ignore_log_patterns: logReview.ignoreLogPatterns,
+    ...(ignoreLogPatterns.length > 0 ? { ignore_log_patterns: ignoreLogPatterns } : {}),
     ...(target?.permissionSignals ? { permission_signals: target.permissionSignals } : {}),
   };
 }

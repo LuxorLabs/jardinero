@@ -15,6 +15,9 @@ export interface LogReviewerConfig {
   // scanWindowMs is how far back a scan reads, so a target scanned again inside it would
   // read the same logs twice.
   scanWindowMs: number;
+  // maxIterations bounds the passes one scan gets; a run that ended without an outcome
+  // spends one.
+  maxIterations: number;
   // checkWaitMs is how long each state waits between periodic checks; a state left out is
   // never checked, which is what the terminal states want.
   checkWaitMs: Partial<Record<LogReviewerState, number>>;

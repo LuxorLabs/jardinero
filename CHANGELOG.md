@@ -1,5 +1,11 @@
 # jardinero
 
+## [0.10.0] - 2026-09-26
+
+### Minor Changes
+
+- [#77](https://github.com/LuxorLabs/jardinero/pull/77) [`f5b23a6`](https://github.com/LuxorLabs/jardinero/commit/f5b23a68b026272345047236ce4bc4bdf956f276) Thanks [@luciocorral](https://github.com/luciocorral)! - agent: read a repository's GitHub App credential per repo
+
 ## [0.9.0] - 2026-09-10
 
 ### Minor Changes

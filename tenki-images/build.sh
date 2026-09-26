@@ -20,7 +20,6 @@
 #   TENKI_WORKSPACE_SLUG  optional   -> registry prefix; derived from the session
 #   RECIPES_DIR           optional   -> where the recipes live (default: recipes/)
 #   CODEX_VERSION         optional   -> Codex CLI to bake (default: latest).
-#                                        GPT-6 needs 0.155.0 or later.
 #   GH_TOKEN / GITHUB_TOKEN  needed for canary clone of a private repo;
 #                            falls back to `gh auth token`.
 set -euo pipefail

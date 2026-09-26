@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { Store } from '../../../store/store.js';
-import type { LogReviewer, LogReviewerState } from '../../../store/types.js';
+import type { LogReviewer, LogReviewerState, SandboxRunState } from '../../../store/types.js';
 import { FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
-import { createTestStore } from '../../../testing/store.js';
+import { createTestStore, refuseSandboxRunInserts } from '../../../testing/store.js';
 import { LogReviewerStateEngine } from './service.js';
 import { handleStateLrPending } from './state-handlers.js';
 
@@ -32,7 +32,7 @@ describe('handleStateLrPending', () => {
   const cases: PendingCase[] = [
     {
       name: 'When nothing is in flight then should dispatch and answer `lr_working`',
-      want: { state: 'lr_working', startedRuns: 1 },
+      want: { state: 'lr_working', startedRuns: 1, runStates: ['pending'] },
     },
     {
       // Re-entering with a live run is what makes calling the handler twice
@@ -41,7 +41,7 @@ describe('handleStateLrPending', () => {
       arrange: (instance) => {
         instance.sandboxRunId = startRunFor(instance);
       },
-      want: { state: 'lr_working' },
+      want: { state: 'lr_working', runStates: ['pending'] },
     },
     {
       name: 'When the live run already finished then should dispatch again',
@@ -50,7 +50,7 @@ describe('handleStateLrPending', () => {
         store.finishSandboxRun(runId, { runState: 'failed' });
         instance.sandboxRunId = runId;
       },
-      want: { state: 'lr_working', startedRuns: 1 },
+      want: { state: 'lr_working', startedRuns: 1, runStates: ['failed', 'pending'] },
     },
     {
       name: 'When the caps have no room then should answer `lr_pending` without recording a run',
@@ -60,7 +60,7 @@ describe('handleStateLrPending', () => {
       want: { state: 'lr_pending' },
     },
     {
-      name: 'When the concurrency caps refuse the sandbox then should answer `lr_pending`',
+      name: 'When the pool refuses the sandbox then should answer `lr_pending` without keeping a run',
       arrange: () => {
         pool.refuseToStart = true;
       },
@@ -68,7 +68,7 @@ describe('handleStateLrPending', () => {
     },
     {
       name: 'When the dispatch cannot be recorded then should answer `lr_pending` with the failure',
-      arrange: () => store.db.exec('DROP TABLE sandbox_run'),
+      arrange: () => refuseSandboxRunInserts(store),
       want: { state: 'lr_pending', errorName: 'Error' },
     },
   ];
@@ -83,32 +83,16 @@ describe('handleStateLrPending', () => {
       assert.equal(error?.constructor.name, c.want.errorName);
       assert.equal(nextState, c.want.state);
       assert.equal(pool.started.length, c.want.startedRuns ?? 0);
+      assert.equal(instance.sandboxRunId, store.listSandboxRuns(10, 'pending')[0]?.id ?? null);
+      assert.deepEqual(
+        store
+          .listSandboxRuns(10)
+          .map((run) => run.runState)
+          .sort(),
+        c.want.runStates ?? [],
+      );
     });
   }
-
-  // A run left pending would be reaped as orphaned and take the scan to lr_failed.
-  test('When the pool refuses the sandbox then should release the run it recorded', () => {
-    const instance = openInstance();
-    pool.refuseToStart = true;
-
-    handleStateLrPending(engine, instance);
-
-    assert.equal(instance.sandboxRunId, null);
-    assert.deepEqual(
-      store.listSandboxRuns(10).map((run) => run.runState),
-      ['skipped'],
-    );
-  });
-
-  test('When the caps have no room then should create no sandbox run', () => {
-    const instance = openInstance();
-    pool.refuseRoom = true;
-
-    handleStateLrPending(engine, instance);
-
-    assert.deepEqual(store.listSandboxRuns(10), []);
-    assert.equal(instance.sandboxRunId, null);
-  });
 });
 
 function openInstance(): LogReviewer {
@@ -130,5 +114,6 @@ interface PendingCase {
     state: LogReviewerState;
     startedRuns?: number;
     errorName?: string;
+    runStates?: SandboxRunState[];
   };
 }

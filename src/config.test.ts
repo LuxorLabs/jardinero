@@ -16,6 +16,7 @@ import {
   personForGithubLogin,
   personForLinearUserId,
   repositoriesForDiscordChannel,
+  resolveGitHubTokenEnv,
   resolveSeatModel,
   resolveWorkerGeneration,
   resolveWorkerImage,
@@ -160,13 +161,13 @@ describe('loadConfig', () => {
           githubTokenEnv: 'GITHUB_TOKEN',
           gitAuthorName: '',
           gitAuthorEmail: '',
-          default: { image: '', model: { generation: 'gpt-5.6', maxEffort: 'xhigh' } },
+          default: { image: '', model: { generation: 'gpt-6', maxEffort: 'xhigh' } },
           repos: {},
           modelGenerations: {
             'gpt-6': {
               implementation: 'gpt-6-astra',
-              triage: 'gpt-5.6-terra',
-              verify: 'gpt-5.6-sol',
+              triage: 'gpt-6-sol',
+              verify: 'gpt-6-sol',
             },
             'gpt-5.6': { implementation: 'gpt-5.6-sol', triage: 'gpt-5.6-terra' },
             'gpt-5.5': { implementation: 'gpt-5.5' },
@@ -188,6 +189,7 @@ describe('loadConfig', () => {
           privateKeyEnv: 'JARDINERO_AGENT_PRIVATE_KEY',
           tokenRefreshMin: 10,
           webhookSecretEnv: 'JARDINERO_AGENT_WEBHOOK_SECRET',
+          repos: {},
         },
         discord: {
           enabled: false,
@@ -1566,6 +1568,149 @@ worker:
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+describe('githubAppReposAt', () => {
+  const cases: Array<{ name: string; yaml: string; want?: unknown; wantError?: RegExp }> = [
+    {
+      name: 'When no repo names its own App then should read no overrides',
+      yaml: '',
+      want: {},
+    },
+    {
+      name: 'When a repo names its own App then should read its three env names and derive its token',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets:
+      app_id_env: "PUBLIC_APP_ID"
+      install_id_env: "PUBLIC_INSTALL_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+`,
+      want: {
+        'Acme/widgets': {
+          appIdEnv: 'PUBLIC_APP_ID',
+          installIdEnv: 'PUBLIC_INSTALL_ID',
+          privateKeyEnv: 'PUBLIC_PRIVATE_KEY',
+          tokenEnv: 'JARDINERO_REPO_GITHUB_TOKEN_ACME_WIDGETS',
+        },
+      },
+    },
+    {
+      name: 'When `app_id_env` is missing then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets:
+      install_id_env: "PUBLIC_INSTALL_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+`,
+      wantError: /github_app\.repos\.Acme\/widgets\.app_id_env must be a non-empty string/,
+    },
+    {
+      name: 'When `install_id_env` is missing then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets:
+      app_id_env: "PUBLIC_APP_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+`,
+      wantError: /install_id_env must be a non-empty string/,
+    },
+    {
+      name: 'When `private_key_env` is missing then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets:
+      app_id_env: "PUBLIC_APP_ID"
+      install_id_env: "PUBLIC_INSTALL_ID"
+`,
+      wantError: /private_key_env must be a non-empty string/,
+    },
+    {
+      name: 'When two repos resolve to the same token env var then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets-api:
+      app_id_env: "PUBLIC_APP_ID"
+      install_id_env: "PUBLIC_INSTALL_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+    Acme/widgets_api:
+      app_id_env: "OTHER_APP_ID"
+      install_id_env: "OTHER_INSTALL_ID"
+      private_key_env: "OTHER_PRIVATE_KEY"
+`,
+      wantError:
+        /Acme\/widgets_api and Acme\/widgets-api resolve to the same JARDINERO_REPO_GITHUB_TOKEN_ACME_WIDGETS_API/,
+    },
+    {
+      name: 'When the entry is not an object then should return error',
+      yaml: `
+github_app:
+  repos:
+    Acme/widgets: "PUBLIC_APP_ID"
+`,
+      wantError: /github_app\.repos\.Acme\/widgets must be an object/,
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, () => {
+      if (c.wantError) {
+        assert.throws(() => loadYamlConfig(c.yaml), c.wantError);
+        return;
+      }
+      assert.deepEqual(loadYamlConfig(c.yaml).githubApp.repos, c.want);
+    });
+  }
+});
+
+describe('resolveGitHubTokenEnv', () => {
+  const OVERRIDE_YAML = `
+github_app:
+  repos:
+    Acme/widgets:
+      app_id_env: "PUBLIC_APP_ID"
+      install_id_env: "PUBLIC_INSTALL_ID"
+      private_key_env: "PUBLIC_PRIVATE_KEY"
+`;
+
+  const cases: Array<{ name: string; repo: string | undefined; want: string }> = [
+    {
+      name: 'When the repo names its own App then should read that App`s token',
+      repo: 'Acme/widgets',
+      want: 'JARDINERO_REPO_GITHUB_TOKEN_ACME_WIDGETS',
+    },
+    {
+      name: 'When the repo is spelled in another case then should still read that App`s token',
+      repo: 'acme/WIDGETS',
+      want: 'JARDINERO_REPO_GITHUB_TOKEN_ACME_WIDGETS',
+    },
+    {
+      name: 'When the repo names no App of its own then should read the default token',
+      repo: 'acme/gadgets',
+      want: 'GITHUB_TOKEN',
+    },
+    {
+      name: 'When no repo is given then should read the default token',
+      repo: undefined,
+      want: 'GITHUB_TOKEN',
+    },
+    {
+      name: 'When the repo is blank then should read the default token',
+      repo: '   ',
+      want: 'GITHUB_TOKEN',
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, () => {
+      assert.equal(resolveGitHubTokenEnv(loadYamlConfig(OVERRIDE_YAML), c.repo), c.want);
+    });
+  }
 });
 
 describe('resolveWorkerResources', () => {

@@ -4,7 +4,7 @@ import {
   markPullRequestReadyForReview,
 } from '../adapters/github/github-pull-requests.js';
 import { postCommentReaction } from '../adapters/github/github-reactions.js';
-import type { AppConfig } from '../config.js';
+import { type AppConfig, resolveGitHubTokenEnv } from '../config.js';
 import { logger } from '../platform/logger.js';
 import {
   type ExistingImplementationPr,
@@ -39,7 +39,7 @@ export class GitHubPullRequests
     repositoryFullName: string,
     pullRequestNumber: number,
   ): Promise<PullRequestSnapshot> {
-    const token = this.env[this.config.worker.githubTokenEnv];
+    const token = this.env[resolveGitHubTokenEnv(this.config, repositoryFullName)];
     if (!token) return this.nothingToDo(repositoryFullName, pullRequestNumber, 'missing_token');
     try {
       return await getPullRequestState({
@@ -61,7 +61,7 @@ export class GitHubPullRequests
     repositoryFullName: string,
     pullRequestNumber: number,
   ): Promise<Error | undefined> {
-    const token = this.env[this.config.worker.githubTokenEnv];
+    const token = this.env[resolveGitHubTokenEnv(this.config, repositoryFullName)];
     if (!token) return new Error('missing github token');
     try {
       await markPullRequestReadyForReview({
@@ -83,7 +83,7 @@ export class GitHubPullRequests
     const reactions = this.config.workflows.prMaintainer.commentReactions;
     const commentId = Number(comment.commentExternalId);
     if (!reactions.enabled || !Number.isInteger(commentId)) return undefined;
-    const token = this.env[this.config.worker.githubTokenEnv];
+    const token = this.env[resolveGitHubTokenEnv(this.config, repositoryFullName)];
     if (!token) return new Error('missing github token');
     try {
       await postCommentReaction({
@@ -104,7 +104,7 @@ export class GitHubPullRequests
     repositoryFullName: string,
     signature: ProblemSignature,
   ): Promise<ExistingImplementationPr | undefined> {
-    const token = this.env[this.config.worker.githubTokenEnv];
+    const token = this.env[resolveGitHubTokenEnv(this.config, repositoryFullName)];
     if (!token) return this.cannotLookUp(repositoryFullName, signature, 'missing_token');
     try {
       const open = await listOpenPullRequests({

@@ -1446,6 +1446,10 @@ export class Store {
       );
   }
 
+  deleteSandboxRun(id: string): void {
+    this.db.prepare('DELETE FROM sandbox_run WHERE id = ?').run(id);
+  }
+
   listSandboxRuns(limit = 100, runState?: SandboxRunState): SandboxRun[] {
     const rows = runState
       ? (this.db

@@ -3,7 +3,7 @@
   "version": "0.9.0",
   "private": true,
   "license": "MIT",
-  "packageManager": "pnpm@12.3.4",
+  "packageManager": "pnpm@12.4.1",
   "type": "module",
   "scripts": {
     "build": "pnpm run build:server && pnpm run build:web",
@@ -29,34 +29,34 @@
     "test": "pnpm run build:test && node --test --test-timeout=120000 \"dist/src/**/*.test.js\" \"dist/test/**/*.test.js\""
   },
   "dependencies": {
-    "@daytona/sdk": "0.210.0",
-    "@tenkicloud/sandbox": "1.0.5",
+    "@daytona/sdk": "0.211.2",
+    "@tenkicloud/sandbox": "1.0.6",
     "dotenv": "17.4.2",
-    "freestyle": "0.2.11",
-    "yaml": "2.9.0"
+    "freestyle": "0.2.13",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
+    "@biomejs/biome": "2.5.13",
     "@changesets/changelog-github": "1.0.1",
     "@changesets/cli": "3.0.2",
     "@radix-ui/react-label": "2.1.15",
     "@radix-ui/react-select": "2.3.7",
     "@radix-ui/react-slot": "1.3.3",
     "@tailwindcss/vite": "4.3.3",
-    "@types/node": "25.9.5",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.7",
+    "@types/node": "25.9.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "lucide-react": "1.41.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "lucide-react": "1.45.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "tailwind-merge": "3.6.0",
     "tailwindcss": "4.3.3",
     "tsx": "4.23.13",
     "typescript": "7.0.2",
-    "vite": "8.2.2"
+    "vite": "8.3.0"
   },
   "engines": {
     "node": ">=24.0.0"

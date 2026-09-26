@@ -1,5 +1,43 @@
 # jardinero
 
+## [0.10.0] - 2026-09-26
+
+### Minor Changes
+
+- [`e0b3764`](https://github.com/LuxorLabs/jardinero/commit/e0b37646fd09bd77de614fa5069f55562b160ee2) Thanks [@luciocorral](https://github.com/luciocorral)! - config: default to the gpt-6 generation
+
+- [#59](https://github.com/LuxorLabs/jardinero/pull/59) [`7046491`](https://github.com/LuxorLabs/jardinero/commit/7046491422e2ba9c8514cc404ba6ff7814c603ff) Thanks [@rishijoshi](https://github.com/rishijoshi)! - log-review: ignore per-target log noise and retry a scan whose run was lost, up to max_iterations
+
+- [#77](https://github.com/LuxorLabs/jardinero/pull/77) [`f5b23a6`](https://github.com/LuxorLabs/jardinero/commit/f5b23a68b026272345047236ce4bc4bdf956f276) Thanks [@luciocorral](https://github.com/luciocorral)! - agent: read a repository's GitHub App credential per repo
+
+- [#76](https://github.com/LuxorLabs/jardinero/pull/76) [`0a54bb3`](https://github.com/LuxorLabs/jardinero/commit/0a54bb341f07cfcf41ac29728320b956a78dd565) Thanks [@cbascom](https://github.com/cbascom)! - infra: add a Daytona sandbox smoke and run it nightly and on SDK bumps
+
+- [#73](https://github.com/LuxorLabs/jardinero/pull/73) [`3497aff`](https://github.com/LuxorLabs/jardinero/commit/3497affa0ba25d8850c192a795322e7301219b08) Thanks [@cbascom](https://github.com/cbascom)! - infra: run the Freestyle sandbox smoke in CI and fix the documented snapshot build
+
+### Patch Changes
+
+- [#76](https://github.com/LuxorLabs/jardinero/pull/76) [`5ee0b45`](https://github.com/LuxorLabs/jardinero/commit/5ee0b4503c8e226f6ade1521ccc3eb76ff4be574) Thanks [@cbascom](https://github.com/cbascom)! - infra: emit the image build dry-run header on stderr so the script keeps its shebang
+
+- [#71](https://github.com/LuxorLabs/jardinero/pull/71) [`5d7c156`](https://github.com/LuxorLabs/jardinero/commit/5d7c156be72c7670951cd93bfd12eb8649c72e0e) Thanks [@cbascom](https://github.com/cbascom)! - infra: add a dispatchable workflow that rebuilds a Tenki worker image
+
+- [#76](https://github.com/LuxorLabs/jardinero/pull/76) [`bcc285f`](https://github.com/LuxorLabs/jardinero/commit/bcc285f1645a5a0cbfa91492acb57566122adb4b) Thanks [@cbascom](https://github.com/cbascom)! - infra: document the Daytona CLI login, its docs link and the key permissions Jardinero needs
+
+- [#65](https://github.com/LuxorLabs/jardinero/pull/65) [`89e8825`](https://github.com/LuxorLabs/jardinero/commit/89e8825ccfed29ea705477efdba7c6edb6ca6e1c) Thanks [@renovate](https://github.com/apps/renovate)! - worker: follow the Freestyle SDK default to api.freestyle.sh
+
+- [#54](https://github.com/LuxorLabs/jardinero/pull/54) [`b15c3f5`](https://github.com/LuxorLabs/jardinero/commit/b15c3f5804e56869db63eaffc26f41e30ac53733) Thanks [@cbascom](https://github.com/cbascom)! - worker: adopt the freestyle 0.2.7 VM lifetime options
+
+- [#74](https://github.com/LuxorLabs/jardinero/pull/74) [`bf7184b`](https://github.com/LuxorLabs/jardinero/commit/bf7184b3025bfc2df214e61afcd46e4aca8a49b7) Thanks [@cbascom](https://github.com/cbascom)! - worker: run Freestyle provisioning as root so sandbox creation stops failing
+
+- [#73](https://github.com/LuxorLabs/jardinero/pull/73) [`cb218b7`](https://github.com/LuxorLabs/jardinero/commit/cb218b77c3d3e31522719762b6df642bc038b6a6) Thanks [@cbascom](https://github.com/cbascom)! - worker: stop the Freestyle sudo check from blaming an unrelated provisioning failure
+
+- [#53](https://github.com/LuxorLabs/jardinero/pull/53) [`bd5faa9`](https://github.com/LuxorLabs/jardinero/commit/bd5faa91339bf5076853eaa5358380ab24e1be6c) Thanks [@cbascom](https://github.com/cbascom)! - infra: upgrade pnpm to 12; a pnpm 11 that switches to it can leave a binary that fails with ENOEXEC, so install pnpm 12 directly
+
+- [#60](https://github.com/LuxorLabs/jardinero/pull/60) [`20835b4`](https://github.com/LuxorLabs/jardinero/commit/20835b4786ca6ec008d6704550e48f47f3da967c) Thanks [@rishijoshi](https://github.com/rishijoshi)! - orchestrator: drop sandbox rows the pool refuses so a Fix loss streak is left intact
+
+- [#70](https://github.com/LuxorLabs/jardinero/pull/70) [`0f01d51`](https://github.com/LuxorLabs/jardinero/commit/0f01d51ce47d1070bd4a0c1482e7304bf829ed38) Thanks [@cbascom](https://github.com/cbascom)! - infra: run the Tenki sandbox smoke in CI nightly and on SDK version changes
+
+- [#75](https://github.com/LuxorLabs/jardinero/pull/75) [`eb34ca3`](https://github.com/LuxorLabs/jardinero/commit/eb34ca3fd33469c89c01d2ad7985c947bfb0bfe0) Thanks [@cbascom](https://github.com/cbascom)! - infra: drive the Tenki smoke through TenkiSandboxProvider instead of the SDK directly
+
 ## [0.9.0] - 2026-09-10
 
 ### Minor Changes

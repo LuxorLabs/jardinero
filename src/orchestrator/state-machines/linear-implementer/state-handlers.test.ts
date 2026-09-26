@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { Store } from '../../../store/store.js';
-import type { LinearImplementer, LinearImplementerState } from '../../../store/types.js';
+import type {
+  LinearImplementer,
+  LinearImplementerState,
+  SandboxRunState,
+} from '../../../store/types.js';
 import { FakeGitHub, FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
-import { createTestStore } from '../../../testing/store.js';
+import { createTestStore, refuseSandboxRunInserts } from '../../../testing/store.js';
 import { LinearImplementerStateEngine } from './service.js';
 import {
   handleStateLiImplementing,
@@ -64,12 +68,22 @@ describe('LinearImplementer states that own an agent', () => {
     {
       name: 'When implementing has nothing in flight then should dispatch the implementer',
       handler: handleStateLiImplementing,
-      want: { state: 'li_implementing', startedRuns: 1, agentName: 'LinearImplementer' },
+      want: {
+        state: 'li_implementing',
+        startedRuns: 1,
+        agentName: 'LinearImplementer',
+        runStates: ['pending'],
+      },
     },
     {
       name: 'When verifying has nothing in flight then should dispatch the verifier',
       handler: handleStateLiVerifying,
-      want: { state: 'li_verifying', startedRuns: 1, agentName: 'LinearVerifier' },
+      want: {
+        state: 'li_verifying',
+        startedRuns: 1,
+        agentName: 'LinearVerifier',
+        runStates: ['pending'],
+      },
     },
     {
       name: 'When implementing already has a live run then should stay without dispatching',
@@ -77,7 +91,7 @@ describe('LinearImplementer states that own an agent', () => {
       arrange: (instance) => {
         instance.sandboxRunId = startRunFor(instance);
       },
-      want: { state: 'li_implementing' },
+      want: { state: 'li_implementing', runStates: ['pending'] },
     },
     {
       name: 'When verifying already has a live run then should stay without dispatching',
@@ -85,7 +99,7 @@ describe('LinearImplementer states that own an agent', () => {
       arrange: (instance) => {
         instance.sandboxRunId = startRunFor(instance);
       },
-      want: { state: 'li_verifying' },
+      want: { state: 'li_verifying', runStates: ['pending'] },
     },
     {
       name: 'When the live run already finished then should dispatch again',
@@ -95,7 +109,12 @@ describe('LinearImplementer states that own an agent', () => {
         store.finishSandboxRun(runId, { runState: 'failed' });
         instance.sandboxRunId = runId;
       },
-      want: { state: 'li_implementing', startedRuns: 1, agentName: 'LinearImplementer' },
+      want: {
+        state: 'li_implementing',
+        startedRuns: 1,
+        agentName: 'LinearImplementer',
+        runStates: ['failed', 'pending'],
+      },
     },
     {
       name: 'When the caps have no room then should stay without recording a run',
@@ -111,7 +130,7 @@ describe('LinearImplementer states that own an agent', () => {
       arrange: () => {
         pool.refuseToStart = true;
       },
-      want: { state: 'li_implementing', releasedRun: true },
+      want: { state: 'li_implementing' },
     },
     {
       name: 'When the pool refuses the verifier then should stay without keeping a run',
@@ -119,12 +138,12 @@ describe('LinearImplementer states that own an agent', () => {
       arrange: () => {
         pool.refuseToStart = true;
       },
-      want: { state: 'li_verifying', releasedRun: true },
+      want: { state: 'li_verifying' },
     },
     {
       name: 'When the dispatch cannot be recorded then should stay with the failure',
       handler: handleStateLiImplementing,
-      arrange: () => store.db.exec('DROP TABLE sandbox_run'),
+      arrange: () => refuseSandboxRunInserts(store),
       want: { state: 'li_implementing', errorName: 'Error' },
     },
   ];
@@ -143,13 +162,14 @@ describe('LinearImplementer states that own an agent', () => {
         pool.started[0] ? store.getSandboxRun(pool.started[0])?.agentName : undefined,
         c.want.agentName,
       );
-      if (c.want.releasedRun) {
-        assert.equal(instance.sandboxRunId, null);
-        assert.deepEqual(
-          store.listSandboxRuns(10).map((run) => run.runState),
-          [],
-        );
-      }
+      assert.equal(instance.sandboxRunId, store.listSandboxRuns(10, 'pending')[0]?.id ?? null);
+      assert.deepEqual(
+        store
+          .listSandboxRuns(10)
+          .map((run) => run.runState)
+          .sort(),
+        c.want.runStates ?? [],
+      );
     });
   }
 });
@@ -187,6 +207,6 @@ interface DispatchCase {
     startedRuns?: number;
     agentName?: string;
     errorName?: string;
-    releasedRun?: boolean;
+    runStates?: SandboxRunState[];
   };
 }

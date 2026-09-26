@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { Store } from '../../../store/store.js';
-import type { RequestRouter, RequestRouterState } from '../../../store/types.js';
+import type { RequestRouter, RequestRouterState, SandboxRunState } from '../../../store/types.js';
 import { FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
-import { createTestStore } from '../../../testing/store.js';
+import { createTestStore, refuseSandboxRunInserts } from '../../../testing/store.js';
 import { RequestRouterStateEngine } from './service.js';
 import { handleStateRrPending } from './state-handlers.js';
 
@@ -39,14 +39,14 @@ describe('handleStateRrPending', () => {
     },
     {
       name: 'When there is only free text then should dispatch the router agent',
-      want: { state: 'rr_routing', startedRuns: 1 },
+      want: { state: 'rr_routing', startedRuns: 1, runStates: ['pending'] },
     },
     {
       name: 'When a sandbox run is still alive then should answer `rr_routing` without dispatching',
       arrange: (instance) => {
         instance.sandboxRunId = startRunFor(instance);
       },
-      want: { state: 'rr_routing' },
+      want: { state: 'rr_routing', runStates: ['pending'] },
     },
     {
       name: 'When the live run already finished then should dispatch again',
@@ -55,7 +55,7 @@ describe('handleStateRrPending', () => {
         store.finishSandboxRun(runId, { runState: 'failed' });
         instance.sandboxRunId = runId;
       },
-      want: { state: 'rr_routing', startedRuns: 1 },
+      want: { state: 'rr_routing', startedRuns: 1, runStates: ['failed', 'pending'] },
     },
     {
       name: 'When the caps have no room then should answer `rr_pending` without recording a run',
@@ -65,15 +65,15 @@ describe('handleStateRrPending', () => {
       want: { state: 'rr_pending' },
     },
     {
-      name: 'When the concurrency caps refuse the sandbox then should answer `rr_pending`',
+      name: 'When the pool refuses the sandbox then should answer `rr_pending` without keeping a run',
       arrange: () => {
         pool.refuseToStart = true;
       },
-      want: { state: 'rr_pending', droppedRun: true },
+      want: { state: 'rr_pending' },
     },
     {
       name: 'When the dispatch cannot be recorded then should answer `rr_pending` with the failure',
-      arrange: () => store.db.exec('DROP TABLE sandbox_run'),
+      arrange: () => refuseSandboxRunInserts(store),
       want: { state: 'rr_pending', errorName: 'Error' },
     },
   ];
@@ -88,10 +88,14 @@ describe('handleStateRrPending', () => {
       assert.equal(error?.constructor.name, c.want.errorName);
       assert.equal(nextState, c.want.state);
       assert.equal(pool.started.length, c.want.startedRuns ?? 0);
-      if (c.want.droppedRun) {
-        assert.equal(instance.sandboxRunId, null);
-        assert.deepEqual(store.listSandboxRuns(10), []);
-      }
+      assert.equal(instance.sandboxRunId, store.listSandboxRuns(10, 'pending')[0]?.id ?? null);
+      assert.deepEqual(
+        store
+          .listSandboxRuns(10)
+          .map((run) => run.runState)
+          .sort(),
+        c.want.runStates ?? [],
+      );
     });
   }
 });
@@ -115,6 +119,6 @@ interface PendingCase {
     state: RequestRouterState;
     startedRuns?: number;
     errorName?: string;
-    droppedRun?: boolean;
+    runStates?: SandboxRunState[];
   };
 }

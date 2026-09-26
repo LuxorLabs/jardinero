@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { Store } from '../../../store/store.js';
-import type { PrMaintainer, PrMaintainerState } from '../../../store/types.js';
+import type { PrMaintainer, PrMaintainerState, SandboxRunState } from '../../../store/types.js';
 import { FakeGitHub, FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
-import { createTestStore } from '../../../testing/store.js';
+import { createTestStore, refuseSandboxRunInserts } from '../../../testing/store.js';
 import { PrMaintainerStateEngine } from './service.js';
 import { handleStatePrmPending, handleStatePrmWaiting } from './state-handlers.js';
 
@@ -39,7 +39,7 @@ describe('handleStatePrmPending', () => {
   const cases: PendingCase[] = [
     {
       name: 'When nothing is in flight then should dispatch and answer `prm_working`',
-      want: { state: 'prm_working', startedRuns: 1, attemptCount: 1 },
+      want: { state: 'prm_working', startedRuns: 1, attemptCount: 1, runStates: ['pending'] },
     },
     {
       // Re-entering with a live run is what makes calling the handler twice
@@ -48,7 +48,7 @@ describe('handleStatePrmPending', () => {
       arrange: (instance) => {
         instance.sandboxRunId = startRunFor(instance);
       },
-      want: { state: 'prm_working' },
+      want: { state: 'prm_working', runStates: ['pending'] },
     },
     {
       name: 'When the live run already finished then should dispatch again',
@@ -57,7 +57,12 @@ describe('handleStatePrmPending', () => {
         store.finishSandboxRun(runId, { runState: 'failed' });
         instance.sandboxRunId = runId;
       },
-      want: { state: 'prm_working', startedRuns: 1, attemptCount: 1 },
+      want: {
+        state: 'prm_working',
+        startedRuns: 1,
+        attemptCount: 1,
+        runStates: ['failed', 'pending'],
+      },
     },
     {
       name: 'When the attempts are spent then should answer `prm_attempts_exhausted`',
@@ -78,15 +83,15 @@ describe('handleStatePrmPending', () => {
       want: { state: 'prm_pending' },
     },
     {
-      name: 'When the concurrency caps refuse the sandbox then should answer `prm_pending`',
+      name: 'When the pool refuses the sandbox then should answer `prm_pending` without keeping a run',
       arrange: () => {
         pool.refuseToStart = true;
       },
-      want: { state: 'prm_pending', attemptCount: 1, droppedRun: true },
+      want: { state: 'prm_pending' },
     },
     {
       name: 'When the dispatch cannot be recorded then should answer `prm_pending` with the failure',
-      arrange: () => store.db.exec('DROP TABLE sandbox_run'),
+      arrange: () => refuseSandboxRunInserts(store),
       want: { state: 'prm_pending', errorName: 'Error' },
     },
   ];
@@ -103,10 +108,14 @@ describe('handleStatePrmPending', () => {
       assert.equal(pool.started.length, c.want.startedRuns ?? 0);
       assert.equal(instance.attemptCount, c.want.attemptCount ?? 0);
       assert.equal(instance.needsHumanReason, c.want.needsHumanReason ?? null);
-      if (c.want.droppedRun) {
-        assert.equal(instance.sandboxRunId, null);
-        assert.deepEqual(store.listSandboxRuns(10), []);
-      }
+      assert.equal(instance.sandboxRunId, store.listSandboxRuns(10, 'pending')[0]?.id ?? null);
+      assert.deepEqual(
+        store
+          .listSandboxRuns(10)
+          .map((run) => run.runState)
+          .sort(),
+        c.want.runStates ?? [],
+      );
     });
   }
 });
@@ -193,7 +202,7 @@ interface PendingCase {
     attemptCount?: number;
     needsHumanReason?: string;
     errorName?: string;
-    droppedRun?: boolean;
+    runStates?: SandboxRunState[];
   };
 }
 

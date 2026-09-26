@@ -65,8 +65,7 @@ function dispatchAgent(
     // The pool is in memory, so a crash between the row and this line leaves a
     // sandbox run in pending that the periodic check starts again.
     if (!engine.pool.startSandbox(sandboxRun.id)) {
-      // A pending row is later orphaned and counted as a failure. Skipped is an
-      // answer, and that ends a loss streak, so a run that never started is removed.
+      // A run that never started leaves no row; a pending one would be reaped as a lost run.
       engine.store.deleteSandboxRun(sandboxRun.id);
       instance.sandboxRunId = null;
       return [state];

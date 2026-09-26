@@ -1446,8 +1446,6 @@ export class Store {
       );
   }
 
-  // deleteSandboxRun removes a run that never started. A skipped row is an answer,
-  // and the loss counter treats that as the end of a streak.
   deleteSandboxRun(id: string): void {
     this.db.prepare('DELETE FROM sandbox_run WHERE id = ?').run(id);
   }

@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { Store } from '../../../store/store.js';
-import type { FixImplementer, FixImplementerState } from '../../../store/types.js';
-import { countConsecutiveLostRuns } from '../execution.js';
+import type { FixImplementer, FixImplementerState, SandboxRunState } from '../../../store/types.js';
 import { FakeGitHub, FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
-import { createTestStore } from '../../../testing/store.js';
+import { createTestStore, refuseSandboxRunInserts } from '../../../testing/store.js';
 import { FixImplementerStateEngine } from './service.js';
 import {
   handleStateFiImplementing,
@@ -60,7 +59,7 @@ describe('handleStateFiImplementing', () => {
   const cases: HandlerCase[] = [
     {
       name: 'When nothing is in flight then should dispatch and stay implementing',
-      want: { state: 'fi_implementing', startedRuns: 1 },
+      want: { state: 'fi_implementing', startedRuns: 1, runStates: ['pending'] },
     },
     {
       // Re-entering with a live run is what makes calling the handler twice
@@ -69,7 +68,7 @@ describe('handleStateFiImplementing', () => {
       arrange: (instance) => {
         instance.sandboxRunId = startRunFor(instance);
       },
-      want: { state: 'fi_implementing' },
+      want: { state: 'fi_implementing', runStates: ['pending'] },
     },
     {
       name: 'When the live run already finished then should dispatch again',
@@ -78,7 +77,7 @@ describe('handleStateFiImplementing', () => {
         store.finishSandboxRun(runId, { runState: 'failed' });
         instance.sandboxRunId = runId;
       },
-      want: { state: 'fi_implementing', startedRuns: 1 },
+      want: { state: 'fi_implementing', startedRuns: 1, runStates: ['failed', 'pending'] },
     },
     {
       name: 'When the caps have no room then should answer `fi_implementing` without recording a run',
@@ -88,13 +87,11 @@ describe('handleStateFiImplementing', () => {
       want: { state: 'fi_implementing' },
     },
     {
-      name: 'When the pool refuses the sandbox then should stay without keeping a run',
-      arrange: (instance) => {
-        store.finishSandboxRun(startRunFor(instance), { runState: 'failed' });
-        store.finishSandboxRun(startRunFor(instance), { runState: 'failed' });
+      name: 'When the pool refuses the sandbox then should answer `fi_implementing` without keeping a run',
+      arrange: () => {
         pool.refuseToStart = true;
       },
-      want: { state: 'fi_implementing', releasedRun: true, lostRuns: 2 },
+      want: { state: 'fi_implementing' },
     },
     {
       name: 'When the runs of this pass keep dying then should ask a person',
@@ -103,11 +100,15 @@ describe('handleStateFiImplementing', () => {
           store.finishSandboxRun(startRunFor(instance), { runState: 'failed' });
         }
       },
-      want: { state: 'fi_needs_human', needsHumanReason: 'run_failed' },
+      want: {
+        state: 'fi_needs_human',
+        needsHumanReason: 'run_failed',
+        runStates: ['failed', 'failed', 'failed'],
+      },
     },
     {
       name: 'When the dispatch cannot be recorded then should stay with the failure',
-      arrange: () => store.db.exec('DROP TABLE sandbox_run'),
+      arrange: () => refuseSandboxRunInserts(store),
       want: { state: 'fi_implementing', errorName: 'Error' },
     },
   ];
@@ -123,17 +124,14 @@ describe('handleStateFiImplementing', () => {
       assert.equal(nextState, c.want.state);
       assert.equal(instance.needsHumanReason, c.want.needsHumanReason ?? null);
       assert.equal(pool.started.length, c.want.startedRuns ?? 0);
-      if (c.want.releasedRun) {
-        assert.equal(instance.sandboxRunId, null);
-        assert.deepEqual(
-          store.listSandboxRuns(10).map((run) => run.runState),
-          ['failed', 'failed'],
-        );
-        assert.equal(
-          countConsecutiveLostRuns(store, 'fix_implementer', instance.id, instance.stateChangedAt),
-          c.want.lostRuns,
-        );
-      }
+      assert.equal(instance.sandboxRunId, store.listSandboxRuns(10, 'pending')[0]?.id ?? null);
+      assert.deepEqual(
+        store
+          .listSandboxRuns(10)
+          .map((run) => run.runState)
+          .sort(),
+        c.want.runStates ?? [],
+      );
     });
   }
 });
@@ -191,7 +189,6 @@ interface HandlerCase {
     verifierIssues?: string;
     needsHumanReason?: string;
     errorName?: string;
-    releasedRun?: boolean;
-    lostRuns?: number;
+    runStates?: SandboxRunState[];
   };
 }

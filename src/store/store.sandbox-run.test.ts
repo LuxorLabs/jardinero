@@ -139,6 +139,16 @@ describe('Store.finishSandboxRun', () => {
   });
 });
 
+describe('Store.deleteSandboxRun', () => {
+  test('When a run is deleted then should leave no row', () => {
+    const run = start();
+
+    store.deleteSandboxRun(run.id);
+
+    assert.equal(store.getSandboxRun(run.id), undefined);
+  });
+});
+
 describe('Store.listSandboxRuns', () => {
   const cases: Array<{
     name: string;

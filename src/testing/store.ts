@@ -31,3 +31,10 @@ export function createTestStore(): StoreFixture {
     },
   };
 }
+
+// refuseSandboxRunInserts fails every sandbox run insert and keeps the table readable,
+// so a case can still assert which runs are left.
+export function refuseSandboxRunInserts(store: Store): void {
+  store.db.exec(`CREATE TRIGGER refuse_sandbox_run BEFORE INSERT ON sandbox_run
+    BEGIN SELECT RAISE(ABORT, 'sandbox run refused'); END`);
+}

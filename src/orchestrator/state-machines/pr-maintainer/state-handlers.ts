@@ -36,17 +36,15 @@ export function handleStatePrmPending(
       workflowInstanceId: instance.id,
     });
     instance.sandboxRunId = sandboxRun.id;
-    instance.attemptCount += 1;
     // The pool is in memory, so a crash between the row and this line leaves a
     // sandbox run in pending that the periodic check starts again.
     if (!engine.pool.startSandbox(sandboxRun.id)) {
-      // The row is released with the pointer: a run left pending is reaped as
-      // orphaned later, and that reads as a run that failed instead of one that
-      // never started.
-      engine.store.finishSandboxRun(sandboxRun.id, { runState: 'skipped' });
+      // A run that never started leaves no row; a pending one would be reaped as a lost run.
+      engine.store.deleteSandboxRun(sandboxRun.id);
       instance.sandboxRunId = null;
       return ['prm_pending'];
     }
+    instance.attemptCount += 1;
     return ['prm_working'];
   } catch (error) {
     // The write failed, so nothing was started and staying here is correct;

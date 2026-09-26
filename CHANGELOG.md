@@ -1,5 +1,11 @@
 # jardinero
 
+## [0.10.1] - 2026-09-26
+
+### Patch Changes
+
+- [#90](https://github.com/LuxorLabs/jardinero/pull/90) [`f93cccb`](https://github.com/LuxorLabs/jardinero/commit/f93cccbaa4c2b33003dcfba74c049f548d06316d) Thanks [@luciocorral](https://github.com/luciocorral)! - agent: take a linear implementation that declares no pull request as an answer instead of a failure
+
 ## [0.10.0] - 2026-09-26
 
 ### Minor Changes

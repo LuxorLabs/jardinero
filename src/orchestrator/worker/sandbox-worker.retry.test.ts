@@ -9,6 +9,7 @@ import {
   isCodexCapacityError,
   type SandboxWorkerRunnerDeps,
 } from './sandbox-worker.js';
+import { FIX_RESULT_JSON_MARKER } from '../../workflows/pr/fix-result.js';
 import { HANDOFF_JSON_MARKER } from '../../workflows/pr/implementation-handoff.js';
 
 // What Codex prints when the model it was asked for is full.
@@ -266,6 +267,19 @@ describe('SandboxWorkerRunner', () => {
         stage: 'write_context',
         reason: 'http2_refused_stream',
         error: 'Stream closed with error code NGHTTP2_REFUSED_STREAM',
+      },
+      wantStatus: 'succeeded',
+    },
+    {
+      name: 'When prepare workspace gets a bad gateway then should retry with fresh session',
+      firstSessionOptions: {
+        writeFileErrorOnCall: 1,
+        writeFileError: new Error('[unavailable] HTTP 502'),
+      },
+      wantRetry: {
+        stage: 'prepare_workspace',
+        reason: 'bad_gateway',
+        error: '[unavailable] HTTP 502',
       },
       wantStatus: 'succeeded',
     },
@@ -745,6 +759,76 @@ describe('SandboxWorkerRunner', () => {
   }
 });
 
+describe('a pass that declares no pull request', () => {
+  const noPrDeclaration = `${FIX_RESULT_JSON_MARKER} ${JSON.stringify({
+    outcome: 'no_pr',
+    reason: 'too_large',
+    evidence: ['the change spans three services'],
+    recommended_followup: 'Split into three issues.',
+  })}`;
+  const cases: Array<{
+    name: string;
+    task: SandboxTask;
+    finalMessage: string;
+    codexExitCode: number;
+    want: { status: string; error: string | undefined; noPrReason: string | undefined };
+  }> = [
+    {
+      name: 'When a linear implementation declares `no_pr` then should skip with its reason',
+      task: linearTask({}),
+      finalMessage: noPrDeclaration,
+      codexExitCode: 0,
+      want: { status: 'skipped', error: undefined, noPrReason: 'too_large' },
+    },
+    {
+      name: 'When a fix implementation declares `no_pr` then should skip with its reason',
+      task: { workflow: 'fix_implement', payload: { repo: 'acme/webapp' }, promptOverrides: {} },
+      finalMessage: noPrDeclaration,
+      codexExitCode: 0,
+      want: { status: 'skipped', error: undefined, noPrReason: 'too_large' },
+    },
+    {
+      name: 'When a linear verification prints a `no_pr` declaration then should not read it',
+      task: linearTask({ role: 'verify' }),
+      finalMessage: noPrDeclaration,
+      codexExitCode: 0,
+      want: { status: 'succeeded', error: undefined, noPrReason: undefined },
+    },
+    {
+      name: 'When codex exits failing after a `no_pr` declaration then should fail',
+      task: linearTask({}),
+      finalMessage: noPrDeclaration,
+      codexExitCode: 1,
+      want: { status: 'failed', error: 'codex_exec_failed', noPrReason: undefined },
+    },
+    {
+      name: 'When a linear implementation opens no pull request and declares nothing then should fail verification',
+      task: linearTask({}),
+      finalMessage: 'done',
+      codexExitCode: 0,
+      want: { status: 'failed', error: 'side_effect_verification_failed', noPrReason: undefined },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const session = fakeSession('only', operations, {
+        codexExecResults: [{ exitCode: c.codexExitCode }],
+        readFileContent: c.finalMessage,
+      });
+      const runner = fakeRunner([session], operations);
+
+      const result = await runner.run(fakeContext([], new AbortController(), c.task));
+
+      assert.deepEqual(
+        { status: result.status, error: result.error, noPrReason: result.noPrOutcome?.reason },
+        c.want,
+      );
+    });
+  }
+});
+
 describe('the output tail of a codex run', () => {
   const cases: Array<{
     name: string;
@@ -1191,6 +1275,14 @@ function fakeTask(): SandboxTask {
   return {
     workflow: 'pr_maintain',
     payload: { repo: 'acme/web.app', pr_number: 1 },
+    promptOverrides: {},
+  };
+}
+
+function linearTask(payload: Record<string, unknown>): SandboxTask {
+  return {
+    workflow: 'linear',
+    payload: { repo: 'acme/webapp', linear_issue_identifier: 'ACME-1', ...payload },
     promptOverrides: {},
   };
 }

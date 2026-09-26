@@ -44,7 +44,11 @@ import {
   ensureRepoDocs,
   renderRepoDocsPromptBlock,
 } from './repo-docs.js';
-import { extractOpenedPullRequestUrl, verifySideEffects } from '../../workflows/side-effects.js';
+import {
+  extractOpenedPullRequestUrl,
+  isImplementationRun,
+  verifySideEffects,
+} from '../../workflows/side-effects.js';
 import { JARDINERO_SANDBOX_APP, SANDBOX_METADATA } from '../../adapters/tenki/tenki-scope.js';
 import {
   assertExecSucceeded,
@@ -315,7 +319,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       );
       const structuredOutputText = finalResponseText(result);
       const noPrParse =
-        context.task.workflow === 'fix_implement' && !codexFailed
+        isImplementationRun(context.task) && !codexFailed
           ? parseFixNoPrOutcome(structuredOutputText)
           : undefined;
       const openedPrUrlCandidate = noPrParse?.outcome
@@ -324,7 +328,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       if (noPrParse?.outcome) {
         await context.publishEvent({
           type: 'agent.fix_without_pull_request',
-          message: `Fix implementation closed without PR: ${noPrParse.outcome.reason}`,
+          message: `Implementation closed without PR: ${noPrParse.outcome.reason}`,
           data: {
             reason: noPrParse.outcome.reason,
             recommended_followup: noPrParse.outcome.recommendedFollowup,
@@ -426,8 +430,8 @@ export class SandboxWorkerRunner implements SandboxRunner {
       );
       await terminate();
       const openedPrUrl = verification.openedPrUrl;
-      const fixNoPrSkipped =
-        context.task.workflow === 'fix_implement' &&
+      const noPrSkipped =
+        isImplementationRun(context.task) &&
         !codexFailed &&
         !openedPrUrl &&
         Boolean(noPrParse?.outcome) &&
@@ -435,10 +439,10 @@ export class SandboxWorkerRunner implements SandboxRunner {
       const status: WorkerResult['status'] =
         codexFailed || verification.status === 'failed' || logReviewFailure
           ? 'failed'
-          : fixNoPrSkipped
+          : noPrSkipped
             ? 'skipped'
             : 'succeeded';
-      const acceptedNoPrOutcome = fixNoPrSkipped ? noPrParse?.outcome : undefined;
+      const acceptedNoPrOutcome = noPrSkipped ? noPrParse?.outcome : undefined;
 
       return {
         status,
@@ -447,7 +451,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
           ? `${summary} Codex exited with status ${result.exitCode}.`
           : logReviewFailure
             ? `${summary} ${logReviewFailure.message}.`
-            : fixNoPrSkipped
+            : noPrSkipped
               ? `${summary} No PR was opened: ${acceptedNoPrOutcome?.reason}.`
               : verification.status === 'failed'
                 ? `${summary} Side-effect verification failed.`
@@ -1209,6 +1213,7 @@ function retryableSandboxSessionStartReason(error: unknown): string | undefined 
       matches: ['received GOAWAY without any open streams'],
     },
     { label: 'http2_refused_stream', matches: ['NGHTTP2_REFUSED_STREAM'] },
+    { label: 'bad_gateway', matches: ['HTTP 502'] },
     {
       label: 'tls_handshake_failed',
       matches: ['SSL alert number 80', 'tlsv1 alert internal error'],

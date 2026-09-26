@@ -142,6 +142,7 @@ export interface AppConfig {
       maxConcurrentRuns: number;
       investigationConfidenceThreshold: number;
       dryRun: boolean;
+      maxIterations: number;
       checkWaitMs: Partial<Record<LogReviewerState, number>>;
     };
     fixImplementer: {
@@ -270,6 +271,7 @@ export interface LogReviewRepoConfig {
   namespace?: string;
   clusters: string[];
   services: string[];
+  ignoreLogPatterns?: string[];
   permissionSignals?: LogReviewPermissionSignalsConfig;
 }
 
@@ -432,6 +434,7 @@ export function loadConfig(
           0.7,
         ),
         dryRun: booleanAt(raw, ['workflows', 'log_reviewer', 'dry_run'], false),
+        maxIterations: numberAt(raw, ['workflows', 'log_reviewer', 'max_iterations'], 2),
         checkWaitMs: checkWaitMsAt(
           raw,
           ['workflows', 'log_reviewer', 'check_wait_ms'],
@@ -1387,11 +1390,26 @@ function logReviewRepoAt(value: unknown, index: number): LogReviewRepoConfig {
   if (typeof record.namespace === 'string' && record.namespace.trim().length > 0) {
     output.namespace = record.namespace;
   }
+  const ignoreLogPatterns = ignoreLogPatternsAt(record.ignore_log_patterns, index);
+  if (ignoreLogPatterns.length > 0) output.ignoreLogPatterns = ignoreLogPatterns;
   const permissionSignals = permissionSignalsAt(record.permission_signals, index);
   if (permissionSignals) {
     output.permissionSignals = permissionSignals;
   }
   return output;
+}
+
+function ignoreLogPatternsAt(value: unknown, index: number): string[] {
+  if (value === undefined) return [];
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) => typeof item === 'string' && item.trim().length > 0)
+  ) {
+    throw new Error(
+      `workflows.log_reviewer.repos[${index}].ignore_log_patterns must be a list of non-empty strings`,
+    );
+  }
+  return value.map((item) => item.trim());
 }
 
 function stringArrayValue(value: unknown): string[] {
@@ -1552,6 +1570,12 @@ function validateWorkflowConfig(config: AppConfig): void {
     !Number.isInteger(config.workflows.fixImplementer.maxIterations)
   ) {
     throw new Error('workflows.fix_implementer.max_iterations must be a whole number >= 0');
+  }
+  if (
+    config.workflows.logReviewer.maxIterations < 0 ||
+    !Number.isInteger(config.workflows.logReviewer.maxIterations)
+  ) {
+    throw new Error('workflows.log_reviewer.max_iterations must be a whole number >= 0');
   }
   if (!config.worker.workspacePath.startsWith('/')) {
     throw new Error('worker.workspace_path must be an absolute path inside the worker sandbox');

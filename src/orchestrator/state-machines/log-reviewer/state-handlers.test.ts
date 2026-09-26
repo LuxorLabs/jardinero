@@ -8,6 +8,8 @@ import { createTestStore, refuseSandboxRunInserts } from '../../../testing/store
 import { LogReviewerStateEngine } from './service.js';
 import { handleStateLrPending } from './state-handlers.js';
 
+const MAX_ITERATIONS = 2;
+
 let store: Store;
 let cleanup: () => void;
 let pool: FakeSandboxPool;
@@ -20,6 +22,7 @@ beforeEach(() => {
   repositoryId = store.upsertRepository('acme/web.app').id;
   engine = new LogReviewerStateEngine(store, pool, new FakeLocker(), {
     scanWindowMs: 0,
+    maxIterations: MAX_ITERATIONS,
     checkWaitMs: {},
   });
 });
@@ -58,6 +61,16 @@ describe('handleStateLrPending', () => {
         pool.refuseRoom = true;
       },
       want: { state: 'lr_pending' },
+    },
+    {
+      name: 'When the lost runs exceed the budget then should answer `lr_failed` without dispatching',
+      arrange: (instance) => loseRuns(instance, MAX_ITERATIONS + 1),
+      want: { state: 'lr_failed', runStates: ['failed', 'failed', 'failed'] },
+    },
+    {
+      name: 'When the lost runs are within the budget then should dispatch again',
+      arrange: (instance) => loseRuns(instance, MAX_ITERATIONS),
+      want: { state: 'lr_working', startedRuns: 1, runStates: ['failed', 'failed', 'pending'] },
     },
     {
       name: 'When the pool refuses the sandbox then should answer `lr_pending` without keeping a run',
@@ -105,6 +118,12 @@ function startRunFor(instance: LogReviewer): string {
     workflowType: 'log_reviewer',
     workflowInstanceId: instance.id,
   }).id;
+}
+
+function loseRuns(instance: LogReviewer, count: number): void {
+  for (let index = 0; index < count; index += 1) {
+    store.finishSandboxRun(startRunFor(instance), { runState: 'failed' });
+  }
 }
 
 interface PendingCase {

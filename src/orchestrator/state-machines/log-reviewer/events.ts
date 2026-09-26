@@ -130,10 +130,10 @@ export async function onSandboxRunFailed(
   try {
     switch (instance.workflowState) {
       case 'lr_working':
-        // There is nothing to remember about a failed scan: the next tick opens
-        // a new instance and asks Grafana again.
+        // Pending on the same instance keeps the cron from opening a second scan of the
+        // target; the periodic check dispatches it, which spaces out a run that keeps failing.
         instance.sandboxRunId = null;
-        return setState(engine, instance, 'lr_failed');
+        return setState(engine, instance, 'lr_pending');
 
       default:
         return undefined;
@@ -218,7 +218,7 @@ function processSandboxRunWhileWorking(
       if (engine.pool.isExecuting(sandboxRun.id)) return undefined;
       engine.store.finishSandboxRun(sandboxRun.id, { runState: 'orphaned' });
       instance.sandboxRunId = null;
-      return setState(engine, instance, 'lr_failed');
+      return setStateAndRun(engine, instance, 'lr_pending');
 
     case 'succeeded':
       // The pool closes the run row before it hands the outcome over, so a run it still
@@ -229,10 +229,26 @@ function processSandboxRunWhileWorking(
       instance.sandboxRunId = null;
       return setState(engine, instance, 'lr_done');
 
-    default:
+    case 'aborted':
+      // Someone stopped the run on purpose, so the scan is not taken again.
       instance.sandboxRunId = null;
       return setState(engine, instance, 'lr_failed');
+
+    default:
+      // A periodic or recovery look already waited, so the retry dispatches now.
+      instance.sandboxRunId = null;
+      return setStateAndRun(engine, instance, 'lr_pending');
   }
+}
+
+function setStateAndRun(
+  engine: LogReviewerStateEngine,
+  instance: LogReviewer,
+  state: LogReviewer['workflowState'],
+): Error | undefined {
+  const writeError = setState(engine, instance, state);
+  if (writeError) return writeError;
+  return runLogReviewerFSM(engine, instance);
 }
 
 async function takeLogReviewerById(

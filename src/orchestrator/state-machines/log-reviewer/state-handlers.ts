@@ -1,5 +1,5 @@
 import type { LogReviewer, LogReviewerState } from '../../../store/types.js';
-import { asError } from '../execution.js';
+import { asError, countConsecutiveLostRuns } from '../execution.js';
 import type { LogReviewerStateEngine } from './service.js';
 
 export type StateHandlerResult = [LogReviewerState, Error?];
@@ -23,6 +23,14 @@ export function handleStateLrPending(
   if (!engine.pool.hasRoomFor('log_reviewer')) return ['lr_pending'];
 
   try {
+    // Counted from when the scan opened: every failed pass returns it to this state, so its
+    // stateChangedAt would hand each pass a fresh budget.
+    if (
+      countConsecutiveLostRuns(engine.store, 'log_reviewer', instance.id, instance.createdAt) >
+      engine.config.maxIterations
+    ) {
+      return ['lr_failed'];
+    }
     const sandboxRun = engine.store.startSandboxRun({
       agentName: 'LogReviewer',
       workflowType: 'log_reviewer',

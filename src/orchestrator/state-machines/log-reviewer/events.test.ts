@@ -31,6 +31,7 @@ beforeEach(() => {
   repositoryId = store.upsertRepository('acme/web.app').id;
   engine = new LogReviewerStateEngine(store, pool, locker, {
     scanWindowMs: SCAN_WINDOW_MS,
+    maxIterations: 2,
     checkWaitMs: { lr_pending: 0, lr_working: 0 },
   });
 });
@@ -78,6 +79,17 @@ describe('onScheduledScan', () => {
         pool.started.length = 0;
       },
       want: { state: 'lr_working', instances: 1 },
+      askStaysOpen: true,
+    },
+    {
+      name: 'When a scan is still pending after a setup failure then should not open a second one',
+      arrange: async () => {
+        await onScheduledScan(engine, { repositoryId });
+        const runId = pool.started[0];
+        pool.started.length = 0;
+        await onSandboxRunFailed(engine, runId);
+      },
+      want: { state: 'lr_pending', instances: 1 },
       askStaysOpen: true,
     },
   ];
@@ -150,10 +162,9 @@ describe('onSandboxRunSucceeded', () => {
 describe('onSandboxRunFailed', () => {
   const cases: RunOutcomeCase[] = [
     {
-      // Nothing to remember about a failed scan: the next tick asks again.
-      name: 'When the scan failed then should end the instance failed',
+      name: 'When the scan failed then should keep the same scan pending',
       from: 'lr_working',
-      want: { state: 'lr_failed' },
+      want: { state: 'lr_pending' },
     },
     {
       name: 'When the instance moved on from that run then should ignore it',
@@ -221,16 +232,22 @@ describe('onPeriodicCheck', () => {
       want: { state: 'lr_working' },
     },
     {
-      name: 'When the run failed without telling us then should end it failed',
+      name: 'When the run failed without telling us then should retry the same scan',
       from: 'lr_working',
       attachFinishedRun: 'failed',
+      want: { state: 'lr_working', startedRuns: 1 },
+    },
+    {
+      name: 'When the run was aborted then should end it failed',
+      from: 'lr_working',
+      attachFinishedRun: 'aborted',
       want: { state: 'lr_failed' },
     },
     {
-      name: 'When the run died with the process then should end it failed',
+      name: 'When the run died with the process then should retry the same scan',
       from: 'lr_working',
       attachLostRun: true,
-      want: { state: 'lr_failed' },
+      want: { state: 'lr_working', startedRuns: 1 },
     },
     {
       name: 'When the instance is unknown then should ignore it',
@@ -265,10 +282,10 @@ describe('onSystemRecovery', () => {
       want: { state: 'lr_working' },
     },
     {
-      name: 'When the run died with the process then should end it failed',
+      name: 'When the run died with the process then should retry the same scan',
       from: 'lr_working',
       attachLostRun: true,
-      want: { state: 'lr_failed' },
+      want: { state: 'lr_working', startedRuns: 1 },
     },
     {
       name: 'When the scan already finished then should return an unsupported state error',

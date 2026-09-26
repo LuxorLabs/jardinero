@@ -1217,6 +1217,8 @@ function retryableSandboxSessionStartReason(error: unknown): string | undefined 
     { label: 'network_timeout', matches: ['ETIMEDOUT', 'socket hang up'] },
     { label: 'dns_lookup_failed', matches: ['ENOTFOUND', 'EAI_AGAIN', 'Could not resolve host'] },
     { label: 'connection_refused', matches: ['ECONNREFUSED'] },
+    { label: 'http_unavailable', matches: ['[unavailable] HTTP 502'] },
+    { label: 'session_wait_budget', matches: ['not ready within wait budget'] },
   ];
 
   for (const pattern of patterns) {

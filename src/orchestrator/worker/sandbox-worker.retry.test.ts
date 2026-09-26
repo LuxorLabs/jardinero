@@ -106,6 +106,16 @@ describe('SandboxWorkerRunner', () => {
       error: new Error('[failed_precondition] session is not ready for command execution'),
       reason: 'session_not_ready',
     },
+    {
+      name: 'When waitReady returns HTTP 502 then should retry with fresh session',
+      error: new Error('[unavailable] HTTP 502'),
+      reason: 'http_unavailable',
+    },
+    {
+      name: 'When waitReady exceeds the wait budget then should retry with fresh session',
+      error: new Error('session sess_1 created but not ready within wait budget'),
+      reason: 'session_wait_budget',
+    },
   ] satisfies Array<{
     name: string;
     error: Error;

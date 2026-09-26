@@ -12,6 +12,7 @@ const PRODUCTION_TARGET = {
   namespace: 'production',
   clusters: ['demo-a', 'demo-b'],
   services: ['api', 'worker'],
+  ignoreLogPatterns: ['sidecar heartbeat'],
 };
 
 const BILLING_TARGET = {
@@ -32,6 +33,7 @@ const SPANNING_TARGET = {
   repo: 'acme/gadgets',
   clusters: ['demo-a'],
   services: ['gadget-api'],
+  ignoreLogPatterns: ['probe timeout'],
 };
 
 const CONFIG = loadConfig();
@@ -52,6 +54,7 @@ describe('logReviewerPayload', () => {
         namespace: 'production',
         clusters: PRODUCTION_TARGET.clusters,
         services: PRODUCTION_TARGET.services,
+        ignore_log_patterns: PRODUCTION_TARGET.ignoreLogPatterns,
       },
     },
     {
@@ -80,6 +83,7 @@ describe('logReviewerPayload', () => {
         dry_run: LOG_REVIEW.dryRun,
         clusters: SPANNING_TARGET.clusters,
         services: SPANNING_TARGET.services,
+        ignore_log_patterns: SPANNING_TARGET.ignoreLogPatterns,
       },
     },
     {
@@ -90,6 +94,7 @@ describe('logReviewerPayload', () => {
         lookback_min: LOG_REVIEW.lookbackMin,
         dry_run: LOG_REVIEW.dryRun,
         services: [...PRODUCTION_TARGET.services, ...BILLING_TARGET.services],
+        ignore_log_patterns: PRODUCTION_TARGET.ignoreLogPatterns,
       },
     },
     {

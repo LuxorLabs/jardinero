@@ -119,6 +119,7 @@ export class Orchestrator implements WorkflowEngines {
     );
     this.logReviewer = new LogReviewerStateEngine(store, pool, locker, {
       scanWindowMs: config.workflows.logReviewer.lookbackMin * 60_000,
+      maxIterations: config.workflows.logReviewer.maxIterations,
       checkWaitMs: config.workflows.logReviewer.checkWaitMs,
     });
 

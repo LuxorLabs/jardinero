@@ -167,8 +167,8 @@ importers:
   .:
     dependencies:
       '@daytona/sdk':
-        specifier: 0.210.0
-        version: 0.210.0(debug@4.4.3)
+        specifier: 0.211.2
+        version: 0.211.2(debug@4.4.3)
       '@tenkicloud/sandbox':
         specifier: 1.0.6
         version: 1.0.6
@@ -475,17 +475,17 @@ packages:
     peerDependencies:
       '@bufbuild/protobuf': ^2.7.0
 
-  '@daytona/analytics-api-client@0.210.0':
-    resolution: {integrity: sha512-fcn7GsIDqBljTZQFHCuMN6zYeB8S7ySOqH73OL7RJ2NGisNfTeFldCWjvvxVrVH7vlVTNmFwMCKA5h5UiKbE+g==}
+  '@daytona/analytics-api-client@0.211.2':
+    resolution: {integrity: sha512-tQgIcZcI7REGxkB8kgANzxoE0ZjedgFhWVZe52r76QQp/ZB/MTPqJ8niFRpdQOMw+AvO4S0RFceitiqEcxOetw==}
 
-  '@daytona/api-client@0.210.0':
-    resolution: {integrity: sha512-dIlrj3IaNGmcOLsJ/wVmxxQbgxtudLQXxHfK2pczLA8Quv0CZTn2kQ6arMu/cnC9uWl8eSZIUhfkN+B/TJh7Ww==}
+  '@daytona/api-client@0.211.2':
+    resolution: {integrity: sha512-VyqR4IPoZspOBj74uzbSODtp9Ikp6vameSYK8fvjFVOD1I3QnsFP7naN/KSOGwKvDJID+mHsIb/IeT9yMpVY1Q==}
 
-  '@daytona/sdk@0.210.0':
-    resolution: {integrity: sha512-nh2Gz7+UBj3iZCMzn36QRLYcfvpz3nrf0dWyp2N62vjDV6Z/UYeaB4leChCvzUKxIWWMSXoU36p+2ILDshixaQ==}
+  '@daytona/sdk@0.211.2':
+    resolution: {integrity: sha512-8wPl/3GcgNbu+EPJDhQgMoYot2OlnAgwo3sg/JNPkCsYZFxvDvXIvnDqOQBYj/IJq8IqREBTKDWkMAYgWvzT4g==}
 
-  '@daytona/toolbox-api-client@0.210.0':
-    resolution: {integrity: sha512-kjI12D0LQB74/FRi/AeXEg64sfZvN7BgklANJrqdowPUEHSqp9crygotUpV/Z0kab9btW7qSYCup59i4nP6CBA==}
+  '@daytona/toolbox-api-client@0.211.2':
+    resolution: {integrity: sha512-88CUophLGD1XVO8SJMttImrKw/iu2PC0Zz82S5DZkCJc70zBHpIm+svaepGGxQaLJ0EEtNbm7G1sJnIMQZ7zXw==}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -1447,9 +1447,6 @@ packages:
   '@tenkicloud/sandbox@1.0.6':
     resolution: {integrity: sha512-47sFKaMutq47+k8RYYx+grpVM7Cb1Vh1nMh96sfzIDZqDGA0EIVKGO1LBNQcwKUxE9Ga8zS8m9cyQ0eklWUITw==}
     engines: {node: '>=18'}
-
-  '@types/node@25.9.5':
-    resolution: {integrity: sha512-OScDchr2fwuUmWdf4kZ9h7PcJiYDVInhJizG/biAq3cAvqwYktuy/TYGGdZNMtNTFUP7rnb0NU4TUdm82kt4Rg==}
 
   '@types/node@25.9.6':
     resolution: {integrity: sha512-JR6Q/PV5DKFvjrGFVqQJdeG0qvsqQQLDa3TzFrqVwhqRXqwNaxPo2KYCtCQXpOdIulCouKwT7a6in9nFthBAzw==}
@@ -2779,27 +2776,27 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 2.12.1
 
-  '@daytona/analytics-api-client@0.210.0(debug@4.4.3)':
+  '@daytona/analytics-api-client@0.211.2(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/api-client@0.210.0(debug@4.4.3)':
+  '@daytona/api-client@0.211.2(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/sdk@0.210.0(debug@4.4.3)':
+  '@daytona/sdk@0.211.2(debug@4.4.3)':
     dependencies:
       '@aws-sdk/client-s3': 3.1127.0
       '@aws-sdk/lib-storage': 3.1127.0(@aws-sdk/client-s3@3.1127.0)
-      '@daytona/analytics-api-client': 0.210.0(debug@4.4.3)
-      '@daytona/api-client': 0.210.0(debug@4.4.3)
-      '@daytona/toolbox-api-client': 0.210.0(debug@4.4.3)
+      '@daytona/analytics-api-client': 0.211.2(debug@4.4.3)
+      '@daytona/api-client': 0.211.2(debug@4.4.3)
+      '@daytona/toolbox-api-client': 0.211.2(debug@4.4.3)
       '@iarna/toml': 2.2.5
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/exporter-trace-otlp-http': 0.221.0(@opentelemetry/api@1.9.1)
@@ -2828,7 +2825,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@daytona/toolbox-api-client@0.210.0(debug@4.4.3)':
+  '@daytona/toolbox-api-client@0.211.2(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
@@ -3006,7 +3003,7 @@ snapshots:
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
-      yaml: 2.9.0
+      yaml: 2.9.1
 
   '@opentelemetry/context-async-hooks@2.10.0(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -3671,10 +3668,6 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@types/node@25.9.5':
-    dependencies:
-      undici-types: 7.24.6
-
   '@types/node@25.9.6':
     dependencies:
       undici-types: 7.24.6
@@ -4243,7 +4236,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.2
-      '@types/node': 25.9.5
+      '@types/node': 25.9.6
       long: 5.3.2
 
   proxy-from-env@2.1.0: {}

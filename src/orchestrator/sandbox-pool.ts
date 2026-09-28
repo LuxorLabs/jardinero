@@ -21,6 +21,7 @@ export interface SandboxRunContext {
   task: SandboxTask;
   maxWallClockMs: number;
   signal: AbortSignal;
+  isStopping(): boolean;
   publishEvent(event: Omit<WorkerEvent, 'timestamp'>): Promise<void>;
   writeSandboxRunArtifact(name: string, content: string | Buffer): Promise<string>;
 }
@@ -29,6 +30,26 @@ export interface SandboxRunContext {
 // SandboxRunner behind it, so the pool depends on nothing it does not use.
 export interface SandboxRunner {
   run(context: SandboxRunContext): Promise<WorkerResult>;
+  // resume follows again a run the last process left running, in the sandbox it started.
+  resume(context: SandboxRunContext): Promise<WorkerResult>;
+}
+
+// SandboxRunReleasedError is a runner letting go of a sandbox whose agent is still
+// working, so the run stays running for the next process to resume.
+export class SandboxRunReleasedError extends Error {
+  constructor(sandboxRunId: string) {
+    super(`sandbox run ${sandboxRunId} was left running in its sandbox`);
+    this.name = 'SandboxRunReleasedError';
+  }
+}
+
+// SandboxRunLostError is a runner that can no longer follow its run: the sandbox is
+// gone, or nothing was ever started in it.
+export class SandboxRunLostError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'SandboxRunLostError';
+  }
 }
 
 // SandboxRunOutcomeReporter hands a finished run to the machine that owns it, so the
@@ -75,15 +96,19 @@ export class SandboxPool implements SandboxPoolInterface {
     }
     if (!this.hasRoomFor(sandboxRun.workflowType)) return false;
 
-    const controller = new AbortController();
-    this.executing.set(sandboxRunId, controller);
-    this.workflowByRunId.set(sandboxRunId, sandboxRun.workflowType);
-    // Fired and not awaited: the caller is a state handler inside the engine
-    // loop, and the sandbox takes minutes.
-    const running = this.execute(sandboxRun, controller.signal);
-    this.inFlight.add(running);
-    void running.finally(() => this.inFlight.delete(running));
+    this.launch(sandboxRun, (context) => {
+      this.store.markSandboxRunRunning(sandboxRun.id);
+      return this.runner.run(context);
+    });
     return true;
+  }
+
+  // resumeSandboxRunsAfterBoot follows every run the last process left running, before
+  // any machine can read one as lost. Past the caps on purpose: each sandbox already exists.
+  resumeSandboxRunsAfterBoot(): void {
+    for (const sandboxRun of this.store.listRunningSandboxRuns()) {
+      this.launch(sandboxRun, (context) => this.runner.resume(context));
+    }
   }
 
   isExecuting(sandboxRunId: string): boolean {
@@ -132,8 +157,8 @@ export class SandboxPool implements SandboxPoolInterface {
     controller.abort();
   }
 
-  // stop aborts every sandbox in flight and waits for each to finish recording how
-  // it ended, so nothing writes after the process decides to go.
+  // stop aborts every sandbox in flight and waits for each to record how it ended, so
+  // nothing writes after the process goes; an agent that works without us is left running.
   async stop(): Promise<void> {
     this.stopping = true;
     for (const controller of this.executing.values()) controller.abort();
@@ -167,17 +192,35 @@ export class SandboxPool implements SandboxPoolInterface {
     return running < cap;
   }
 
+  private launch(
+    sandboxRun: SandboxRun,
+    runAgent: (context: SandboxRunContext) => Promise<WorkerResult>,
+  ): void {
+    const controller = new AbortController();
+    this.executing.set(sandboxRun.id, controller);
+    this.workflowByRunId.set(sandboxRun.id, sandboxRun.workflowType);
+    // Fired and not awaited: the caller is a state handler inside the engine
+    // loop or the boot, and the sandbox takes minutes.
+    const running = this.execute(sandboxRun, controller.signal, runAgent);
+    this.inFlight.add(running);
+    void running.finally(() => this.inFlight.delete(running));
+  }
+
   // Builds the task, runs the agent and records how it ended. Never throws: the
   // caller fired it without awaiting.
-  private async execute(sandboxRun: SandboxRun, signal: AbortSignal): Promise<void> {
+  private async execute(
+    sandboxRun: SandboxRun,
+    signal: AbortSignal,
+    runAgent: (context: SandboxRunContext) => Promise<WorkerResult>,
+  ): Promise<void> {
     try {
       const task = await this.tasks.buildTask(sandboxRun);
-      this.store.markSandboxRunRunning(sandboxRun.id);
-      const result = await this.runner.run({
+      const result = await runAgent({
         sandboxRun,
         task,
         maxWallClockMs: this.config.maxWallClockMs,
         signal,
+        isStopping: () => this.stopping,
         publishEvent: async (event) => {
           this.recordWorkerEvent(sandboxRun.id, event);
         },
@@ -186,13 +229,16 @@ export class SandboxPool implements SandboxPoolInterface {
       });
       await this.finish(sandboxRun, result);
     } catch (error) {
+      if (error instanceof SandboxRunReleasedError) return;
       this.log.error('sandbox run failed', {
         sandbox_run_id: sandboxRun.id,
         agent_name: sandboxRun.agentName,
         reason: error instanceof Error ? error.message : String(error),
       });
       this.store.finishSandboxRun(sandboxRun.id, {
-        runState: this.abortedRunState(signal.aborted) ?? 'failed',
+        runState:
+          this.abortedRunState(signal.aborted) ??
+          (error instanceof SandboxRunLostError ? 'orphaned' : 'failed'),
         errorMessage: signal.aborted
           ? this.abortReason()
           : error instanceof Error

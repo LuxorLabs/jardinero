@@ -35,6 +35,7 @@ describe('SandboxWorkerRunner', () => {
       name: 'Fake',
       apiTarget: 'fake.invalid',
       create: async () => ({ id: 'fake-session' }) as SandboxSession,
+      attach: async () => undefined,
       waitReady: () => waitReady.promise,
       // The sandbox close fails, the way it does when the sandbox is unreachable.
       terminate: async () => {
@@ -50,6 +51,7 @@ describe('SandboxWorkerRunner', () => {
       task: fakeTask(),
       maxWallClockMs: 1_000,
       signal: controller.signal,
+      isStopping: () => false,
       publishEvent: async (event) => {
         // The events.jsonl append fails for the termination report — the second
         // half of the compound fault.

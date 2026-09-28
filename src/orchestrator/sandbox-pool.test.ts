@@ -8,6 +8,8 @@ import { createTestStore } from '../testing/store.js';
 import type { WorkerResult } from '../types.js';
 import {
   SandboxPool,
+  SandboxRunLostError,
+  SandboxRunReleasedError,
   type SandboxRunContext,
   type SandboxRunner,
   type SandboxRunOutcomeReporter,
@@ -150,6 +152,56 @@ describe('SandboxPool.hasRoomFor', () => {
   }
 });
 
+describe('SandboxPool.resumeSandboxRunsAfterBoot', () => {
+  const cases: Array<{
+    name: string;
+    leftRunning: number;
+    maxConcurrentSandboxes?: number;
+    want: { resumed: number; started: number; runStates: string[] };
+  }> = [
+    {
+      name: 'When a run was left running then should resume it instead of starting it again',
+      leftRunning: 1,
+      want: { resumed: 1, started: 0, runStates: ['succeeded'] },
+    },
+    {
+      name: 'When nothing was left running then should resume nothing',
+      leftRunning: 0,
+      want: { resumed: 0, started: 0, runStates: [] },
+    },
+    {
+      name: 'When the runs left running exceed the caps then should resume every one',
+      leftRunning: 2,
+      maxConcurrentSandboxes: 1,
+      want: { resumed: 2, started: 0, runStates: ['succeeded', 'succeeded'] },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const pool = createPool();
+      config.maxConcurrentSandboxes = c.maxConcurrentSandboxes ?? config.maxConcurrentSandboxes;
+      const runs = Array.from({ length: c.leftRunning }, (_, index) => {
+        const sandboxRun = startSandboxRun();
+        store.markSandboxRunRunning(sandboxRun.id, `session-${index}`);
+        return sandboxRun;
+      });
+
+      pool.resumeSandboxRunsAfterBoot();
+      await flush();
+
+      assert.deepEqual(
+        {
+          resumed: runner.resumed.length,
+          started: runner.contexts.length,
+          runStates: runs.map((sandboxRun) => store.getSandboxRun(sandboxRun.id)?.runState),
+        },
+        c.want,
+      );
+    });
+  }
+});
+
 describe('SandboxPool.isExecuting', () => {
   const cases: ExecutingCase[] = [
     {
@@ -253,8 +305,22 @@ describe('SandboxPool run outcomes', () => {
     },
     {
       name: 'When the runner threw then should record the run failed and report it',
-      throws: true,
+      error: new Error('the sandbox blew up'),
       want: { runState: 'failed', errorMessage: 'the sandbox blew up', reportedFailed: 1 },
+    },
+    {
+      name: 'When the runner lost the run then should record it orphaned and report it',
+      error: new SandboxRunLostError('Fake sandbox session-1 is gone'),
+      want: {
+        runState: 'orphaned',
+        errorMessage: 'Fake sandbox session-1 is gone',
+        reportedFailed: 1,
+      },
+    },
+    {
+      name: 'When the runner left the run in its sandbox then should leave it running unreported',
+      error: new SandboxRunReleasedError('run-1'),
+      want: { runState: 'running' },
     },
     {
       // The instance already moved on, so telling it would move it again.
@@ -279,7 +345,7 @@ describe('SandboxPool run outcomes', () => {
       const pool = createPool();
       const sandboxRun = startSandboxRun();
       if (c.result) runner.result = c.result;
-      runner.throws = c.throws ?? false;
+      runner.error = c.error;
 
       pool.startSandbox(sandboxRun.id);
       await flush();
@@ -364,6 +430,11 @@ describe('SandboxPool context', () => {
       name: 'When a sandbox runs then should hand the agent how long it may take',
       read: (context) => context.maxWallClockMs,
       want: 60_000,
+    },
+    {
+      name: 'When a sandbox runs while the pool is not stopping then should tell the agent so',
+      read: (context) => context.isStopping(),
+      want: false,
     },
   ];
 
@@ -546,8 +617,9 @@ class FakeTaskFactory implements SandboxTaskFactory {
 
 class FakeRunner implements SandboxRunner {
   readonly contexts: SandboxRunContext[] = [];
+  readonly resumed: SandboxRunContext[] = [];
   result: WorkerResult = { status: 'succeeded', costUsd: null, summary: 'done' };
-  throws = false;
+  error: Error | undefined;
   throwOnAbort: Error | undefined;
   blockUntilReleased = false;
   publish: { type: string; data?: Record<string, unknown> } | undefined;
@@ -556,7 +628,7 @@ class FakeRunner implements SandboxRunner {
   async run(context: SandboxRunContext): Promise<WorkerResult> {
     this.contexts.push(context);
     if (this.publish) await context.publishEvent(this.publish);
-    if (this.throws) throw new Error('the sandbox blew up');
+    if (this.error) throw this.error;
     if (this.blockUntilReleased) {
       await new Promise<void>((resolve) => {
         this.releaseRunner = resolve;
@@ -567,6 +639,11 @@ class FakeRunner implements SandboxRunner {
         return { status: 'aborted', costUsd: null, summary: 'aborted' };
       }
     }
+    return this.result;
+  }
+
+  async resume(context: SandboxRunContext): Promise<WorkerResult> {
+    this.resumed.push(context);
     return this.result;
   }
 
@@ -615,7 +692,7 @@ interface ExecutingCase {
 interface OutcomeCase {
   name: string;
   result?: WorkerResult;
-  throws?: boolean;
+  error?: Error;
   want: {
     runState: string;
     costUsd?: number;

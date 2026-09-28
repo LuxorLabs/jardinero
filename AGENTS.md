@@ -228,7 +228,7 @@ Example: `This PR adds a scheduled workflow that refreshes the Codex auth.json a
 
 - **Only a workflow's state machine decides what happens next.** An adapter or a helper that starts to branch on a workflow state is in the wrong place: that belongs in `state-handlers.ts`. An adapter that decides for itself what the machine would have accepted is the same mistake wearing a heuristic; when the outside world has to be told, the machine tells it through a port. See [The shape of a state machine](#the-shape-of-a-state-machine).
 - **There is no queue.** A run the pool's caps refuse is refused, not queued; the instance stays in its `*_pending` state and the periodic check asks again. Don't add a queue to make it retry.
-- **Recovery is durable and must stay that way.** Boot reconciles sandbox runs left `running` by a crashed process to `orphaned` (`Store.initializeAfterBoot`) and then walks every open instance (`recoverOpenInstancesAfterBoot`).
+- **Recovery is durable and must stay that way.** Boot reconciles to `orphaned` the sandbox runs a dead process left in flight before they reached a sandbox (`Store.initializeAfterBoot`), resumes those left `running` in one (`SandboxPool.resumeSandboxRunsAfterBoot`), and then walks every open instance (`recoverOpenInstancesAfterBoot`).
 - **Unknown Codex cost is `NULL`, not `0`.** Don't treat a missing cost as free; cost-budget enforcement is intentionally skipped for that run.
 - **Shared response types** between server and SPA live in `src/transport/dashboard/dashboard-api-types.ts`. Change both sides together.
 - **Generated/built output** under `dist/` is never hand-edited.

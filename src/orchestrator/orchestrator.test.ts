@@ -36,6 +36,27 @@ describe('Orchestrator.start', () => {
     assert.equal(store.listSandboxRunsForInstance('pr_maintainer', instance.id).length, 1);
   });
 
+  test('When a run was left running in a sandbox then should resume it before recovery', async () => {
+    const orchestrator = build();
+    const repositoryId = store.upsertRepository('acme/web.app').id;
+    const instance = store.openPrMaintainer({ repositoryId, pullRequestNumber: 4688 });
+    const sandboxRun = store.startSandboxRun({
+      agentName: 'PrMaintainer',
+      workflowType: 'pr_maintainer',
+      workflowInstanceId: instance.id,
+    });
+    store.markSandboxRunRunning(sandboxRun.id, 'session-1');
+
+    await orchestrator.start();
+    await orchestrator.stop();
+
+    const stored = store.getSandboxRun(sandboxRun.id);
+    assert.deepEqual(
+      { runState: stored?.runState, errorMessage: stored?.errorMessage },
+      { runState: 'orphaned', errorMessage: 'the mock runner keeps no sandbox to resume' },
+    );
+  });
+
   test('When nothing was left open then should start the clock anyway', async () => {
     const orchestrator = build();
 

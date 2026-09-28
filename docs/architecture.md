@@ -46,14 +46,14 @@ Jardinero process
 
 1. `loadConfig()`, then the Loki log sink if it is enabled.
 2. The GitHub App token refresher for either real worker runner, and the Linear one when the LinearImplementer workflow is on. A failed Linear mint degrades to skipped write-backs instead of killing the process.
-3. `new Store(config.store)` and `store.initializeAfterBoot()`: open SQLite, apply `db/schema.sql`, and reconcile sandbox runs a crashed process left `running` into `orphaned`.
+3. `new Store(config.store)` and `store.initializeAfterBoot()`: open SQLite, apply `db/schema.sql`, and reconcile into `orphaned` the sandbox runs a crashed process left in flight, except those already running in a sandbox.
 4. `createWorkerRunner(config)`: the configured Tenki, Freestyle, Daytona or mock runner.
 5. `new Orchestrator({...})`, which builds the pool and the five workflow engines, then `createEngineCommands(...)` over it.
 6. `new Scheduler(...)` and `createApiServer(...)`.
-7. `orchestrator.start()`: recover every open instance, then start the periodic check.
+7. `orchestrator.start()`: resume the runs left running in a sandbox, recover every open instance, then start the periodic check.
 8. `server.listen(...)` and `scheduler.start()`.
 
-`unhandledRejection` and `uncaughtException` log the stack and exit non-zero so the supervisor restarts the process; the next boot reconciles what was in flight. `SIGTERM`/`SIGINT` stop the scheduler, abort the sandboxes in flight and wait for them to record how they ended, then close the server and the store.
+`unhandledRejection` and `uncaughtException` log the stack and exit non-zero so the supervisor restarts the process; the next boot reconciles what was in flight. `SIGTERM`/`SIGINT` stop the scheduler, abort the sandboxes in flight except those whose Codex already started, wait for them to record how they ended, then close the server and the store.
 
 ## How work flows
 
@@ -109,7 +109,7 @@ interface SandboxRunner {
 }
 ```
 
-`createWorkerRunner(config)` returns the Tenki runner (`worker.runner: "tenki"`), the Freestyle runner (`"freestyle"`), the Daytona runner (`"daytona"`) or the mock one (`"mock"`, for local smoke tests). Every real runner picks the image for the run's repo (`worker.repos[repo].image`, else `worker.default.image`), clones the repo under `worker.workspace_path`, writes the prompt and task, forwards Codex auth and, for a scan, the Grafana MCP credentials, runs Codex while streaming events back, and parses what came out: cost, the PR it opened, the findings it reported, or a verifier verdict. A side effect is checked against the run's repo, branch and agent commit trailer before it is trusted. Freestyle's five-minute one-shot execution limit is avoided for Codex by using a persistent PTY session and streaming its combined terminal output; every VM also receives a hard TTL beyond the run deadline, so a process crash does not leave it running indefinitely. Daytona's one-shot cap is avoided the same way with a background session streaming stdout and stderr separately; its sandboxes are created ephemeral with the same hard TTL, so an expired or stopped one deletes itself.
+`createWorkerRunner(config)` returns the Tenki runner (`worker.runner: "tenki"`), the Freestyle runner (`"freestyle"`), the Daytona runner (`"daytona"`) or the mock one (`"mock"`, for local smoke tests). Every real runner picks the image for the run's repo (`worker.repos[repo].image`, else `worker.default.image`), clones the repo under `worker.workspace_path`, writes the prompt and task, forwards Codex auth and, for a scan, the Grafana MCP credentials, runs Codex detached so the run outlives a lost connection or a restart, and parses what came out: cost, the PR it opened, the findings it reported, or a verifier verdict. A side effect is checked against the run's repo, branch and agent commit trailer before it is trusted. Freestyle VMs receive a hard TTL beyond the run deadline, so a process crash does not leave one running indefinitely; Daytona sandboxes are created ephemeral with the same TTL, so an expired or stopped one deletes itself.
 
 ## Observability
 

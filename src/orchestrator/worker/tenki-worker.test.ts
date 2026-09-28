@@ -117,6 +117,44 @@ describe('TenkiSandboxProvider.create', () => {
   }
 });
 
+describe('TenkiSandboxProvider.attach', () => {
+  const cases = [
+    {
+      name: 'When the session is still running then should reopen it',
+      session: { state: 'RUNNING' },
+      want: { outcome: 'session-1' },
+    },
+    {
+      name: 'When the session has terminated then should answer nothing',
+      session: { state: 'TERMINATED' },
+      want: { outcome: undefined },
+    },
+    {
+      name: 'When the session is not found then should answer nothing',
+      session: 'not_found',
+      want: { outcome: undefined },
+    },
+    {
+      name: 'When Tenki cannot answer then should return error',
+      session: new Error('[unavailable] HTTP 502'),
+      want: { outcome: 'Error: [unavailable] HTTP 502' },
+    },
+  ] satisfies Array<{ name: string; session: FakeGetAnswer; want: { outcome?: string } }>;
+
+  for (const testCase of cases) {
+    test(testCase.name, async () => {
+      const sdk = fakeSdk([], { get: testCase.session });
+      const provider = new TenkiSandboxProvider(tenkiConfig(), {}, { loadSdk: async () => sdk });
+
+      const outcome = await provider
+        .attach('session-1', {}, new AbortController().signal)
+        .then((session) => session?.id, String);
+
+      assert.deepEqual({ outcome }, testCase.want);
+    });
+  }
+});
+
 describe('TenkiSandboxProvider.waitReady', () => {
   test('When the session is asked to become ready then should pass the abort signal through', async () => {
     const provider = new TenkiSandboxProvider(tenkiConfig(), {});
@@ -169,16 +207,33 @@ function tenkiConfig(): AppConfig {
   return config;
 }
 
+type FakeGetAnswer = { state: string } | 'not_found' | Error;
+
 // fakeSdk stands in for the SDK module: the sandbox client the provider builds,
 // and the session its create answers with. The identity defaults to a single
 // workspace, which is what an unscoped create needs to be unambiguous.
 function fakeSdk(
   created: Array<Record<string, unknown>> = [],
-  options: { workspaces?: Array<{ id: string; name: string }>; onWhoAmI?: () => void } = {},
+  options: {
+    workspaces?: Array<{ id: string; name: string }>;
+    onWhoAmI?: () => void;
+    get?: FakeGetAnswer;
+  } = {},
 ) {
   const workspaces = options.workspaces ?? [{ id: 'ws-1', name: 'only' }];
+  class SessionNotFoundError extends Error {}
   return {
+    SessionNotFoundError,
+    isTerminal: (state: string) => state === 'TERMINATING' || state === 'TERMINATED',
     TenkiSandbox: class {
+      async get(sessionId: string) {
+        const answer = options.get;
+        if (answer === 'not_found') {
+          throw new SessionNotFoundError(`session ${sessionId} not found`);
+        }
+        if (answer instanceof Error) throw answer;
+        return { id: sessionId, state: answer?.state ?? 'RUNNING' };
+      }
       async whoAmI() {
         options.onWhoAmI?.();
         return { workspaces };

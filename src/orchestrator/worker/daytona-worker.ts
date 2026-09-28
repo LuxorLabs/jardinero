@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   Daytona,
+  DaytonaNotFoundError,
   DaytonaProcessExecutionTimeoutError,
   type CreateSandboxFromSnapshotParams,
   type Sandbox,
@@ -63,6 +64,7 @@ interface DaytonaExecResponse {
 
 interface DaytonaClient {
   create(params: CreateSandboxFromSnapshotParams, options?: { timeout?: number }): Promise<Sandbox>;
+  get(sandboxId: string): Promise<Sandbox>;
 }
 
 export interface DaytonaWorkerRunnerDeps extends SandboxWorkerRunnerDeps {
@@ -127,6 +129,21 @@ export class DaytonaSandboxProvider implements SandboxProvider {
       return new DaytonaSession(sandbox, sandbox.id, signal);
     } catch (error) {
       await sandbox.delete().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async attach(
+    sessionId: string,
+    _options: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<SandboxSession | undefined> {
+    throwIfAborted(signal);
+    try {
+      const sandbox = await this.createClient().get(sessionId);
+      return new DaytonaSession(sandbox, sandbox.id, signal);
+    } catch (error) {
+      if (error instanceof DaytonaNotFoundError) return undefined;
       throw error;
     }
   }

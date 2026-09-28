@@ -20,7 +20,12 @@ import type {
   SandboxProvider,
   SandboxSession,
 } from '../../types.js';
-import type { SandboxRunContext, SandboxRunner } from '../sandbox-pool.js';
+import {
+  type SandboxRunContext,
+  type SandboxRunner,
+  SandboxRunLostError,
+  SandboxRunReleasedError,
+} from '../sandbox-pool.js';
 import { parseFixNoPrOutcome } from '../../workflows/pr/fix-result.js';
 import { parseImplementationHandoffs } from '../../workflows/pr/implementation-handoff.js';
 import { parseLinearVerification } from '../../workflows/linear/linear-verify.js';
@@ -89,7 +94,21 @@ const PRE_CODEX_STAGE_MESSAGES: Record<PreCodexRetryStage, string> = {
 export interface SandboxWorkerRunnerDeps {
   sandboxReadyRetryDelayMs?: (attempt: number) => number;
   getPullRequestHead?: typeof getPullRequestHead;
+  codexPollIntervalMs?: number;
 }
+
+// CODEX_POLL_INTERVAL_MS is how long a detached Codex run goes unread, and so how late its
+// progress reaches the log.
+const CODEX_POLL_INTERVAL_MS = 2_000;
+
+// CODEX_FILES are what a detached Codex run keeps in the context directory, which is all a
+// process needs to follow it, whether it started it or not.
+const CODEX_FILES = {
+  stdout: 'codex-stdout.log',
+  stderr: 'codex-stderr.log',
+  exitCode: 'codex-exit-code.txt',
+  model: 'codex-model.txt',
+};
 
 interface CodexRunResult {
   command: string;
@@ -115,6 +134,7 @@ function sandboxReadyRetryDelayMs(config: AppConfig, attempt: number): number {
 export class SandboxWorkerRunner implements SandboxRunner {
   private readonly sandboxReadyRetryDelayMs: (attempt: number) => number;
   private readonly getPullRequestHead: typeof getPullRequestHead;
+  private readonly codexPollIntervalMs: number;
   private readonly log: Logger = logger.child('worker');
 
   constructor(
@@ -124,13 +144,41 @@ export class SandboxWorkerRunner implements SandboxRunner {
     deps: SandboxWorkerRunnerDeps = {},
   ) {
     this.getPullRequestHead = deps.getPullRequestHead ?? getPullRequestHead;
+    this.codexPollIntervalMs = deps.codexPollIntervalMs ?? CODEX_POLL_INTERVAL_MS;
     this.sandboxReadyRetryDelayMs =
       deps.sandboxReadyRetryDelayMs === undefined
         ? (attempt) => sandboxReadyRetryDelayMs(this.config, attempt)
         : (attempt) => deps.sandboxReadyRetryDelayMs!(attempt);
   }
 
-  async run(context: SandboxRunContext): Promise<WorkerResult> {
+  run(context: SandboxRunContext): Promise<WorkerResult> {
+    return this.runInSandbox(
+      context,
+      (createOptions, trackSession, terminate) =>
+        this.createSession(context, createOptions, trackSession, terminate),
+      (session) => this.runCodex(session, context, this.codexModels(context)),
+    );
+  }
+
+  resume(context: SandboxRunContext): Promise<WorkerResult> {
+    return this.runInSandbox(
+      context,
+      (createOptions, trackSession) => this.attachSession(context, createOptions, trackSession),
+      (session) => this.resumeCodex(session, context),
+    );
+  }
+
+  // runInSandbox holds the session a run opens, runs Codex in it and reads what came out.
+  // Once Codex is running it works without us, so a shutdown leaves it to the next process.
+  private async runInSandbox(
+    context: SandboxRunContext,
+    openSession: (
+      createOptions: Record<string, unknown>,
+      trackSession: (session: SandboxSession) => void,
+      terminate: () => Promise<void>,
+    ) => Promise<SandboxSession>,
+    runCodex: (session: SandboxSession) => Promise<CodexRunResult>,
+  ): Promise<WorkerResult> {
     const missing = [resolveGitHubTokenEnv(this.config, this.repoFor(context))];
     if (this.config.worker.codexAuthMode === 'access_token') {
       missing.push(this.config.worker.codexAccessTokenEnv);
@@ -177,120 +225,25 @@ export class SandboxWorkerRunner implements SandboxRunner {
       });
       return terminatePromise;
     };
+    let releasable = false;
+    const released = (): boolean => releasable && context.isStopping();
 
     // Defence in depth around the try/catch above: terminate() is awaited
     // fire-and-forget on abort, so guard the promise so no future rejection can
     // escape as an unhandled rejection and trip the orchestrator's fail-fast
     // process exit.
     const abortHandler = (): void => {
+      if (released()) return;
       void terminate().catch(() => undefined);
     };
     context.signal.addEventListener('abort', abortHandler, { once: true });
 
     try {
-      for (let attempt = 1; attempt <= this.config.worker.maxSandboxReadyAttempts; attempt += 1) {
-        await context.publishEvent({
-          type: 'sandbox.creating',
-          message: `Creating ${provider.name} sandbox`,
-          data: {
-            ...safeEventData(createOptions),
-            attempt,
-            max_attempts: this.config.worker.maxSandboxReadyAttempts,
-          },
-        });
+      const opened = await openSession(createOptions, trackSession, terminate);
+      const sandboxSessionId = opened.id;
+      releasable = true;
 
-        let preCodexStage: PreCodexRetryStage = 'create';
-        try {
-          throwIfAborted(context.signal);
-          // Wrap the two provider API calls most prone to transient TLS/network failures.
-          // When these fail, the wrapper attaches step + target so Discord shows
-          // which provider could not be reached instead of a low-level transport blob.
-          const created = await withCallContext(
-            { step: `create ${provider.name} sandbox`, target: provider.apiTarget },
-            () => provider.create(createOptions, context.signal),
-          );
-          trackSession(created);
-          preCodexStage = 'wait_ready';
-          await withCallContext(
-            {
-              step: `wait for ${provider.name} sandbox to become ready`,
-              target: provider.apiTarget,
-            },
-            () => provider.waitReady(created, context.signal),
-          );
-          throwIfAborted(context.signal);
-
-          await context.publishEvent({
-            type: 'sandbox.ready',
-            message: `${provider.name} sandbox is ready`,
-            data: { sandbox_session_id: created.id },
-          });
-
-          preCodexStage = await this.beginStage(context, 'prepare_workspace');
-          await this.prepareWorkspace(created, context);
-          throwIfAborted(context.signal);
-          preCodexStage = await this.beginStage(context, 'docker_socket_access');
-          await this.ensureDockerSocketAccess(created, context);
-
-          const contextDir = this.contextDir();
-          preCodexStage = await this.beginStage(context, 'prepare_repo_docs');
-          const repoDocsBlock = await this.prepareRepoDocs(created, context);
-          const prompt = buildWorkerPrompt(
-            context.sandboxRun.id,
-            context.task,
-            context.task.promptOverrides,
-            repoDocsBlock,
-          );
-          preCodexStage = await this.beginStage(context, 'write_context');
-          await created.writeFile(remoteJoin(contextDir, 'prompt.txt'), prompt);
-          await context.writeSandboxRunArtifact('prompt.txt', prompt);
-          await created.writeFile(
-            remoteJoin(contextDir, 'task.json'),
-            JSON.stringify(context.task.payload, null, 2),
-          );
-          preCodexStage = await this.beginStage(context, 'prepare_codex_auth');
-          await this.prepareCodexAuth(created);
-          preCodexStage = await this.beginStage(context, 'prepare_grafana_mcp');
-          await this.prepareGrafanaMcpCredentials(created, context);
-          preCodexStage = await this.beginStage(context, 'verify_log_review_telemetry');
-          await this.verifyLogReviewTelemetryPrerequisites(created, context);
-          throwIfAborted(context.signal);
-          break;
-        } catch (error) {
-          const retryReason = retryableSandboxSessionStartReason(error);
-          if (
-            context.signal.aborted ||
-            !retryReason ||
-            attempt >= this.config.worker.maxSandboxReadyAttempts
-          ) {
-            throw error;
-          }
-
-          await context.publishEvent({
-            type: 'sandbox.create_retried',
-            message: `Retrying ${provider.name} sandbox setup after a transient failure`,
-            data: {
-              run_id: context.sandboxRun.id,
-              attempt,
-              next_attempt: attempt + 1,
-              max_attempts: this.config.worker.maxSandboxReadyAttempts,
-              stage: preCodexStage,
-              reason: retryReason,
-              error: sandboxSessionStartErrorMessage(error),
-            },
-          });
-          await terminate();
-          await delay(this.sandboxReadyRetryDelayMs(attempt), undefined, {
-            signal: context.signal,
-          });
-        }
-      }
-      if (!session) {
-        throw new Error(`${provider.name} sandbox was not created.`);
-      }
-      const sandboxSessionId = session.id;
-
-      const result = await this.runCodex(session, context);
+      const result = await runCodex(opened);
       for (const event of result.events) {
         const type = codexEventType(event);
         // Coarse thread/turn lifecycle events go on the timeline; per-item details
@@ -479,6 +432,13 @@ export class SandboxWorkerRunner implements SandboxRunner {
               : undefined,
       };
     } catch (error) {
+      if (context.signal.aborted && released()) {
+        await context.publishEvent({
+          type: 'agent.released',
+          message: 'Orchestrator stopped; Codex keeps running in the sandbox for the next one',
+        });
+        throw new SandboxRunReleasedError(context.sandboxRun.id);
+      }
       await context.publishEvent({
         type: 'agent.failed',
         message: error instanceof Error ? error.message : String(error),
@@ -487,6 +447,148 @@ export class SandboxWorkerRunner implements SandboxRunner {
       throw error;
     } finally {
       context.signal.removeEventListener('abort', abortHandler);
+    }
+  }
+
+  // createSession creates the run's sandbox and readies it for Codex, starting over in a
+  // fresh one when a stage fails in a way another attempt can survive.
+  private async createSession(
+    context: SandboxRunContext,
+    createOptions: Record<string, unknown>,
+    trackSession: (session: SandboxSession) => void,
+    terminate: () => Promise<void>,
+  ): Promise<SandboxSession> {
+    const provider = this.provider;
+    for (let attempt = 1; attempt <= this.config.worker.maxSandboxReadyAttempts; attempt += 1) {
+      await context.publishEvent({
+        type: 'sandbox.creating',
+        message: `Creating ${provider.name} sandbox`,
+        data: {
+          ...safeEventData(createOptions),
+          attempt,
+          max_attempts: this.config.worker.maxSandboxReadyAttempts,
+        },
+      });
+
+      let preCodexStage: PreCodexRetryStage = 'create';
+      try {
+        throwIfAborted(context.signal);
+        // Wrap the two provider API calls most prone to transient TLS/network failures.
+        // When these fail, the wrapper attaches step + target so Discord shows
+        // which provider could not be reached instead of a low-level transport blob.
+        const created = await withCallContext(
+          { step: `create ${provider.name} sandbox`, target: provider.apiTarget },
+          () => provider.create(createOptions, context.signal),
+        );
+        trackSession(created);
+        preCodexStage = 'wait_ready';
+        await withCallContext(
+          {
+            step: `wait for ${provider.name} sandbox to become ready`,
+            target: provider.apiTarget,
+          },
+          () => provider.waitReady(created, context.signal),
+        );
+        throwIfAborted(context.signal);
+
+        await context.publishEvent({
+          type: 'sandbox.ready',
+          message: `${provider.name} sandbox is ready`,
+          data: { sandbox_session_id: created.id },
+        });
+
+        preCodexStage = await this.beginStage(context, 'prepare_workspace');
+        await this.prepareWorkspace(created, context);
+        throwIfAborted(context.signal);
+        preCodexStage = await this.beginStage(context, 'docker_socket_access');
+        await this.ensureDockerSocketAccess(created, context);
+
+        const contextDir = this.contextDir();
+        preCodexStage = await this.beginStage(context, 'prepare_repo_docs');
+        const repoDocsBlock = await this.prepareRepoDocs(created, context);
+        const prompt = buildWorkerPrompt(
+          context.sandboxRun.id,
+          context.task,
+          context.task.promptOverrides,
+          repoDocsBlock,
+        );
+        preCodexStage = await this.beginStage(context, 'write_context');
+        await created.writeFile(remoteJoin(contextDir, 'prompt.txt'), prompt);
+        await context.writeSandboxRunArtifact('prompt.txt', prompt);
+        await created.writeFile(
+          remoteJoin(contextDir, 'task.json'),
+          JSON.stringify(context.task.payload, null, 2),
+        );
+        preCodexStage = await this.beginStage(context, 'prepare_codex_auth');
+        await this.prepareCodexAuth(created);
+        preCodexStage = await this.beginStage(context, 'prepare_grafana_mcp');
+        await this.prepareGrafanaMcpCredentials(created, context);
+        preCodexStage = await this.beginStage(context, 'verify_log_review_telemetry');
+        await this.verifyLogReviewTelemetryPrerequisites(created, context);
+        throwIfAborted(context.signal);
+        return created;
+      } catch (error) {
+        const retryReason = retryableSandboxSessionStartReason(error);
+        if (
+          context.signal.aborted ||
+          !retryReason ||
+          attempt >= this.config.worker.maxSandboxReadyAttempts
+        ) {
+          throw error;
+        }
+
+        await context.publishEvent({
+          type: 'sandbox.create_retried',
+          message: `Retrying ${provider.name} sandbox setup after a transient failure`,
+          data: {
+            run_id: context.sandboxRun.id,
+            attempt,
+            next_attempt: attempt + 1,
+            max_attempts: this.config.worker.maxSandboxReadyAttempts,
+            stage: preCodexStage,
+            reason: retryReason,
+            error: sandboxSessionStartErrorMessage(error),
+          },
+        });
+        await terminate();
+        await delay(this.sandboxReadyRetryDelayMs(attempt), undefined, {
+          signal: context.signal,
+        });
+      }
+    }
+    throw new Error(`${provider.name} sandbox was not created.`);
+  }
+
+  // attachSession reopens the run's sandbox, trying again on the transient failures a
+  // create survives.
+  private async attachSession(
+    context: SandboxRunContext,
+    createOptions: Record<string, unknown>,
+    trackSession: (session: SandboxSession) => void,
+  ): Promise<SandboxSession> {
+    const sessionId = context.sandboxRun.sandboxSessionId;
+    if (!sessionId) throw new SandboxRunLostError('the run never reached a sandbox');
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        const session = await this.provider.attach(sessionId, createOptions, context.signal);
+        if (!session) {
+          throw new SandboxRunLostError(`${this.provider.name} sandbox ${sessionId} is gone`);
+        }
+        trackSession(session);
+        await this.provider.waitReady(session, context.signal);
+        return session;
+      } catch (error) {
+        if (
+          context.signal.aborted ||
+          !retryableSandboxSessionStartReason(error) ||
+          attempt >= this.config.worker.maxSandboxReadyAttempts
+        ) {
+          throw error;
+        }
+        await delay(this.sandboxReadyRetryDelayMs(attempt), undefined, {
+          signal: context.signal,
+        });
+      }
     }
   }
 
@@ -959,7 +1061,11 @@ export class SandboxWorkerRunner implements SandboxRunner {
   // and a collection failure must never fail the step, only be written down.
   // Streams Codex's --json output to the worker log as it runs, so a stalled tool
   // call shows live, not only in the post-exit result; log-only, no timeline.
-  private codexProgressSink(runId: string, tail: OutputTail): (output: SandboxExecOutput) => void {
+  private codexProgressSink(
+    runId: string,
+    tail: OutputTail,
+    logged = true,
+  ): (output: SandboxExecOutput) => void {
     const run = runId.slice(0, 8);
     const stdout = new LineBuffer();
     const stderr = new LineBuffer();
@@ -967,6 +1073,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       const buffer = output.isStderr ? stderr : stdout;
       for (const line of buffer.push(output.data, output.isFinal)) {
         tail.push(line);
+        if (!logged) continue;
         if (output.isStderr) {
           this.log.debug('codex.stderr', { run, line: truncate(line, 500) });
         } else {
@@ -996,47 +1103,52 @@ export class SandboxWorkerRunner implements SandboxRunner {
     });
   }
 
-  private async execRequired(
-    session: SandboxSession,
-    command: string,
-    onOutput?: (output: SandboxExecOutput) => void,
-  ): Promise<SandboxExecResult> {
+  private async execRequired(session: SandboxSession, command: string): Promise<SandboxExecResult> {
     if (!session.exec) {
       throw new Error(
         'Sandbox session does not expose exec; Codex worker runner requires shell execution.',
       );
     }
-    return session.exec('sh', { args: ['-lc', command], onOutput });
+    return session.exec('sh', { args: ['-lc', command] });
   }
 
-  // runCodex runs the agent once per model the seat may use, and retries only when the
-  // model refused for capacity: any other failure is the run's answer.
+  // runCodex runs the agent once per model it may use, retrying only a capacity refusal;
+  // a resumed run's first model is already running, so it is followed, not started.
   private async runCodex(
     session: SandboxSession,
     context: SandboxRunContext,
+    models: string[],
+    resumed = false,
   ): Promise<CodexRunResult> {
-    const models = this.codexModels(context);
     const tail = new OutputTail();
     let result: CodexRunResult | undefined;
 
     for (const [attempt, model] of models.entries()) {
       const command = this.codexCommand(context, model);
-      // codex.* events publish only after the CLI exits; post a start event to
-      // distinguish a hung run from an earlier stalled stage.
-      await context.publishEvent({
-        type: 'agent.started',
-        message: attempt === 0 ? 'Codex run started' : 'Codex run restarted on another model',
-        data: { attempt: attempt + 1, max_attempts: models.length, model },
-      });
+      const alreadyRunning = resumed && attempt === 0;
       let execResult: SandboxExecResult;
       try {
-        execResult = await this.execRequired(
-          session,
-          command,
-          this.codexProgressSink(context.sandboxRun.id, tail),
-        );
+        if (!alreadyRunning) {
+          // codex.* events publish only after the CLI exits; post a start event to
+          // distinguish a hung run from an earlier stalled stage.
+          await context.publishEvent({
+            type: 'agent.started',
+            message: attempt === 0 ? 'Codex run started' : 'Codex run restarted on another model',
+            data: { attempt: attempt + 1, max_attempts: models.length, model },
+          });
+          const started = await this.execRequired(
+            session,
+            buildDetachedCodexCommand({
+              codexCommand: command,
+              contextDir: this.contextDir(),
+              model,
+            }),
+          );
+          assertExecSucceeded(started, 'start Codex');
+        }
+        execResult = await this.followCodex(session, context, tail, alreadyRunning);
       } catch (error) {
-        // The run died mid-stream, so what it printed is the only account of it left.
+        // Keep what it printed: a run not followed to its end leaves no other account.
         await this.writeOutputTail(context, tail);
         throw error;
       }
@@ -1062,6 +1174,118 @@ export class SandboxWorkerRunner implements SandboxRunner {
     // The seat always resolves to at least one model, so the loop always ran.
     if (!result) throw new Error('Codex run had no model to use.');
     return result;
+  }
+
+  // resumeCodex follows the Codex run the sandbox already has, with the models the seat
+  // still had left behind it.
+  private async resumeCodex(
+    session: SandboxSession,
+    context: SandboxRunContext,
+  ): Promise<CodexRunResult> {
+    const model = (await this.readCodexFile(session, CODEX_FILES.model)).trim();
+    if (!model) throw new SandboxRunLostError('Codex was never started in the sandbox');
+    await context.publishEvent({
+      type: 'agent.resumed',
+      message: 'Codex run resumed by a new orchestrator',
+      data: { model },
+    });
+    const models = this.codexModels(context);
+    const position = models.indexOf(model);
+    return this.runCodex(session, context, position < 0 ? [model] : models.slice(position), true);
+  }
+
+  // followCodex reads a detached Codex run's files until it leaves its exit code. A read
+  // that fails is tried again: only a session that is gone, or the wall clock, ends it.
+  private async followCodex(
+    session: SandboxSession,
+    context: SandboxRunContext,
+    tail: OutputTail,
+    resumed: boolean,
+  ): Promise<SandboxExecResult> {
+    const deadline = context.sandboxRun.startedAt + context.maxWallClockMs;
+    const encoder = new TextEncoder();
+    const stdout = new CodexOutputFile(CODEX_FILES.stdout, false);
+    const stderr = new CodexOutputFile(CODEX_FILES.stderr, true);
+    const logged = this.codexProgressSink(context.sandboxRun.id, tail);
+    // Keep what a resumed run printed before the resume out of the log; the tail still has it.
+    let sink = resumed ? this.codexProgressSink(context.sandboxRun.id, tail, false) : logged;
+    let current = session;
+
+    for (;;) {
+      try {
+        // Read the exit code before the output, so seeing it means the output is complete.
+        const exitCode = parseCodexExitCode(
+          await this.readCodexFile(current, CODEX_FILES.exitCode),
+        );
+        const final = exitCode !== undefined;
+        for (const output of [stdout, stderr]) {
+          const read = await this.readCodexFile(current, output.name, output.nextLine());
+          const taken = output.take(read, final);
+          if (taken) {
+            sink({ data: encoder.encode(taken), isStderr: output.isStderr, isFinal: final });
+          }
+        }
+        if (exitCode !== undefined) {
+          return {
+            exitCode,
+            stdout: encoder.encode(stdout.text()),
+            stderr: encoder.encode(stderr.text()),
+          };
+        }
+        sink = logged;
+      } catch (error) {
+        if (context.signal.aborted) throw error;
+        this.log.warn('reading the codex run failed; reading it again', {
+          sandbox_run_id: context.sandboxRun.id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        current = await this.reopenSession(current, context);
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Codex did not finish within ${Math.round(context.maxWallClockMs / 1_000)}s.`,
+        );
+      }
+      await delay(this.codexPollIntervalMs, undefined, { signal: context.signal });
+    }
+  }
+
+  // reopenSession answers a fresh handle on a session a read failed on, or the same one
+  // when the provider cannot say; it throws only once the provider no longer has it.
+  private async reopenSession(
+    session: SandboxSession,
+    context: SandboxRunContext,
+  ): Promise<SandboxSession> {
+    let reopened: SandboxSession | undefined;
+    try {
+      reopened = await this.provider.attach(
+        session.id,
+        this.createOptions(context),
+        context.signal,
+      );
+    } catch {
+      return session;
+    }
+    if (!reopened) {
+      throw new SandboxRunLostError(`${this.provider.name} sandbox ${session.id} is gone`);
+    }
+    return reopened;
+  }
+
+  // readCodexFile answers a Codex file from its `fromLine`th line on, and nothing while
+  // the file does not exist.
+  private async readCodexFile(
+    session: SandboxSession,
+    name: string,
+    fromLine = 1,
+  ): Promise<string> {
+    const path = shellQuote(remoteJoin(this.contextDir(), name));
+    const result = await this.execRequired(
+      session,
+      `if [ -f ${path} ]; then tail -n +${fromLine} ${path}; fi`,
+    );
+    assertExecSucceeded(result, `read ${name}`);
+    return execStdout(result);
   }
 
   // writeOutputTail leaves the end of the output as an artifact. It answers instead of
@@ -1579,6 +1803,64 @@ export function codexEventDetail(event: unknown): Record<string, unknown> {
 
 function truncate(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+// buildDetachedCodexCommand starts Codex in a session of its own with its output and exit
+// code in files, so it outlives the exec that starts it and whoever reads it.
+export function buildDetachedCodexCommand(options: {
+  codexCommand: string;
+  contextDir: string;
+  model: string;
+}): string {
+  const file = (name: string): string => shellQuote(remoteJoin(options.contextDir, name));
+  const run = `${options.codexCommand} > ${file(CODEX_FILES.stdout)} 2> ${file(CODEX_FILES.stderr)}; echo $? > ${file(CODEX_FILES.exitCode)}`;
+  return [
+    `command -v setsid >/dev/null 2>&1 || { echo 'the worker image must provide setsid' >&2; exit 1; }`,
+    `rm -f ${file(CODEX_FILES.stdout)} ${file(CODEX_FILES.stderr)} ${file(CODEX_FILES.exitCode)} ${file(CODEX_FILES.model)}`,
+    `nohup setsid sh -c ${shellQuote(run)} < /dev/null > /dev/null 2>&1 &`,
+    // Write the model last: its presence is what tells a resume that Codex started.
+    `printf '%s' ${shellQuote(options.model)} > ${file(CODEX_FILES.model)}`,
+  ].join('\n');
+}
+
+// parseCodexExitCode reads what a detached Codex run left as its exit code; the shell
+// creates the file before it writes the number, so an empty one is not an exit yet.
+export function parseCodexExitCode(text: string): number | undefined {
+  const trimmed = text.trim();
+  return /^\d+$/.test(trimmed) ? Number(trimmed) : undefined;
+}
+
+// CodexOutputFile is one of a detached Codex run's output files, as far as it has been
+// read. Until Codex exits only whole lines are taken, since the last may still be written.
+export class CodexOutputFile {
+  private linesTaken = 0;
+  private readonly chunks: string[] = [];
+
+  constructor(
+    readonly name: string,
+    readonly isStderr: boolean,
+  ) {}
+
+  nextLine(): number {
+    return this.linesTaken + 1;
+  }
+
+  take(read: string, final: boolean): string {
+    const taken = final ? read : read.slice(0, read.lastIndexOf('\n') + 1);
+    this.linesTaken += countLines(taken);
+    this.chunks.push(taken);
+    return taken;
+  }
+
+  text(): string {
+    return this.chunks.join('');
+  }
+}
+
+// countLines counts a last line with no newline too, the way `tail -n` does.
+function countLines(text: string): number {
+  if (!text) return 0;
+  return text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 }
 
 // Reassembles line-delimited output from a chunked stream; a chunk boundary can

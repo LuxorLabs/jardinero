@@ -3,10 +3,12 @@ import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_BASE_URL,
   Freestyle,
+  FreestyleApiError,
   type CreateVmOptions,
   type ExecResult,
   type PtySession,
   type Vm,
+  type VmData,
 } from 'freestyle';
 
 import type { AppConfig } from '../../config.js';
@@ -57,6 +59,8 @@ interface FreestyleClient {
         };
       };
     }>;
+    get(vmId: string): Promise<VmData>;
+    ref(vmId: string): Vm;
   };
 }
 
@@ -118,6 +122,27 @@ export class FreestyleSandboxProvider implements SandboxProvider {
       await created.vm.delete().catch(() => undefined);
       throw error;
     }
+  }
+
+  async attach(
+    sessionId: string,
+    options: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<SandboxSession | undefined> {
+    throwIfAborted(signal);
+    const client = this.createClient();
+    try {
+      await client.vms.get(sessionId);
+    } catch (error) {
+      if (error instanceof FreestyleApiError && error.status === 404) return undefined;
+      throw error;
+    }
+    return new FreestyleSession(
+      client.vms.ref(sessionId),
+      sessionId,
+      stringRecord(options.env),
+      signal,
+    );
   }
 
   async waitReady(_session: SandboxSession, signal: AbortSignal): Promise<void> {

@@ -556,9 +556,8 @@ export async function onPeriodicCheck(
       case 'prm_waiting':
         return await processPullRequestWhileWaiting(engine, instance);
 
-      // Only a person moves this one, so there is nothing to look at.
       case 'prm_attempts_exhausted':
-        return undefined;
+        return await processPullRequestWhileExhausted(engine, instance);
 
       // The pull request already ended; a late event about it changes nothing.
       case 'prm_merged':
@@ -690,6 +689,24 @@ async function processPullRequestWhileWaiting(
   if (!snapshot.checksAreRed && !snapshot.hasUnresolvedReviewThreads) return undefined;
   instance.needsHumanReason = null;
   return setStateAndRun(engine, instance, 'prm_pending');
+}
+
+// processPullRequestWhileExhausted only notices the pull request ending: only a person
+// restarts the work, but the merge or close webhook may never reach us.
+async function processPullRequestWhileExhausted(
+  engine: PrMaintainerStateEngine,
+  instance: PrMaintainer,
+): Promise<Error | undefined> {
+  const repository = engine.store.getRepositoryById(instance.repositoryId);
+  if (!repository) return undefined;
+  const snapshot = await engine.github.readPullRequest(
+    repository.fullName,
+    instance.pullRequestNumber,
+  );
+
+  if (snapshot.state === 'merged') return setState(engine, instance, 'prm_merged');
+  if (snapshot.state === 'closed') return setState(engine, instance, 'prm_closed');
+  return undefined;
 }
 
 // settleAttempt spends an attempt only when the pass moved the head; answering a comment

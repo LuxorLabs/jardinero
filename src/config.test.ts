@@ -89,7 +89,12 @@ describe('loadConfig', () => {
             pollBranchPrefix: 'agent/',
             agentLogin: '',
             commentReactions: { enabled: true, pickup: 'eyes', replied: 'rocket' },
-            checkWaitMs: { prm_pending: 60_000, prm_working: 120_000, prm_waiting: 300_000 },
+            checkWaitMs: {
+              prm_pending: 60_000,
+              prm_working: 120_000,
+              prm_waiting: 300_000,
+              prm_attempts_exhausted: 3_600_000,
+            },
           },
           logReviewer: {
             enabled: false,
@@ -879,9 +884,15 @@ describe('Workflow check wait cadence', () => {
       prm_pending: 30000
       prm_working: 60000
       prm_waiting: 600000
+      prm_attempts_exhausted: 7200000
 `,
       read: (config) => config.workflows.prMaintainer.checkWaitMs,
-      want: { prm_pending: 30_000, prm_working: 60_000, prm_waiting: 600_000 },
+      want: {
+        prm_pending: 30_000,
+        prm_working: 60_000,
+        prm_waiting: 600_000,
+        prm_attempts_exhausted: 7_200_000,
+      },
     },
     {
       name: 'When `log_reviewer` sets a state then should read it',

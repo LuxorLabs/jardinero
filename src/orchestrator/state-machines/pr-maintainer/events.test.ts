@@ -72,6 +72,7 @@ beforeEach(() => {
         prm_pending: 0,
         prm_working: 0,
         prm_waiting: 0,
+        prm_attempts_exhausted: 0,
       },
     },
     announcer,
@@ -1006,8 +1007,8 @@ describe('onPeriodicCheck', () => {
   const cases: PeriodicCase[] = [
     {
       name: 'When the state has no cadence then should never look at it',
-      from: 'prm_attempts_exhausted',
-      want: { state: 'prm_attempts_exhausted', checked: false },
+      from: 'prm_merged',
+      want: { state: 'prm_merged', checked: false },
     },
     {
       name: 'When the wait has not elapsed then should leave it alone',
@@ -1078,6 +1079,25 @@ describe('onPeriodicCheck', () => {
       name: 'When waiting and there is nothing to do then should leave it waiting',
       from: 'prm_waiting',
       want: { state: 'prm_waiting', checked: true },
+    },
+    {
+      name: 'When attempts are exhausted and the pull request merged then should close it as merged',
+      from: 'prm_attempts_exhausted',
+      snapshot: { state: 'merged' },
+      want: { state: 'prm_merged', checked: true },
+    },
+    {
+      name: 'When attempts are exhausted and the pull request closed then should close it unmerged',
+      from: 'prm_attempts_exhausted',
+      snapshot: { state: 'closed' },
+      want: { state: 'prm_closed', checked: true },
+    },
+    {
+      // Red checks restart a waiting pull request, but only a person restarts this one.
+      name: 'When attempts are exhausted and the checks are red then should leave it for a person',
+      from: 'prm_attempts_exhausted',
+      snapshot: { checksAreRed: true },
+      want: { state: 'prm_attempts_exhausted', checked: true },
     },
     {
       name: 'When the instance is unknown then should ignore it',

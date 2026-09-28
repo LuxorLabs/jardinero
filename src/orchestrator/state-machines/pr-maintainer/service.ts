@@ -66,7 +66,7 @@ export interface PrMaintainerConfig {
   // the self-comment filter misses.
   maxRepliesPerThread: number;
   // checkWaitMs is how long each state waits between periodic checks; a state left out is
-  // never checked, which is what prm_attempts_exhausted wants.
+  // never checked.
   checkWaitMs: Partial<Record<PrMaintainerState, number>>;
 }
 

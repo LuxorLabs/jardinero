@@ -664,6 +664,12 @@ function processSandboxRunWhileWorking(
       instance.sandboxRunId = null;
       return setStateAndRun(engine, instance, 'prm_waiting');
 
+    case 'aborted':
+      // Someone stopped the run on purpose, so the pull request is not taken again.
+      instance.sandboxRunId = null;
+      instance.needsHumanReason = 'run_killed';
+      return setState(engine, instance, 'prm_attempts_exhausted');
+
     default:
       // Finished badly or the row is gone; either way nothing is in flight.
       instance.sandboxRunId = null;

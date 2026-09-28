@@ -759,6 +759,12 @@ describe('onPeriodicCheck', () => {
       want: { state: 'li_verifying' },
     },
     {
+      name: 'When the run was killed then should ask a person instead of dispatching again',
+      from: 'li_implementing',
+      attachFinishedRun: 'aborted',
+      want: { state: 'li_needs_human', needsHumanReason: 'run_killed' },
+    },
+    {
       name: 'When the run failed without telling us then should dispatch again',
       from: 'li_implementing',
       attachFinishedRun: 'failed',

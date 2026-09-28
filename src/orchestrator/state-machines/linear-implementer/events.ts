@@ -536,8 +536,14 @@ function processSandboxRunWhileWorking(
       instance.needsHumanReason = 'outcome_lost';
       return setState(engine, instance, 'li_needs_human');
 
-    // Failed or aborted, and nobody reported it, which is what a restart mid-run leaves
-    // behind. It costs an iteration like any lost run and the handler decides from there.
+    case 'aborted':
+      // Someone stopped the run on purpose, so the ticket is not taken again.
+      instance.sandboxRunId = null;
+      instance.needsHumanReason = 'run_killed';
+      return setState(engine, instance, 'li_needs_human');
+
+    // Failed, and nobody reported it, which is what a restart mid-run leaves behind. It
+    // costs an iteration like any lost run and the handler decides from there.
     default:
       instance.sandboxRunId = null;
       instance.iterationNumber += 1;

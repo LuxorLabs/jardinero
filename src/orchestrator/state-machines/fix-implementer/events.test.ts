@@ -740,6 +740,12 @@ describe('onPeriodicCheck', () => {
       want: { state: 'fi_implementing' },
     },
     {
+      name: 'When the run was killed then should ask a person instead of dispatching again',
+      from: 'fi_implementing',
+      attachFinishedRun: 'aborted',
+      want: { state: 'fi_needs_human', needsHumanReason: 'run_killed' },
+    },
+    {
       name: 'When the run failed without telling us then should ask a person',
       from: 'fi_implementing',
       attachFinishedRun: 'failed',

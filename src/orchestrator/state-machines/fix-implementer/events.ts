@@ -1,4 +1,4 @@
-import { recordWorkflowInstanceOpened } from '../execution.js';
+import { asError, recordWorkflowInstanceOpened } from '../execution.js';
 import type { FixImplementerTargetScope } from '../../../store/store.js';
 import type { FixImplementer } from '../../../store/types.js';
 import { objectValue } from '../../../platform/json.js';
@@ -182,11 +182,13 @@ export async function onPrMerged(
   try {
     switch (instance.workflowState) {
       case 'fi_pending':
-      case 'fi_implementing':
       case 'fi_verifying':
       case 'fi_needs_human':
       case 'fi_waiting_pr':
         return setState(engine, instance, 'fi_done');
+
+      case 'fi_implementing':
+        return processPrClosingWhileWorking(engine, instance, 'fi_done');
 
       // The finding already ended; a late event about it changes nothing.
       case 'fi_discarded':
@@ -213,13 +215,15 @@ export async function onPrClosed(
   try {
     switch (instance.workflowState) {
       case 'fi_pending':
-      case 'fi_implementing':
       case 'fi_verifying':
       case 'fi_needs_human':
       case 'fi_waiting_pr':
         // A person closing our fix without merging it is the answer, and it is
         // why there is no separate rejected-pull-request record.
         return setState(engine, instance, 'fi_abandoned');
+
+      case 'fi_implementing':
+        return processPrClosingWhileWorking(engine, instance, 'fi_abandoned');
 
       // The finding already ended; a late event about it changes nothing.
       case 'fi_discarded':
@@ -398,6 +402,34 @@ export async function onSystemRecovery(
   } finally {
     taken.lock.release();
   }
+}
+
+// processPrClosingWhileWorking stops the sandbox before writing the final state,
+// because the pull request ended while an agent was still working on the finding.
+function processPrClosingWhileWorking(
+  engine: FixImplementerStateEngine,
+  instance: FixImplementer,
+  finalState: 'fi_done' | 'fi_abandoned',
+): Error | undefined {
+  let abortError: Error | undefined;
+  const sandboxRunId = instance.sandboxRunId;
+  if (sandboxRunId) {
+    try {
+      // The pool records how a run it holds ended, cost included, so only a run it
+      // lost is ours to close.
+      const runState = engine.store.getSandboxRun(sandboxRunId)?.runState;
+      if (engine.pool.isExecuting(sandboxRunId)) {
+        engine.pool.abort(sandboxRunId);
+      } else if (runState === 'pending' || runState === 'running') {
+        engine.store.finishSandboxRun(sandboxRunId, { runState: 'aborted' });
+      }
+      instance.sandboxRunId = null;
+    } catch (error) {
+      abortError = asError(error);
+    }
+  }
+  const writeError = setState(engine, instance, finalState);
+  return abortError ?? writeError;
 }
 
 // processSandboxRunWhileWorking finds out what became of the run. It may have finished

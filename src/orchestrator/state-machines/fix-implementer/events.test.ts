@@ -22,19 +22,13 @@ import { FixImplementerStateEngine } from './service.js';
 
 const FINGERPRINT = 'fp-1';
 const PULL_REQUEST_NUMBER = 77;
+const FINISHED_RUN_COST_USD = 1.25;
 const MAX_ITERATIONS = 1;
 // The budget a retry grants starts at the instance's `state_changed_at`, so a run stamped
 // in the same millisecond as the retry falls inside it; the runs a person forgives are
 // older than the click that forgives them.
 const BEFORE_THE_RETRY = Date.UTC(2026, 0, 1);
 const COVERAGE_EVENT_TYPES = new Set(['workflow.finding_refused', 'workflow.finding_deduplicated']);
-const OPEN_STATES: FixImplementerState[] = [
-  'fi_pending',
-  'fi_implementing',
-  'fi_verifying',
-  'fi_needs_human',
-  'fi_waiting_pr',
-];
 
 let store: Store;
 let cleanup: () => void;
@@ -366,15 +360,77 @@ describe('onSandboxRunFailed', () => {
 });
 
 describe('onPrMerged', () => {
-  const cases: StateCase[] = [
-    ...OPEN_STATES.map((state) => ({
-      name: `When the finding was in \`${state}\` then should close it as \`fi_done\``,
-      from: state,
-      want: { state: 'fi_done' as FixImplementerState, pullRequestNumber: PULL_REQUEST_NUMBER },
-    })),
+  const cases: ClosingCase[] = [
     {
-      name: 'When no instance follows that pull request then should ignore it',
+      name: 'When there is no instance then should ignore it',
       want: { instanceExists: false },
+    },
+    {
+      name: 'When the finding was in `fi_pending` then should close it as `fi_done`',
+      from: 'fi_pending',
+      want: { state: 'fi_done', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the finding was in `fi_verifying` then should close it as `fi_done`',
+      from: 'fi_verifying',
+      want: { state: 'fi_done', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the finding was in `fi_needs_human` then should close it as `fi_done`',
+      from: 'fi_needs_human',
+      want: { state: 'fi_done', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the finding was in `fi_waiting_pr` then should close it as `fi_done`',
+      from: 'fi_waiting_pr',
+      want: { state: 'fi_done', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the finding was in `fi_implementing` with no sandbox run then should close it as `fi_done`',
+      from: 'fi_implementing',
+      want: { state: 'fi_done', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When a sandbox run is in flight in `fi_implementing` then should abort it and close as `fi_done`',
+      from: 'fi_implementing',
+      run: 'in_flight',
+      want: {
+        state: 'fi_done',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'pending', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `fi_implementing` finished and its outcome is on its way then should keep its cost and close as `fi_done`',
+      from: 'fi_implementing',
+      run: 'reporting',
+      want: {
+        state: 'fi_done',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      name: 'When the pool lost the sandbox run in `fi_implementing` then should record it aborted and close as `fi_done`',
+      from: 'fi_implementing',
+      run: 'lost',
+      want: {
+        state: 'fi_done',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        sandboxRun: { runState: 'aborted', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `fi_implementing` finished unreported then should keep its cost and close as `fi_done`',
+      from: 'fi_implementing',
+      run: 'finished',
+      want: {
+        state: 'fi_done',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
     },
     {
       name: 'When the finding was dismissed then should ignore it',
@@ -386,29 +442,86 @@ describe('onPrMerged', () => {
   for (const c of cases) {
     test(c.name, async () => {
       const instance = c.from ? openInstanceWithPullRequest(c.from) : undefined;
+      const sandboxRunId = instance ? arrangeClosing(instance, c) : undefined;
 
       const error = await onPrMerged(engine, pullRequestRef());
 
-      assertOutcome(c.want, instance, error);
+      assertClosing(c, instance, sandboxRunId, error);
     });
   }
 });
-
 describe('onPrClosed', () => {
-  const cases: StateCase[] = [
-    ...OPEN_STATES.map((state) => ({
-      // A person closing our fix without merging it is the answer, and it is
-      // why there is no separate rejected-pull-request record.
-      name: `When the finding was in \`${state}\` then should close it as \`fi_abandoned\``,
-      from: state,
-      want: {
-        state: 'fi_abandoned' as FixImplementerState,
-        pullRequestNumber: PULL_REQUEST_NUMBER,
-      },
-    })),
+  const cases: ClosingCase[] = [
     {
-      name: 'When no instance follows that pull request then should ignore it',
+      name: 'When there is no instance then should ignore it',
       want: { instanceExists: false },
+    },
+    {
+      name: 'When the finding was in `fi_pending` then should close it as `fi_abandoned`',
+      from: 'fi_pending',
+      want: { state: 'fi_abandoned', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the finding was in `fi_verifying` then should close it as `fi_abandoned`',
+      from: 'fi_verifying',
+      want: { state: 'fi_abandoned', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the finding was in `fi_needs_human` then should close it as `fi_abandoned`',
+      from: 'fi_needs_human',
+      want: { state: 'fi_abandoned', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the finding was in `fi_waiting_pr` then should close it as `fi_abandoned`',
+      from: 'fi_waiting_pr',
+      want: { state: 'fi_abandoned', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the finding was in `fi_implementing` with no sandbox run then should close it as `fi_abandoned`',
+      from: 'fi_implementing',
+      want: { state: 'fi_abandoned', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When a sandbox run is in flight in `fi_implementing` then should abort it and close as `fi_abandoned`',
+      from: 'fi_implementing',
+      run: 'in_flight',
+      want: {
+        state: 'fi_abandoned',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'pending', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `fi_implementing` finished and its outcome is on its way then should keep its cost and close as `fi_abandoned`',
+      from: 'fi_implementing',
+      run: 'reporting',
+      want: {
+        state: 'fi_abandoned',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      name: 'When the pool lost the sandbox run in `fi_implementing` then should record it aborted and close as `fi_abandoned`',
+      from: 'fi_implementing',
+      run: 'lost',
+      want: {
+        state: 'fi_abandoned',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        sandboxRun: { runState: 'aborted', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `fi_implementing` finished unreported then should keep its cost and close as `fi_abandoned`',
+      from: 'fi_implementing',
+      run: 'finished',
+      want: {
+        state: 'fi_abandoned',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
     },
     {
       name: 'When the finding was dismissed then should ignore it',
@@ -420,14 +533,14 @@ describe('onPrClosed', () => {
   for (const c of cases) {
     test(c.name, async () => {
       const instance = c.from ? openInstanceWithPullRequest(c.from) : undefined;
+      const sandboxRunId = instance ? arrangeClosing(instance, c) : undefined;
 
       const error = await onPrClosed(engine, pullRequestRef());
 
-      assertOutcome(c.want, instance, error);
+      assertClosing(c, instance, sandboxRunId, error);
     });
   }
 });
-
 describe('onOperatorRetry', () => {
   const cases: StateCase[] = [
     {
@@ -829,6 +942,41 @@ function arrangePeriodic(instance: FixImplementer, c: PeriodicCase): void {
   c.arrange?.(instance);
 }
 
+function arrangeClosing(instance: FixImplementer, c: ClosingCase): string | undefined {
+  if (!c.run) return undefined;
+  const runId = store.startSandboxRun({
+    agentName: 'FixImplementer',
+    workflowType: 'fix_implementer',
+    workflowInstanceId: instance.id,
+  }).id;
+  instance.sandboxRunId = runId;
+  setState(engine, instance, instance.workflowState);
+  if (c.run === 'in_flight' || c.run === 'reporting') {
+    pool.startSandbox(runId);
+    pool.started.length = 0;
+  }
+  if (c.run === 'reporting' || c.run === 'finished') {
+    store.finishSandboxRun(runId, { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD });
+  }
+  return runId;
+}
+
+function assertClosing(
+  c: ClosingCase,
+  instance: FixImplementer | undefined,
+  sandboxRunId: string | undefined,
+  error: Error | undefined,
+): void {
+  assertOutcome(c.want, instance, error);
+  assert.equal(pool.aborted.length, c.want.abortedRuns ?? 0);
+  if (instance) assert.equal(store.getFixImplementer(instance.id)?.sandboxRunId, null);
+  const sandboxRun = sandboxRunId ? store.getSandboxRun(sandboxRunId) : undefined;
+  assert.deepEqual(
+    sandboxRun && { runState: sandboxRun.runState, costUsd: sandboxRun.costUsd },
+    c.want.sandboxRun,
+  );
+}
+
 function assertOutcome(
   want: Want,
   instance: FixImplementer | undefined,
@@ -853,6 +1001,8 @@ interface Want {
   state?: FixImplementerState;
   instanceExists?: boolean;
   startedRuns?: number;
+  abortedRuns?: number;
+  sandboxRun?: { runState: SandboxRunState; costUsd: number | null };
   needsHumanReason?: string;
   discardReason?: string;
   pullRequestNumber?: number;
@@ -865,6 +1015,14 @@ interface StateCase {
   from?: FixImplementerState;
   unknownInstance?: boolean;
   arrange?: (instance: FixImplementer) => void;
+  want: Want;
+}
+
+interface ClosingCase {
+  name: string;
+  from?: FixImplementerState;
+  // The pool still holds an `in_flight` or `reporting` run, and has let go of a `lost` or `finished` one.
+  run?: 'in_flight' | 'reporting' | 'lost' | 'finished';
   want: Want;
 }
 

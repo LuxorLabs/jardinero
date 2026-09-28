@@ -65,14 +65,18 @@ describe('createEngineCommands', () => {
     const outcome = await commands.deliverGitHubWebhook({
       eventName: 'pull_request',
       payload: {
-        action: 'ready_for_review',
+        action: 'closed',
         repository: { full_name: REPOSITORY },
-        pull_request: { number: 7 },
+        pull_request: { number: 7, merged: true },
       },
     });
 
     assert.deepEqual(outcome, { handled: true });
-    assert.deepEqual(calls, ['onPrReadyForReview']);
+    assert.deepEqual(calls, [
+      'onPrMerged',
+      'linearImplementer.onPrMerged',
+      'fixImplementer.onPrMerged',
+    ]);
   });
 
   test('When a linear delivery is handed over then should answer what the adapter read', async () => {
@@ -427,7 +431,9 @@ function recordingEngines(): EngineCommandDeps['engines'] {
         calls.push('onIssueAssigned');
         return Promise.resolve(undefined);
       },
+      ...settledPullRequestRecorder('linearImplementer'),
     },
+    fixImplementer: settledPullRequestRecorder('fixImplementer'),
     logReviewer: {
       onScheduledScan: (target) => {
         scans.push(target);
@@ -435,6 +441,14 @@ function recordingEngines(): EngineCommandDeps['engines'] {
       },
     },
   };
+}
+
+function settledPullRequestRecorder(machine: string) {
+  const record = (name: string) => (): Promise<undefined> => {
+    calls.push(`${machine}.${name}`);
+    return Promise.resolve(undefined);
+  };
+  return { onPrMerged: record('onPrMerged'), onPrClosed: record('onPrClosed') };
 }
 
 function recordingPrMaintainer(): PrMaintainerStateEngineInterface {

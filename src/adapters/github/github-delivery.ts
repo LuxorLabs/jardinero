@@ -3,6 +3,8 @@
 // something is an event at all is decided inside each machine.
 
 import type { AppConfig, LogReviewRepoConfig } from '../../config.js';
+import type { FixImplementerStateEngineInterface } from '../../orchestrator/state-machines/fix-implementer/service.js';
+import type { LinearImplementerStateEngineInterface } from '../../orchestrator/state-machines/linear-implementer/service.js';
 import type { LogReviewerStateEngineInterface } from '../../orchestrator/state-machines/log-reviewer/service.js';
 import type { PrMaintainerStateEngineInterface } from '../../orchestrator/state-machines/pr-maintainer/service.js';
 import { arrayValue, objectValue, stringValue } from '../../platform/json.js';
@@ -15,6 +17,8 @@ export interface GitHubDeliveryDeps {
   config: AppConfig;
   store: Store;
   prMaintainer: PrMaintainerStateEngineInterface;
+  linearImplementer: Pick<LinearImplementerStateEngineInterface, 'onPrMerged' | 'onPrClosed'>;
+  fixImplementer: Pick<FixImplementerStateEngineInterface, 'onPrMerged' | 'onPrClosed'>;
   logReviewer: Pick<LogReviewerStateEngineInterface, 'onScheduledScan'>;
 }
 
@@ -41,7 +45,12 @@ export async function handleGitHubDelivery(
 ): Promise<GitHubDeliveryOutcome> {
   switch (delivery.eventName) {
     case 'pull_request':
-      if (!deps.config.workflows.prMaintainer.enabled) {
+      // Settling a pull request only ends work, never starts it, so it reaches every
+      // machine that may own the pull request whatever PR maintenance says.
+      if (
+        !deps.config.workflows.prMaintainer.enabled &&
+        stringValue(delivery.payload.action) !== 'closed'
+      ) {
         return { handled: false, reason: 'pr_maintain_disabled' };
       }
       return handlePullRequest(deps, delivery.payload);
@@ -92,8 +101,15 @@ async function handlePullRequest(
       );
       return { handled: true };
     case 'closed':
-      if (pullRequest.merged === true) await deps.prMaintainer.onPrMerged(ref);
-      else await deps.prMaintainer.onPrClosed(ref);
+      if (pullRequest.merged === true) {
+        await deps.prMaintainer.onPrMerged(ref);
+        await deps.linearImplementer.onPrMerged(ref);
+        await deps.fixImplementer.onPrMerged(ref);
+      } else {
+        await deps.prMaintainer.onPrClosed(ref);
+        await deps.linearImplementer.onPrClosed(ref);
+        await deps.fixImplementer.onPrClosed(ref);
+      }
       return { handled: true };
     default:
       return { handled: false, reason: 'pull_request_action_ignored' };

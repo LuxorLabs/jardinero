@@ -29,13 +29,7 @@ import { LinearImplementerStateEngine } from './service.js';
 
 const MAX_ITERATIONS = 2;
 const PULL_REQUEST_NUMBER = 4688;
-const OPEN_STATES: LinearImplementerState[] = [
-  'li_pending',
-  'li_implementing',
-  'li_verifying',
-  'li_needs_human',
-  'li_waiting_pr',
-];
+const FINISHED_RUN_COST_USD = 1.25;
 
 let store: Store;
 let cleanup: () => void;
@@ -229,15 +223,83 @@ describe('onPrComment', () => {
 });
 
 describe('onPrMerged', () => {
-  const cases: StateCase[] = [
-    ...OPEN_STATES.map((state) => ({
-      name: `When the ticket was in \`${state}\` then should close it as \`li_done\``,
-      from: state,
-      want: { state: 'li_done' as LinearImplementerState, pullRequestNumber: PULL_REQUEST_NUMBER },
-    })),
+  const cases: ClosingCase[] = [
     {
-      name: 'When no instance follows that pull request then should ignore it',
+      name: 'When there is no instance then should ignore it',
       want: { instanceExists: false },
+    },
+    {
+      name: 'When the ticket was in `li_pending` then should close it as `li_done`',
+      from: 'li_pending',
+      want: { state: 'li_done', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the ticket was in `li_needs_human` then should close it as `li_done`',
+      from: 'li_needs_human',
+      want: { state: 'li_done', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the ticket was in `li_waiting_pr` then should close it as `li_done`',
+      from: 'li_waiting_pr',
+      want: { state: 'li_done', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the ticket was in `li_implementing` with no sandbox run then should close it as `li_done`',
+      from: 'li_implementing',
+      want: { state: 'li_done', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When a sandbox run is in flight in `li_implementing` then should abort it and close as `li_done`',
+      from: 'li_implementing',
+      run: 'in_flight',
+      want: {
+        state: 'li_done',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'pending', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `li_implementing` finished and its outcome is on its way then should keep its cost and close as `li_done`',
+      from: 'li_implementing',
+      run: 'reporting',
+      want: {
+        state: 'li_done',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      name: 'When the pool lost the sandbox run in `li_implementing` then should record it aborted and close as `li_done`',
+      from: 'li_implementing',
+      run: 'lost',
+      want: {
+        state: 'li_done',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        sandboxRun: { runState: 'aborted', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `li_implementing` finished unreported then should keep its cost and close as `li_done`',
+      from: 'li_implementing',
+      run: 'finished',
+      want: {
+        state: 'li_done',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      name: 'When a sandbox run is in flight in `li_verifying` then should abort it and close as `li_done`',
+      from: 'li_verifying',
+      run: 'in_flight',
+      want: {
+        state: 'li_done',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'pending', costUsd: null },
+      },
     },
     {
       name: 'When the ticket was dismissed then should ignore it',
@@ -249,27 +311,92 @@ describe('onPrMerged', () => {
   for (const c of cases) {
     test(c.name, async () => {
       const instance = c.from ? openInstanceWithPullRequest(c.from) : undefined;
+      const sandboxRunId = instance ? arrangeClosing(instance, c) : undefined;
 
       const error = await onPrMerged(engine, pullRequestRef());
 
-      assertOutcome(c.want, instance, error);
+      assertClosing(c, instance, sandboxRunId, error);
     });
   }
 });
-
 describe('onPrClosed', () => {
-  const cases: StateCase[] = [
-    ...OPEN_STATES.map((state) => ({
-      name: `When the ticket was in \`${state}\` then should close it as \`li_abandoned\``,
-      from: state,
-      want: {
-        state: 'li_abandoned' as LinearImplementerState,
-        pullRequestNumber: PULL_REQUEST_NUMBER,
-      },
-    })),
+  const cases: ClosingCase[] = [
     {
-      name: 'When no instance follows that pull request then should ignore it',
+      name: 'When there is no instance then should ignore it',
       want: { instanceExists: false },
+    },
+    {
+      name: 'When the ticket was in `li_pending` then should close it as `li_abandoned`',
+      from: 'li_pending',
+      want: { state: 'li_abandoned', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the ticket was in `li_needs_human` then should close it as `li_abandoned`',
+      from: 'li_needs_human',
+      want: { state: 'li_abandoned', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the ticket was in `li_waiting_pr` then should close it as `li_abandoned`',
+      from: 'li_waiting_pr',
+      want: { state: 'li_abandoned', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When the ticket was in `li_implementing` with no sandbox run then should close it as `li_abandoned`',
+      from: 'li_implementing',
+      want: { state: 'li_abandoned', pullRequestNumber: PULL_REQUEST_NUMBER },
+    },
+    {
+      name: 'When a sandbox run is in flight in `li_implementing` then should abort it and close as `li_abandoned`',
+      from: 'li_implementing',
+      run: 'in_flight',
+      want: {
+        state: 'li_abandoned',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'pending', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `li_implementing` finished and its outcome is on its way then should keep its cost and close as `li_abandoned`',
+      from: 'li_implementing',
+      run: 'reporting',
+      want: {
+        state: 'li_abandoned',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      name: 'When the pool lost the sandbox run in `li_implementing` then should record it aborted and close as `li_abandoned`',
+      from: 'li_implementing',
+      run: 'lost',
+      want: {
+        state: 'li_abandoned',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        sandboxRun: { runState: 'aborted', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `li_implementing` finished unreported then should keep its cost and close as `li_abandoned`',
+      from: 'li_implementing',
+      run: 'finished',
+      want: {
+        state: 'li_abandoned',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      name: 'When a sandbox run is in flight in `li_verifying` then should abort it and close as `li_abandoned`',
+      from: 'li_verifying',
+      run: 'in_flight',
+      want: {
+        state: 'li_abandoned',
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+        abortedRuns: 1,
+        sandboxRun: { runState: 'pending', costUsd: null },
+      },
     },
     {
       name: 'When the ticket was dismissed then should ignore it',
@@ -281,14 +408,14 @@ describe('onPrClosed', () => {
   for (const c of cases) {
     test(c.name, async () => {
       const instance = c.from ? openInstanceWithPullRequest(c.from) : undefined;
+      const sandboxRunId = instance ? arrangeClosing(instance, c) : undefined;
 
       const error = await onPrClosed(engine, pullRequestRef());
 
-      assertOutcome(c.want, instance, error);
+      assertClosing(c, instance, sandboxRunId, error);
     });
   }
 });
-
 describe('onSandboxRunSucceeded', () => {
   const cases: RunOutcomeCase[] = [
     {
@@ -871,6 +998,41 @@ function arrangePeriodic(instance: LinearImplementer, c: PeriodicCase): void {
   c.arrange?.(instance);
 }
 
+function arrangeClosing(instance: LinearImplementer, c: ClosingCase): string | undefined {
+  if (!c.run) return undefined;
+  const runId = store.startSandboxRun({
+    agentName: 'LinearImplementer',
+    workflowType: 'linear_implementer',
+    workflowInstanceId: instance.id,
+  }).id;
+  instance.sandboxRunId = runId;
+  setState(engine, instance, instance.workflowState);
+  if (c.run === 'in_flight' || c.run === 'reporting') {
+    pool.startSandbox(runId);
+    pool.started.length = 0;
+  }
+  if (c.run === 'reporting' || c.run === 'finished') {
+    store.finishSandboxRun(runId, { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD });
+  }
+  return runId;
+}
+
+function assertClosing(
+  c: ClosingCase,
+  instance: LinearImplementer | undefined,
+  sandboxRunId: string | undefined,
+  error: Error | undefined,
+): void {
+  assertOutcome(c.want, instance, error);
+  assert.equal(pool.aborted.length, c.want.abortedRuns ?? 0);
+  if (instance) assert.equal(store.getLinearImplementer(instance.id)?.sandboxRunId, null);
+  const sandboxRun = sandboxRunId ? store.getSandboxRun(sandboxRunId) : undefined;
+  assert.deepEqual(
+    sandboxRun && { runState: sandboxRun.runState, costUsd: sandboxRun.costUsd },
+    c.want.sandboxRun,
+  );
+}
+
 function assertOutcome(
   want: Want,
   instance: LinearImplementer | undefined,
@@ -897,6 +1059,8 @@ interface Want {
   released?: number[];
   instanceExists?: boolean;
   startedRuns?: number;
+  abortedRuns?: number;
+  sandboxRun?: { runState: SandboxRunState; costUsd: number | null };
   needsHumanReason?: string;
   pullRequestNumber?: number;
   verifierVerdict?: string;
@@ -911,6 +1075,14 @@ interface StateCase {
   arrange?: (instance: LinearImplementer) => void;
   want: Want;
   askStaysOpen?: boolean;
+}
+
+interface ClosingCase {
+  name: string;
+  from?: LinearImplementerState;
+  // The pool still holds an `in_flight` or `reporting` run, and has let go of a `lost` or `finished` one.
+  run?: 'in_flight' | 'reporting' | 'lost' | 'finished';
+  want: Want;
 }
 
 interface CommentCase {

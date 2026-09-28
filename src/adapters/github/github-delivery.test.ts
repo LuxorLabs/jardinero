@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import type { AppConfig } from '../../config.js';
 import { DEMO_LOG_REVIEW_TARGET, configWithLogReview } from '../../testing/config.js';
 import type { ScanTarget } from '../../orchestrator/state-machines/log-reviewer/events.js';
-import type { CommentData } from '../../orchestrator/state-machines/pr-maintainer/events.js';
+import type {
+  CommentData,
+  PullRequestRef,
+} from '../../orchestrator/state-machines/pr-maintainer/events.js';
 import type { Store } from '../../store/store.js';
 import { createTestStore } from '../../testing/store.js';
 import { AGENT_PR_COMMENT_MARKER } from '../../workflows/pr/pr-maintainer.js';
@@ -19,11 +22,13 @@ const PULL_REQUEST_NUMBER = 4688;
 let store: Store;
 let cleanup: () => void;
 let events: RecordedEvent[];
+let implementerEvents: RecordedEvent[];
 let scans: ScanTarget[];
 
 beforeEach(() => {
   ({ store, cleanup } = createTestStore());
   events = [];
+  implementerEvents = [];
   scans = [];
 });
 
@@ -82,13 +87,29 @@ describe('handleGitHubDelivery', () => {
       name: 'When the pull request closed merged then should report it merged',
       eventName: 'pull_request',
       payload: pullRequestPayload('closed', { merged: true }),
-      want: { event: 'onPrMerged' },
+      want: {
+        event: 'onPrMerged',
+        implementerEvents: ['linearImplementer.onPrMerged', 'fixImplementer.onPrMerged'],
+      },
     },
     {
       name: 'When the pull request closed unmerged then should report it closed',
       eventName: 'pull_request',
       payload: pullRequestPayload('closed', { merged: false }),
-      want: { event: 'onPrClosed' },
+      want: {
+        event: 'onPrClosed',
+        implementerEvents: ['linearImplementer.onPrClosed', 'fixImplementer.onPrClosed'],
+      },
+    },
+    {
+      name: 'When pull request maintenance is off and the pull request merged then should still report it merged',
+      eventName: 'pull_request',
+      payload: pullRequestPayload('closed', { merged: true }),
+      config: configWith({ prMaintainerEnabled: false }),
+      want: {
+        event: 'onPrMerged',
+        implementerEvents: ['linearImplementer.onPrMerged', 'fixImplementer.onPrMerged'],
+      },
     },
     {
       name: 'When the pull request action is another one then should report it ignored',
@@ -206,7 +227,7 @@ describe('handleGitHubDelivery', () => {
 
   for (const c of cases) {
     test(c.name, async () => {
-      const outcome = await handleGitHubDelivery(deps(), {
+      const outcome = await handleGitHubDelivery(deps(c.config), {
         eventName: c.eventName,
         payload: c.payload,
       });
@@ -214,8 +235,12 @@ describe('handleGitHubDelivery', () => {
       assert.equal(outcome.handled, c.want.event !== undefined);
       assert.equal(outcome.reason, c.want.reason);
       assert.equal(events.at(0)?.name, c.want.event);
-      if (c.want.event) {
-        assert.equal(events.at(0)?.ref.pullRequestNumber, PULL_REQUEST_NUMBER);
+      assert.deepEqual(
+        implementerEvents.map((event) => event.name),
+        c.want.implementerEvents ?? [],
+      );
+      for (const event of [...events, ...implementerEvents]) {
+        assert.equal(event.ref.pullRequestNumber, PULL_REQUEST_NUMBER);
       }
       if (c.want.headCommitSha !== undefined) {
         assert.equal(events.at(0)?.headCommitSha, c.want.headCommitSha);
@@ -335,7 +360,7 @@ describe('handleGitHubDelivery', () => {
     });
   }
 
-  // A disabled workflow must not be reached by its deliveries, whatever they say.
+  // A disabled workflow must not be reached by a delivery that could start work.
   const gateCases: GateCase[] = [
     {
       name: 'When pull request maintenance is off then should report a pull request ignored',
@@ -377,6 +402,7 @@ describe('handleGitHubDelivery', () => {
       assert.equal(outcome.handled, false);
       assert.equal(outcome.reason, testCase.wantReason);
       assert.deepEqual(events, []);
+      assert.deepEqual(implementerEvents, []);
       assert.deepEqual(scans, []);
     });
   }
@@ -590,6 +616,8 @@ function deps(config: AppConfig = CONFIG) {
     config,
     store,
     prMaintainer: recordingPrMaintainer(events),
+    linearImplementer: recordingImplementer('linearImplementer', implementerEvents),
+    fixImplementer: recordingImplementer('fixImplementer', implementerEvents),
     logReviewer: { onScheduledScan: recordScan },
   };
 }
@@ -687,6 +715,16 @@ function recordingPrMaintainer(recorded: RecordedEvent[]) {
   };
 }
 
+function recordingImplementer(machine: string, recorded: RecordedEvent[]) {
+  const record =
+    (name: string) =>
+    (ref: PullRequestRef): Promise<undefined> => {
+      recorded.push({ name: `${machine}.${name}`, ref });
+      return Promise.resolve(undefined);
+    };
+  return { onPrMerged: record('onPrMerged'), onPrClosed: record('onPrClosed') };
+}
+
 interface RecordedEvent {
   name: string;
   ref: { pullRequestNumber: number };
@@ -698,8 +736,10 @@ interface DeliveryCase {
   name: string;
   eventName: string;
   payload: Record<string, unknown>;
+  config?: AppConfig;
   want: {
     event?: string;
+    implementerEvents?: string[];
     reason?: string;
     headCommitSha?: string;
     checksAreRed?: boolean;

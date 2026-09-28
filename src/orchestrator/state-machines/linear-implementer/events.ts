@@ -1,5 +1,5 @@
 import type { LinearImplementer, VerifierVerdict } from '../../../store/types.js';
-import { consumeRequest, recordWorkflowInstanceOpened, type Lock } from '../execution.js';
+import { asError, consumeRequest, recordWorkflowInstanceOpened, type Lock } from '../execution.js';
 import { runLinearImplementerFSM, setState, UnsupportedStateError } from './engine.js';
 import type { PullRequestSnapshot } from '../pr-maintainer/service.js';
 import type { LinearImplementerStateEngine } from './service.js';
@@ -176,11 +176,13 @@ export async function onPrMerged(
   try {
     switch (instance.workflowState) {
       case 'li_pending':
-      case 'li_implementing':
-      case 'li_verifying':
       case 'li_needs_human':
       case 'li_waiting_pr':
         return setState(engine, instance, 'li_done');
+
+      case 'li_implementing':
+      case 'li_verifying':
+        return processPrClosingWhileWorking(engine, instance, 'li_done');
 
       // The ticket already ended; a late event about it changes nothing.
       case 'li_done':
@@ -206,11 +208,13 @@ export async function onPrClosed(
   try {
     switch (instance.workflowState) {
       case 'li_pending':
-      case 'li_implementing':
-      case 'li_verifying':
       case 'li_needs_human':
       case 'li_waiting_pr':
         return setState(engine, instance, 'li_abandoned');
+
+      case 'li_implementing':
+      case 'li_verifying':
+        return processPrClosingWhileWorking(engine, instance, 'li_abandoned');
 
       // The ticket already ended; a late event about it changes nothing.
       case 'li_done':
@@ -501,6 +505,34 @@ async function processVerdict(
   // are stored rather than only reported.
   instance.iterationNumber += 1;
   return setStateAndRun(engine, instance, 'li_implementing');
+}
+
+// processPrClosingWhileWorking stops the sandbox before writing the final state,
+// because the pull request ended while an agent was still working on the ticket.
+function processPrClosingWhileWorking(
+  engine: LinearImplementerStateEngine,
+  instance: LinearImplementer,
+  finalState: 'li_done' | 'li_abandoned',
+): Error | undefined {
+  let abortError: Error | undefined;
+  const sandboxRunId = instance.sandboxRunId;
+  if (sandboxRunId) {
+    try {
+      // The pool records how a run it holds ended, cost included, so only a run it
+      // lost is ours to close.
+      const runState = engine.store.getSandboxRun(sandboxRunId)?.runState;
+      if (engine.pool.isExecuting(sandboxRunId)) {
+        engine.pool.abort(sandboxRunId);
+      } else if (runState === 'pending' || runState === 'running') {
+        engine.store.finishSandboxRun(sandboxRunId, { runState: 'aborted' });
+      }
+      instance.sandboxRunId = null;
+    } catch (error) {
+      abortError = asError(error);
+    }
+  }
+  const writeError = setState(engine, instance, finalState);
+  return abortError ?? writeError;
 }
 
 // processSandboxRunWhileWorking finds out what became of the run. It may have finished

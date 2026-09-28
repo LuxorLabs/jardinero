@@ -79,7 +79,9 @@ export interface EngineCommandDeps {
   // command can do to a machine is visible here.
   engines: {
     prMaintainer: GitHubDeliveryDeps['prMaintainer'];
-    linearImplementer: LinearDeliveryDeps['linearImplementer'];
+    linearImplementer: LinearDeliveryDeps['linearImplementer'] &
+      GitHubDeliveryDeps['linearImplementer'];
+    fixImplementer: GitHubDeliveryDeps['fixImplementer'];
     logReviewer: GitHubDeliveryDeps['logReviewer'];
   };
   // Hands a ticket to Jardinero where tickets live, so no command has to start work itself.
@@ -97,7 +99,14 @@ export function createEngineCommands(deps: EngineCommandDeps): EngineCommands {
   return {
     deliverGitHubWebhook: (delivery) =>
       handleGitHubDelivery(
-        { config, store, prMaintainer: engines.prMaintainer, logReviewer: engines.logReviewer },
+        {
+          config,
+          store,
+          prMaintainer: engines.prMaintainer,
+          linearImplementer: engines.linearImplementer,
+          fixImplementer: engines.fixImplementer,
+          logReviewer: engines.logReviewer,
+        },
         delivery,
       ),
     deliverLinearWebhook: (delivery) =>

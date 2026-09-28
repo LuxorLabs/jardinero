@@ -17,6 +17,14 @@ import {
   type SandboxTaskFactory,
 } from './sandbox-pool.js';
 
+const FAILED_RESULT: WorkerResult = {
+  status: 'failed',
+  costUsd: null,
+  summary: 'boom',
+  error: 'boom',
+  openedPrUrl: 'https://github.com/acme/app/pull/7',
+};
+
 let store: Store;
 let cleanup: () => void;
 let runner: FakeRunner;
@@ -287,9 +295,9 @@ describe('SandboxPool run outcomes', () => {
       want: { runState: 'succeeded', costUsd: 1.5, reportedSucceeded: 1 },
     },
     {
-      name: 'When the agent failed then should record the run and report it failed',
-      result: { status: 'failed', costUsd: null, summary: 'boom', error: 'boom' },
-      want: { runState: 'failed', errorMessage: 'boom', reportedFailed: 1 },
+      name: 'When the agent failed then should record the run and report it failed with its result',
+      result: FAILED_RESULT,
+      want: { runState: 'failed', errorMessage: 'boom', reportedFailed: [FAILED_RESULT] },
     },
     {
       // An unknown cost is null and never zero, so a missing cost does not read
@@ -306,7 +314,11 @@ describe('SandboxPool run outcomes', () => {
     {
       name: 'When the runner threw then should record the run failed and report it',
       error: new Error('the sandbox blew up'),
-      want: { runState: 'failed', errorMessage: 'the sandbox blew up', reportedFailed: 1 },
+      want: {
+        runState: 'failed',
+        errorMessage: 'the sandbox blew up',
+        reportedFailed: [undefined],
+      },
     },
     {
       name: 'When the runner lost the run then should record it orphaned and report it',
@@ -314,7 +326,7 @@ describe('SandboxPool run outcomes', () => {
       want: {
         runState: 'orphaned',
         errorMessage: 'Fake sandbox session-1 is gone',
-        reportedFailed: 1,
+        reportedFailed: [undefined],
       },
     },
     {
@@ -355,7 +367,7 @@ describe('SandboxPool run outcomes', () => {
       assert.equal(stored?.costUsd, c.want.costUsd ?? null);
       assert.equal(stored?.errorMessage, c.want.errorMessage ?? null);
       assert.equal(reporter.succeeded.length, c.want.reportedSucceeded ?? 0);
-      assert.equal(reporter.failed.length, c.want.reportedFailed ?? 0);
+      assert.deepEqual(reporter.failed, c.want.reportedFailed ?? []);
       assert.equal(pool.isExecuting(sandboxRun.id), false);
     });
   }
@@ -654,7 +666,7 @@ class FakeRunner implements SandboxRunner {
 
 class FakeReporter implements SandboxRunOutcomeReporter {
   readonly succeeded: string[] = [];
-  readonly failed: string[] = [];
+  readonly failed: (WorkerResult | undefined)[] = [];
   throws = false;
 
   reportSucceeded(sandboxRunId: string): Promise<void> {
@@ -663,9 +675,9 @@ class FakeReporter implements SandboxRunOutcomeReporter {
     return Promise.resolve();
   }
 
-  reportFailed(sandboxRunId: string): Promise<void> {
+  reportFailed(_sandboxRunId: string, result?: WorkerResult): Promise<void> {
     if (this.throws) return Promise.reject(new Error('the machine refused it'));
-    this.failed.push(sandboxRunId);
+    this.failed.push(result);
     return Promise.resolve();
   }
 }
@@ -698,7 +710,7 @@ interface OutcomeCase {
     costUsd?: number;
     errorMessage?: string;
     reportedSucceeded?: number;
-    reportedFailed?: number;
+    reportedFailed?: (WorkerResult | undefined)[];
   };
 }
 

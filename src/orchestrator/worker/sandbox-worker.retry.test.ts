@@ -818,6 +818,13 @@ describe('a pass that declares no pull request', () => {
       codexExitCode: 0,
       want: { status: 'failed', error: 'side_effect_verification_failed', noPrReason: undefined },
     },
+    {
+      name: 'When a linear implementation reports a pull request in another repository then should fail without reporting it',
+      task: linearTask({}),
+      finalMessage: 'Opened https://github.com/attacker/example/pull/1',
+      codexExitCode: 0,
+      want: { status: 'failed', error: 'side_effect_verification_failed', noPrReason: undefined },
+    },
   ];
 
   for (const c of cases) {
@@ -835,6 +842,7 @@ describe('a pass that declares no pull request', () => {
         { status: result.status, error: result.error, noPrReason: result.noPrOutcome?.reason },
         c.want,
       );
+      assert.equal(result.openedPrUrl, undefined);
     });
   }
 });

@@ -44,7 +44,7 @@ export interface LinearImplementerStateEngineInterface {
   onPrMerged(ref: PullRequestRef): Promise<Error | undefined>;
   onPrClosed(ref: PullRequestRef): Promise<Error | undefined>;
   onSandboxRunSucceeded(sandboxRunId: string, outcome: RunOutcome): Promise<Error | undefined>;
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined>;
+  onSandboxRunFailed(sandboxRunId: string, outcome: RunOutcome): Promise<Error | undefined>;
   onOperatorRetry(linearImplementerId: string): Promise<Error | undefined>;
   onOperatorRetryVerification(linearImplementerId: string): Promise<Error | undefined>;
   onOperatorDismiss(linearImplementerId: string): Promise<Error | undefined>;
@@ -82,8 +82,8 @@ export class LinearImplementerStateEngine implements LinearImplementerStateEngin
     return onSandboxRunSucceeded(this, sandboxRunId, outcome);
   }
 
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined> {
-    return onSandboxRunFailed(this, sandboxRunId);
+  onSandboxRunFailed(sandboxRunId: string, outcome: RunOutcome): Promise<Error | undefined> {
+    return onSandboxRunFailed(this, sandboxRunId, outcome);
   }
 
   onOperatorRetry(linearImplementerId: string): Promise<Error | undefined> {

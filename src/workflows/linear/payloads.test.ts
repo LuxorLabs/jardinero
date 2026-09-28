@@ -16,6 +16,7 @@ describe('linearImplementerPayload', () => {
         linearSessionId: 'session-1',
         promptContext: '<issue identifier="JAR-58"/>',
         pullRequestNumber: 4166,
+        verifierVerdict: 'reject',
         verifierIssues: 'tests missing',
         iterationNumber: 1,
       },
@@ -29,6 +30,7 @@ describe('linearImplementerPayload', () => {
         linear_session_id: 'session-1',
         prompt_context: '<issue identifier="JAR-58"/>',
         pr_number: 4166,
+        verifier_verdict: 'reject',
         verifier_issues: ['tests missing'],
       },
     },
@@ -36,6 +38,7 @@ describe('linearImplementerPayload', () => {
       name: 'When the verifier rejected on several counts then should carry one entry per line',
       instance: {
         pullRequestNumber: 4166,
+        verifierVerdict: 'reject',
         verifierIssues: 'the projection is a no-op\n\nthe gate never ran',
         iterationNumber: 1,
       },
@@ -47,11 +50,12 @@ describe('linearImplementerPayload', () => {
         draft_pr: true,
         iteration: 1,
         pr_number: 4166,
+        verifier_verdict: 'reject',
         verifier_issues: ['the projection is a no-op', 'the gate never ran'],
       },
     },
     {
-      name: 'When only the pull request is known then should still carry it',
+      name: 'When only the pull request is known then should carry it without a verdict',
       instance: { pullRequestNumber: 4166, iterationNumber: 1 },
       want: {
         repo: REPOSITORY,

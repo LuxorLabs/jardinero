@@ -637,7 +637,7 @@ describe('verifySideEffects', () => {
       },
     },
     {
-      name: 'When an implementation pr lacks the run trailer then should return failed',
+      name: 'When an implementation pr head lacks the run trailer then should only warn',
       task: task('fix_implement'),
       workerResult: { openedPrUrl: PR_URL },
       githubToken: 'token',
@@ -646,13 +646,13 @@ describe('verifySideEffects', () => {
         [COMMIT_API]: { commit: { message: '[agent] fix issue' } },
       },
       want: {
-        status: 'failed',
+        status: 'warning',
         openedPrUrl: PR_URL,
-        checks: [{ name: 'agent_commit_trailer', status: 'failed' }],
+        checks: [{ name: 'agent_commit_trailer', status: 'warning' }],
       },
     },
     {
-      name: 'When the commit message is not a string then should fail the trailer check',
+      name: 'When the commit message is not a string then should warn on the trailer check',
       task: task('fix_implement'),
       workerResult: { openedPrUrl: PR_URL },
       githubToken: 'token',
@@ -661,19 +661,19 @@ describe('verifySideEffects', () => {
         [COMMIT_API]: { commit: { message: { text: RUN_TRAILER } } },
       },
       want: {
-        status: 'failed',
+        status: 'warning',
         openedPrUrl: PR_URL,
         checks: [
           {
             name: 'agent_commit_trailer',
-            status: 'failed',
+            status: 'warning',
             detail: /does not include this run trailer/,
           },
         ],
       },
     },
     {
-      name: 'When a corrective run pr carries another run trailer then should fail the trailer check',
+      name: 'When a corrective run pr head carries another run trailer then should only warn',
       task: task('linear', {
         role: 'implement',
         branch: 'agent/linear-JAR-53-abc123',
@@ -689,9 +689,9 @@ describe('verifySideEffects', () => {
         [COMMIT_API]: { commit: { message: '[agent] earlier work\n\nAgent-Run-Id: other-run' } },
       },
       want: {
-        status: 'failed',
+        status: 'warning',
         openedPrUrl: 'https://github.com/acme/web.app/pull/53',
-        checks: [{ name: 'agent_commit_trailer', status: 'failed' }],
+        checks: [{ name: 'agent_commit_trailer', status: 'warning' }],
       },
     },
     {

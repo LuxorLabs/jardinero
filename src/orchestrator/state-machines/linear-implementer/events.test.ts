@@ -496,6 +496,29 @@ describe('onSandboxRunFailed', () => {
       want: { state: 'li_implementing', startedRuns: 1, iterationNumber: 1 },
     },
     {
+      name: 'When an implementer run failed after opening its pull request then should continue that pull request',
+      from: 'li_implementing',
+      outcome: { pullRequestNumber: 4700 },
+      want: {
+        state: 'li_implementing',
+        startedRuns: 1,
+        iterationNumber: 1,
+        pullRequestNumber: 4700,
+      },
+    },
+    {
+      name: 'When a continuing implementer run failed without reporting it then should keep the pull request it continues',
+      from: 'li_implementing',
+      withPullRequest: true,
+      outcome: {},
+      want: {
+        state: 'li_implementing',
+        startedRuns: 1,
+        iterationNumber: 1,
+        pullRequestNumber: PULL_REQUEST_NUMBER,
+      },
+    },
+    {
       name: 'When the first verifier run died then should verify again',
       from: 'li_verifying',
       want: { state: 'li_verifying', startedRuns: 1, iterationNumber: 1 },
@@ -528,11 +551,13 @@ describe('onSandboxRunFailed', () => {
 
   for (const c of cases) {
     test(c.name, async () => {
-      const instance = openInstanceIn(c.from);
+      const instance = c.withPullRequest
+        ? openInstanceWithPullRequest(c.from)
+        : openInstanceIn(c.from);
       c.arrange?.(instance);
       const runId = attachRun(instance, c);
 
-      const error = await onSandboxRunFailed(engine, runId);
+      const error = await onSandboxRunFailed(engine, runId, c.outcome ?? {});
 
       assertOutcome(c.want, instance, error);
     });

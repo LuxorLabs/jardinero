@@ -56,7 +56,7 @@ export class SandboxRunLostError extends Error {
 // pool never learns which machines exist.
 export interface SandboxRunOutcomeReporter {
   reportSucceeded(sandboxRunId: string, result: WorkerResult): Promise<void>;
-  reportFailed(sandboxRunId: string): Promise<void>;
+  reportFailed(sandboxRunId: string, result?: WorkerResult): Promise<void>;
 }
 
 export interface SandboxPoolConfig {
@@ -247,7 +247,7 @@ export class SandboxPool implements SandboxPoolInterface {
       });
       // An aborted run is one nobody is waiting on any more, so telling the
       // machine would move an instance that already moved on.
-      if (!signal.aborted) await this.report(sandboxRun.id, undefined);
+      if (!signal.aborted) await this.report(sandboxRun.id, false);
     } finally {
       this.executing.delete(sandboxRun.id);
       this.workflowByRunId.delete(sandboxRun.id);
@@ -283,15 +283,19 @@ export class SandboxPool implements SandboxPoolInterface {
     if (result.status === 'aborted') return;
     // Report a skipped run as an answer: the agent decided no pull request was warranted.
     const answered = result.status === 'succeeded' || result.status === 'skipped';
-    await this.report(sandboxRun.id, answered ? result : undefined);
+    await this.report(sandboxRun.id, answered, result);
   }
 
   // Reports the outcome to the owning machine, swallowing a failure there: the
   // run is already recorded, and the periodic check picks the instance up.
-  private async report(sandboxRunId: string, result: WorkerResult | undefined): Promise<void> {
+  private async report(
+    sandboxRunId: string,
+    answered: boolean,
+    result?: WorkerResult,
+  ): Promise<void> {
     try {
-      if (result) await this.reporter.reportSucceeded(sandboxRunId, result);
-      else await this.reporter.reportFailed(sandboxRunId);
+      if (answered && result) await this.reporter.reportSucceeded(sandboxRunId, result);
+      else await this.reporter.reportFailed(sandboxRunId, result);
     } catch (error) {
       this.log.error('reporting the outcome failed', {
         sandbox_run_id: sandboxRunId,

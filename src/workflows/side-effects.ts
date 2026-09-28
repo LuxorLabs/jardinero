@@ -254,7 +254,7 @@ export async function verifySideEffects(
 
   checks.push({
     name: 'agent_commit_trailer',
-    status: hasTrailer ? 'verified' : implementationRun ? 'failed' : 'warning',
+    status: hasTrailer ? 'verified' : 'warning',
     detail: hasTrailer
       ? 'Head commit includes Agent-Run-Id trailer.'
       : 'Head commit does not include this run trailer.',

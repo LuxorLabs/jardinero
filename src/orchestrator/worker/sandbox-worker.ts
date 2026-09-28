@@ -559,6 +559,8 @@ export class SandboxWorkerRunner implements SandboxRunner {
     throw new Error(`${provider.name} sandbox was not created.`);
   }
 
+  // attachSession reopens the run's sandbox, trying again on the transient failures a
+  // create survives.
   private async attachSession(
     context: SandboxRunContext,
     createOptions: Record<string, unknown>,
@@ -566,13 +568,28 @@ export class SandboxWorkerRunner implements SandboxRunner {
   ): Promise<SandboxSession> {
     const sessionId = context.sandboxRun.sandboxSessionId;
     if (!sessionId) throw new SandboxRunLostError('the run never reached a sandbox');
-    const session = await this.provider.attach(sessionId, createOptions, context.signal);
-    if (!session) {
-      throw new SandboxRunLostError(`${this.provider.name} sandbox ${sessionId} is gone`);
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        const session = await this.provider.attach(sessionId, createOptions, context.signal);
+        if (!session) {
+          throw new SandboxRunLostError(`${this.provider.name} sandbox ${sessionId} is gone`);
+        }
+        trackSession(session);
+        await this.provider.waitReady(session, context.signal);
+        return session;
+      } catch (error) {
+        if (
+          context.signal.aborted ||
+          !retryableSandboxSessionStartReason(error) ||
+          attempt >= this.config.worker.maxSandboxReadyAttempts
+        ) {
+          throw error;
+        }
+        await delay(this.sandboxReadyRetryDelayMs(attempt), undefined, {
+          signal: context.signal,
+        });
+      }
     }
-    trackSession(session);
-    await this.provider.waitReady(session, context.signal);
-    return session;
   }
 
   private createOptions(context: SandboxRunContext): Record<string, unknown> {

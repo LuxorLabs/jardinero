@@ -1057,7 +1057,8 @@ describe('SandboxWorkerRunner.resume', () => {
   const cases: Array<{
     name: string;
     sandboxSessionId: string | null;
-    attach?: (sessionId: string) => Promise<FakeSession | undefined>;
+    attach?: (session: FakeSession, attempt: number) => Promise<FakeSession | undefined>;
+    aborted?: boolean;
     session: FakeSessionOptions;
     want: {
       outcome: RunOutcome;
@@ -1086,6 +1087,62 @@ describe('SandboxWorkerRunner.resume', () => {
       session: {},
       want: {
         outcome: { rejected: 'SandboxRunLostError: Fake sandbox only is gone' },
+        resumed: false,
+        started: [],
+        terminated: false,
+        tail: undefined,
+      },
+    },
+    {
+      name: 'When reopening the sandbox fails for a moment then should try again and follow it',
+      sandboxSessionId: 'only',
+      attach: async (session, attempt) => {
+        if (attempt === 1) throw new Error('read ECONNRESET');
+        return session;
+      },
+      session: { runningCodex: { model: 'gpt-6-sol', exitCode: 0 } },
+      want: {
+        outcome: { status: 'succeeded' },
+        resumed: true,
+        started: [],
+        terminated: true,
+        tail: undefined,
+      },
+    },
+    {
+      name: 'When reopening the sandbox fails for a reason no retry fixes then should fail the run',
+      sandboxSessionId: 'only',
+      attach: () => Promise.reject(new Error('permission denied')),
+      session: {},
+      want: {
+        outcome: { rejected: 'Error: permission denied' },
+        resumed: false,
+        started: [],
+        terminated: false,
+        tail: undefined,
+      },
+    },
+    {
+      name: 'When the run is aborted while reopening the sandbox then should not try again',
+      sandboxSessionId: 'only',
+      attach: () => Promise.reject(new Error('read ECONNRESET')),
+      aborted: true,
+      session: {},
+      want: {
+        outcome: { rejected: 'Error: read ECONNRESET' },
+        resumed: false,
+        started: [],
+        terminated: false,
+        tail: undefined,
+      },
+    },
+    {
+      name: 'When reopening the sandbox keeps failing for a moment then should give up after the last attempt',
+      sandboxSessionId: 'only',
+      attach: () => Promise.reject(new Error('read ECONNRESET')),
+      session: {},
+      want: {
+        outcome: { rejected: 'Error: read ECONNRESET' },
         resumed: false,
         started: [],
         terminated: false,
@@ -1148,8 +1205,12 @@ describe('SandboxWorkerRunner.resume', () => {
       const events: Array<{ type: string; data?: Record<string, unknown>; message?: string }> = [];
       const artifacts: Array<{ name: string; content: string }> = [];
       const session = fakeSession('only', operations, { ...c.session, readFileContent: handoffs });
+      let attempts = 0;
       const runner = fakeRunner([], operations, {
-        attach: c.attach ?? (async () => session),
+        attach: async () => {
+          attempts += 1;
+          return c.attach ? c.attach(session, attempts) : session;
+        },
         config: (config) => {
           config.mcp.grafana.enabled = false;
         },
@@ -1167,8 +1228,11 @@ describe('SandboxWorkerRunner.resume', () => {
         startedAt: Date.now(),
       };
 
+      const controller = new AbortController();
+      if (c.aborted) controller.abort();
+
       const outcome = await runOutcome(
-        runner.resume(fakeContext(events, new AbortController(), task, sandboxRun, artifacts)),
+        runner.resume(fakeContext(events, controller, task, sandboxRun, artifacts)),
       );
 
       assert.deepEqual(

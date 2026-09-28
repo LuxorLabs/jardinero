@@ -469,6 +469,12 @@ function processSandboxRunWhileWorking(
       instance.needsHumanReason = 'outcome_lost';
       return setState(engine, instance, 'fi_needs_human');
 
+    case 'aborted':
+      // Someone stopped the run on purpose, so the finding is not taken again.
+      instance.sandboxRunId = null;
+      instance.needsHumanReason = 'run_killed';
+      return setState(engine, instance, 'fi_needs_human');
+
     default:
       instance.sandboxRunId = null;
       instance.needsHumanReason = 'run_failed';

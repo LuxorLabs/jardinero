@@ -62,7 +62,7 @@ state "RELEASED — PrMaintainer maintains the PR" as released <<Package>> {
 Pending -r-> Implementing: handleStateFiPending\nOnPeriodicCheck(dispatch owed)\nOnSystemRecovery(dispatch owed)
 Implementing -r-> Verifying: OnSandboxRunSucceeded(draft PR opened)
 Implementing -d-> Discarded: OnSandboxRunSucceeded(no PR, reason)
-Implementing -[#Red]-> NeedsHuman: OnSandboxRunFailed\nOnPeriodicCheck(run lost)\nOnSystemRecovery(run lost)
+Implementing -[#Red]-> NeedsHuman: OnSandboxRunFailed\nOnPeriodicCheck(run lost)\nOnSystemRecovery(run lost)\nOnPeriodicCheck(run killed)\nOnSystemRecovery(run killed)
 
 NeedsHuman -u-> Implementing: OnOperatorRetry
 NeedsHuman -d-> Dismissed: OnOperatorDismiss

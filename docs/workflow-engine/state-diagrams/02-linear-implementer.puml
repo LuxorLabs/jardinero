@@ -58,14 +58,14 @@ Pending -r-> Implementing: handleStateLiPending\nOnPeriodicCheck(dispatch owed)\
 Implementing --r-> Verifying: OnSandboxRunSucceeded(draft PR opened)
 
 Implementing -d-> Implementing: OnSandboxRunFailed\nOnPeriodicCheck(run lost)\nOnSystemRecovery(run lost)\n\n\n\n\n\n
-Implementing -u[#Red]-> NeedsHuman: handleStateLiImplementing(no iterations left)\nOnSandboxRunSucceeded(no PR)
+Implementing -u[#Red]-> NeedsHuman: handleStateLiImplementing(no iterations left)\nOnSandboxRunSucceeded(no PR)\nOnPeriodicCheck(run killed)\nOnSystemRecovery(run killed)
 
 NeedsHuman -d-> Implementing: OnOperatorRetry\nOnIssueAssigned\nOnIssueCommented
 NeedsHuman -r-> Dismissed: OnOperatorDismiss
 
 Verifying -l-> Implementing: OnSandboxRunSucceeded(reject, iterations left)
 Verifying -u-> Verifying: OnSandboxRunSucceeded(no verdict)\nOnSandboxRunFailed\nOnPeriodicCheck(run lost)\nOnSystemRecovery(run lost)
-Verifying -u[#Red]-> NeedsHuman: handleStateLiVerifying(no iterations left)\nOnSandboxRunSucceeded(accept, release failed)\nOnPeriodicCheck(outcome lost)
+Verifying -u[#Red]-> NeedsHuman: handleStateLiVerifying(no iterations left)\nOnSandboxRunSucceeded(accept, release failed)\nOnPeriodicCheck(outcome lost)\nOnPeriodicCheck(run killed)\nOnSystemRecovery(run killed)
 
 Verifying --d-> WaitingPr: OnSandboxRunSucceeded(accept, released)
 WaitingPr -d-> Done: OnPrMerged\nOnPeriodicCheck(PR merged)

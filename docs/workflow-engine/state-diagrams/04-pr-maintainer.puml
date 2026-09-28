@@ -28,7 +28,7 @@ state "prm_waiting" as Waiting
     Waiting: - waiting for the world to move
 
 state "prm_attempts_exhausted" as Exhausted <<Error>>
-    Exhausted: - we tried and could not fix it
+    Exhausted: - we tried and could not fix it, or a person killed the run
     Exhausted: - OPEN: only a person restarts it
     Exhausted: - PR checked hourly until merged or closed
 
@@ -61,7 +61,7 @@ Working -r-> Waiting: OnSandboxRunSucceeded\nOnPeriodicCheck(run finished)\nOnSy
 Pending -[#Red]-> Exhausted: handleStatePrmPending(max attempts)
 
 Working -l-> Pending: OnSandboxRunFailed(attempts left)\nOnPeriodicCheck(run died)\nOnSystemRecovery(run died)
-Working -[#Red]-> Exhausted: OnSandboxRunFailed(max attempts)
+Working -[#Red]-> Exhausted: OnSandboxRunFailed(max attempts)\nOnPeriodicCheck(run killed)\nOnSystemRecovery(run killed)
 
 Waiting -l-> Pending: OnPrComment\nOnPrCICompleted(red)\nOnPrSynchronize\nOnPeriodicCheck(work to do)\nhandleStatePrmWaiting(request pending)
 

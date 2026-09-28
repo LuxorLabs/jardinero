@@ -1033,6 +1033,12 @@ describe('onPeriodicCheck', () => {
       want: { state: 'prm_working', checked: true },
     },
     {
+      name: 'When the run died with the process then should dispatch again',
+      from: 'prm_working',
+      attachLostRun: true,
+      want: { state: 'prm_working', startedRuns: 1, attemptCount: 1, checked: true },
+    },
+    {
       name: 'When the run finished without telling us then should move it to waiting',
       from: 'prm_working',
       attachFinishedRun: 'succeeded',
@@ -1046,9 +1052,19 @@ describe('onPeriodicCheck', () => {
       want: { state: 'prm_working', checked: true },
     },
     {
-      name: 'When the run died with the process then should dispatch again',
+      name: 'When the run was killed then should ask a person instead of dispatching again',
       from: 'prm_working',
-      attachLostRun: true,
+      attachFinishedRun: 'aborted',
+      want: {
+        state: 'prm_attempts_exhausted',
+        needsHumanReason: 'run_killed',
+        checked: true,
+      },
+    },
+    {
+      name: 'When the run failed without telling us then should dispatch again',
+      from: 'prm_working',
+      attachFinishedRun: 'failed',
       want: { state: 'prm_working', startedRuns: 1, attemptCount: 1, checked: true },
     },
     {
@@ -1536,7 +1552,7 @@ interface PeriodicCase {
   unknownInstance?: boolean;
   attachLiveRun?: boolean;
   attachLostRun?: boolean;
-  attachFinishedRun?: 'succeeded' | 'failed';
+  attachFinishedRun?: 'succeeded' | 'failed' | 'aborted';
   keepInPool?: boolean;
   snapshot?: Partial<FakeGitHub['snapshot']>;
   arrange?: (instance: PrMaintainer) => void;

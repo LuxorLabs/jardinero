@@ -42,7 +42,7 @@ Reads:
 
 Writes, all of them audited as `operator.dashboard_write_requested` with the proxy identity when it is present:
 
-- `POST /dashboard/api/sandbox-runs/{id}/kill` — abort a sandbox that is executing; `409` when it is not.
+- `POST /dashboard/api/sandbox-runs/{id}/kill` — abort a sandbox that is executing and stop its workflow. `409` when it is not executing.
 - `POST /dashboard/api/workflow-instances/{workflowType}/{id}/retry` — hand an instance waiting for a person back to its workflow.
 - `POST /dashboard/api/agents/instructions` and `.../instructions/delete` — save or drop guidance. Both need `confirmed: true` and, on an entry that already exists, its current `revision` (`409` on mismatch).
 

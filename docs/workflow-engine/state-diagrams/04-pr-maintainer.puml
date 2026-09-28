@@ -29,7 +29,8 @@ state "prm_waiting" as Waiting
 
 state "prm_attempts_exhausted" as Exhausted <<Error>>
     Exhausted: - we tried and could not fix it
-    Exhausted: - OPEN: only a person moves it
+    Exhausted: - OPEN: only a person restarts it
+    Exhausted: - PR checked hourly until merged or closed
 
 state "prm_dismissed" as Dismissed <<Final>>
     Dismissed: - a person stopped it; the PR is still open

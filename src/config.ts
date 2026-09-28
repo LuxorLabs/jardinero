@@ -310,6 +310,7 @@ const DEFAULT_PR_MAINTAINER_CHECK_WAIT_MS: Partial<Record<PrMaintainerState, num
   prm_pending: 60_000,
   prm_working: 120_000,
   prm_waiting: 300_000,
+  prm_attempts_exhausted: 3_600_000,
 };
 
 const DEFAULT_LOG_REVIEWER_CHECK_WAIT_MS: Partial<Record<LogReviewerState, number>> = {

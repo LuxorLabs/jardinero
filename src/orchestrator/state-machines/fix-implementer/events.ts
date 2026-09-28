@@ -547,8 +547,8 @@ async function releasePullRequest(
   return engine.github.markReadyForReview(repository.fullName, instance.pullRequestNumber);
 }
 
-// readPullRequestWhileWaiting reads how the fix's pull request stands, since no webhook
-// reaches this machine.
+// readPullRequestWhileWaiting reads how the fix's pull request stands, for when the
+// webhook never arrived.
 async function readPullRequestWhileWaiting(
   engine: FixImplementerStateEngine,
   instance: FixImplementer,

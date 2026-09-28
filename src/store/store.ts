@@ -384,11 +384,14 @@ export class Store {
     this.db.close();
   }
 
+  // initializeAfterBoot orphans the runs a dead process left in flight, except those
+  // running in a sandbox, which the pool tries to resume.
   initializeAfterBoot(): void {
     const result = this.db
       .prepare(
         `UPDATE sandbox_run SET run_state = 'orphaned', ended_at = ?, error_message = ?
-         WHERE run_state IN ('pending', 'running')`,
+         WHERE run_state = 'pending'
+            OR (run_state = 'running' AND sandbox_session_id IS NULL)`,
       )
       .run(nowMs(), 'orchestrator restarted while run was in flight');
     if (result.changes > 0) {
@@ -1461,6 +1464,13 @@ export class Store {
       : (this.db
           .prepare('SELECT * FROM sandbox_run ORDER BY started_at DESC LIMIT ?')
           .all(limit) as Row[]);
+    return rows.map(toRun);
+  }
+
+  listRunningSandboxRuns(): SandboxRun[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM sandbox_run WHERE run_state = 'running' ORDER BY started_at ASC`)
+      .all() as Row[];
     return rows.map(toRun);
   }
 

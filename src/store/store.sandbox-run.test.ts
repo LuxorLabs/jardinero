@@ -196,6 +196,59 @@ describe('Store.listSandboxRuns', () => {
   });
 });
 
+describe('Store.listRunningSandboxRuns', () => {
+  const cases: Array<{
+    name: string;
+    runs: Array<{ runState: 'pending' | 'running' | 'succeeded'; startedAt: number }>;
+    want: number[];
+  }> = [
+    {
+      name: 'When a run is running then should list it',
+      runs: [{ runState: 'running', startedAt: 1 }],
+      want: [0],
+    },
+    {
+      name: 'When a run is still pending then should leave it out',
+      runs: [{ runState: 'pending', startedAt: 1 }],
+      want: [],
+    },
+    {
+      name: 'When a run finished then should leave it out',
+      runs: [{ runState: 'succeeded', startedAt: 1 }],
+      want: [],
+    },
+    {
+      name: 'When several runs are running then should list the oldest first',
+      runs: [
+        { runState: 'running', startedAt: 2 },
+        { runState: 'running', startedAt: 1 },
+      ],
+      want: [1, 0],
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      const ids = testCase.runs.map((fields) => {
+        const run = start();
+        if (fields.runState === 'running') store.markSandboxRunRunning(run.id, 'session-1');
+        if (fields.runState === 'succeeded') {
+          store.finishSandboxRun(run.id, { runState: 'succeeded' });
+        }
+        store.db
+          .prepare('UPDATE sandbox_run SET started_at = ? WHERE id = ?')
+          .run(fields.startedAt, run.id);
+        return run.id;
+      });
+
+      assert.deepEqual(
+        store.listRunningSandboxRuns().map((run) => run.id),
+        testCase.want.map((index) => ids[index]),
+      );
+    });
+  }
+});
+
 describe('Store.countRunningSandboxRuns', () => {
   // Concurrency is capped on what is in flight, and a queued run holds a slot as
   // much as a started one.
@@ -265,7 +318,12 @@ describe('Store.listSandboxRunsForInstance', () => {
 });
 
 describe('Store.initializeAfterBoot', () => {
-  const cases: Array<{ name: string; runState: SandboxRunState; wantOrphaned: boolean }> = [
+  const cases: Array<{
+    name: string;
+    runState: SandboxRunState;
+    sandboxSessionId?: string;
+    wantOrphaned: boolean;
+  }> = [
     {
       name: 'When a run was still pending then should orphan it',
       runState: 'pending',
@@ -274,9 +332,15 @@ describe('Store.initializeAfterBoot', () => {
     {
       // Nothing will ever report on a run whose process is gone, so the machine
       // waiting on it would wait forever.
-      name: 'When a run was still running then should orphan it',
+      name: 'When a run was running before it reached a sandbox then should orphan it',
       runState: 'running',
       wantOrphaned: true,
+    },
+    {
+      name: 'When a run was running in a sandbox then should leave it for the pool to resume',
+      runState: 'running',
+      sandboxSessionId: 'session-1',
+      wantOrphaned: false,
     },
     {
       name: 'When a run already succeeded then should leave it alone',
@@ -293,7 +357,9 @@ describe('Store.initializeAfterBoot', () => {
   for (const testCase of cases) {
     test(testCase.name, () => {
       const run = start();
-      if (testCase.runState === 'running') store.markSandboxRunRunning(run.id);
+      if (testCase.runState === 'running') {
+        store.markSandboxRunRunning(run.id, testCase.sandboxSessionId);
+      }
       if (testCase.runState === 'succeeded' || testCase.runState === 'failed') {
         store.finishSandboxRun(run.id, { runState: testCase.runState });
       }

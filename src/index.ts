@@ -73,8 +73,8 @@ for (const gap of validateRepoConfig(config)) {
 
 // Fail fast on fatal errors, matching Node's default behavior, but log the full
 // stack first so the cause is visible in the terminal before the supervisor
-// restarts the orchestrator. In-flight runs are reconciled on the next boot
-// (running -> orphaned) by Store.initializeAfterBoot.
+// restarts the orchestrator. In-flight runs are reconciled on the next boot by
+// Store.initializeAfterBoot and the pool's resume.
 process.on('unhandledRejection', (reason) => {
   const error = reason instanceof Error ? reason : new Error(String(reason));
   log.error('unhandled promise rejection, exiting', { error: error.stack ?? error.message });

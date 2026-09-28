@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { loadConfig } from '../../config.js';
-import { SandboxWorkerRunner } from './sandbox-worker.js';
+import { SandboxWorkerRunner, buildDetachedCodexCommand } from './sandbox-worker.js';
 import type { SandboxRun } from '../../store/types.js';
 import type { SandboxRunContext } from '../sandbox-pool.js';
 import type { SandboxProvider, Workflow } from '../../types.js';
@@ -84,6 +84,26 @@ describe('codexCommand', () => {
   }
 });
 
+describe('buildDetachedCodexCommand', () => {
+  test('When Codex is started then should run it in its own session with its output and exit code in files', () => {
+    const command = buildDetachedCodexCommand({
+      codexCommand: "'codex' exec --json - < '/ws/context/prompt.txt'",
+      contextDir: '/ws/context',
+      model: 'gpt-6-sol',
+    });
+
+    assert.equal(
+      command,
+      [
+        "command -v setsid >/dev/null 2>&1 || { echo 'the worker image must provide setsid' >&2; exit 1; }",
+        "rm -f '/ws/context/codex-stdout.log' '/ws/context/codex-stderr.log' '/ws/context/codex-exit-code.txt' '/ws/context/codex-model.txt'",
+        String.raw`nohup setsid sh -c ''\''codex'\'' exec --json - < '\''/ws/context/prompt.txt'\'' > '\''/ws/context/codex-stdout.log'\'' 2> '\''/ws/context/codex-stderr.log'\''; echo $? > '\''/ws/context/codex-exit-code.txt'\''' < /dev/null > /dev/null 2>&1 &`,
+        "printf '%s' 'gpt-6-sol' > '/ws/context/codex-model.txt'",
+      ].join('\n'),
+    );
+  });
+});
+
 // codexCommand is private; it composes the `codex exec` invocation, so we probe it
 // directly rather than driving a full sandboxed run.
 type CommandProbe = { codexCommand(context: SandboxRunContext): string };
@@ -106,6 +126,7 @@ function makeContext(workflow: Workflow, payload: Record<string, unknown>): Sand
     task: { workflow, payload, promptOverrides: {} },
     maxWallClockMs: 60_000,
     signal: new AbortController().signal,
+    isStopping: () => false,
     publishEvent: async () => {},
     writeSandboxRunArtifact: async () => 'artifact',
   };
@@ -117,6 +138,9 @@ function stubProvider(): SandboxProvider {
     name: 'Stub',
     apiTarget: 'stub.invalid',
     create: async () => {
+      throw new Error('not used');
+    },
+    attach: async () => {
       throw new Error('not used');
     },
     waitReady: async () => {},

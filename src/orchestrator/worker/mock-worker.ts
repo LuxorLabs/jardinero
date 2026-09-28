@@ -2,7 +2,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { buildWorkerPrompt } from '../../workflows/prompts.js';
 import type { WorkerResult } from '../../types.js';
-import type { SandboxRunContext, SandboxRunner } from '../sandbox-pool.js';
+import {
+  type SandboxRunContext,
+  type SandboxRunner,
+  SandboxRunLostError,
+} from '../sandbox-pool.js';
 
 export class MockWorkerRunner implements SandboxRunner {
   async run(context: SandboxRunContext): Promise<WorkerResult> {
@@ -195,5 +199,9 @@ export class MockWorkerRunner implements SandboxRunner {
       summary: 'Mock linear verification completed.',
       linearVerification,
     };
+  }
+
+  async resume(_context: SandboxRunContext): Promise<WorkerResult> {
+    throw new SandboxRunLostError('the mock runner keeps no sandbox to resume');
   }
 }

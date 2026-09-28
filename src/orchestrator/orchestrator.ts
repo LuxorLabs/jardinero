@@ -135,6 +135,8 @@ export class Orchestrator implements WorkflowEngines {
   // start recovers whatever the last process left open and then starts the clock.
   // Called once, after every transport is built and before any can be reached.
   async start(): Promise<void> {
+    // Resume before recovery, so no machine reads a run still working in its sandbox as lost.
+    this.pool.resumeSandboxRunsAfterBoot();
     await recoverOpenInstancesAfterBoot(this.store, this);
     this.timer.start();
   }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { DEFAULT_BASE_URL, type Vm } from 'freestyle';
+import { DEFAULT_BASE_URL, FreestyleApiError, type Vm, type VmData } from 'freestyle';
 
 import { loadConfig, type AppConfig } from '../../config.js';
 import { WORKER_USER } from './sandbox-utils.js';
@@ -20,7 +20,7 @@ describe('FreestyleWorkerRunner', () => {
   });
 
   test('When a run finishes then should drive it on a Freestyle VM and delete it', async () => {
-    const fake = fakeVm({ streamedStdout: '{"type":"turn.completed"}\n' });
+    const fake = fakeVm();
     const config = freestyleConfig();
     // api_key keeps Codex auth off the host's ~/.codex, which a unit test has no
     // business reading.
@@ -189,6 +189,49 @@ describe('FreestyleSandboxProvider.apiTarget', () => {
       const provider = new FreestyleSandboxProvider(freestyleConfig(), env);
 
       assert.equal(provider.apiTarget, testCase.want);
+    });
+  }
+});
+
+describe('FreestyleSandboxProvider.attach', () => {
+  const cases = [
+    {
+      name: 'When the VM still exists then should reopen it',
+      vmId: 'vm-1',
+      aborted: false,
+      want: { outcome: 'vm-1' },
+    },
+    {
+      name: 'When the VM is gone then should answer nothing',
+      vmId: 'vm-gone',
+      aborted: false,
+      want: { outcome: undefined },
+    },
+    {
+      name: 'When the provider cannot answer then should return error',
+      vmId: 'vm-broken',
+      aborted: false,
+      want: { outcome: 'FreestyleApiError: try again later' },
+    },
+    {
+      name: 'When the signal is aborted then should return error',
+      vmId: 'vm-1',
+      aborted: true,
+      want: { outcome: 'Error: Run aborted.' },
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, async () => {
+      const provider = providerWith(fakeVm());
+      const controller = new AbortController();
+      if (testCase.aborted) controller.abort();
+
+      const outcome = await provider
+        .attach(testCase.vmId, {}, controller.signal)
+        .then((session) => session?.id, String);
+
+      assert.deepEqual({ outcome }, testCase.want);
     });
   }
 });
@@ -532,6 +575,7 @@ function providerWith(fake: FakeVm, onCreate: () => void = () => undefined) {
     {
       createClient: () => ({
         vms: {
+          ...fakeClient(fake).vms,
           create: async () => {
             onCreate();
             return {
@@ -667,6 +711,9 @@ function fakeVm(options: FakeVmOptions = {}): FakeVm {
       // Only the session's own exec runs as the worker user; the root-level prepare
       // and chown commands have to keep succeeding whatever the case scripts.
       const isSessionExec = linuxUser === WORKER_USER;
+      if (isSessionExec && command.includes('codex-exit-code.txt') && !command.includes('nohup')) {
+        return { stdout: '0\n', stderr: '', statusCode: 0 };
+      }
       // A null status is a real value here; the provider uses it for a timeout.
       const statusCode = isSessionExec
         ? options.execStatusCode === undefined
@@ -695,6 +742,16 @@ function fakeClient(fake: FakeVm) {
         vmId: 'vm-1',
         data: { resources: fakeResources.get(fake) ?? { cpu: 4, memory: 8192 } },
       }),
+      get: async (vmId: string) => {
+        if (vmId === 'vm-broken') {
+          throw new FreestyleApiError(503, { code: 'UNAVAILABLE', message: 'try again later' });
+        }
+        if (vmId !== 'vm-1') {
+          throw new FreestyleApiError(404, { code: 'NOT_FOUND', message: `no VM ${vmId}` });
+        }
+        return { id: vmId } as unknown as VmData;
+      },
+      ref: () => fake,
     },
   };
 }
@@ -717,6 +774,7 @@ function fakeContext(events: string[]): SandboxRunContext {
     task: { workflow: 'pr_maintain', payload: {}, promptOverrides: {} },
     maxWallClockMs: 60_000,
     signal: new AbortController().signal,
+    isStopping: () => false,
     publishEvent: async (event) => {
       events.push(event.type);
     },

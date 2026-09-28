@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { LineBuffer, codexEventDetail, isCodexMilestone } from './sandbox-worker.js';
+import {
+  CodexOutputFile,
+  LineBuffer,
+  codexEventDetail,
+  isCodexMilestone,
+  parseCodexExitCode,
+} from './sandbox-worker.js';
 
 const encoder = new TextEncoder();
 
@@ -45,6 +51,57 @@ describe('LineBuffer', () => {
     // the oversized in-progress line is discarded, so the next complete line survives
     assert.deepEqual(buffer.push(encoder.encode('ok\n'), false), ['ok']);
   });
+});
+
+describe('parseCodexExitCode', () => {
+  const cases = [
+    { name: 'When the file holds an exit code then should read it', text: '137\n', want: 137 },
+    { name: 'When the file is still empty then should read no exit', text: '', want: undefined },
+  ];
+
+  for (const c of cases) {
+    test(c.name, () => {
+      assert.equal(parseCodexExitCode(c.text), c.want);
+    });
+  }
+});
+
+describe('CodexOutputFile', () => {
+  const cases = [
+    {
+      name: 'When a read ends in whole lines then should take them and read on past them',
+      reads: [{ text: 'one\ntwo\n', final: false }],
+      want: { taken: ['one\ntwo\n'], nextLine: 3, text: 'one\ntwo\n' },
+    },
+    {
+      name: 'When a read ends inside a line then should leave that line for the next read',
+      reads: [
+        { text: 'one\ntw', final: false },
+        { text: 'two\n', final: false },
+      ],
+      want: { taken: ['one\n', 'two\n'], nextLine: 3, text: 'one\ntwo\n' },
+    },
+    {
+      name: 'When Codex has exited then should take the last line with no newline too',
+      reads: [{ text: 'one\ntwo', final: true }],
+      want: { taken: ['one\ntwo'], nextLine: 3, text: 'one\ntwo' },
+    },
+    {
+      name: 'When a read has nothing new then should take nothing',
+      reads: [{ text: '', final: false }],
+      want: { taken: [''], nextLine: 1, text: '' },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, () => {
+      const file = new CodexOutputFile('codex-stdout.log', false);
+
+      const taken = c.reads.map((read) => file.take(read.text, read.final));
+
+      assert.deepEqual({ taken, nextLine: file.nextLine(), text: file.text() }, c.want);
+    });
+  }
 });
 
 describe('codexEventDetail', () => {

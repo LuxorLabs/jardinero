@@ -3,7 +3,12 @@ import { describe, test } from 'node:test';
 import { loadConfig, type AppConfig } from '../../config.js';
 import type { SandboxRun } from '../../store/types.js';
 import type { SandboxRunContext, SandboxTask } from '../sandbox-pool.js';
-import type { SandboxExecOutput, SandboxProvider, SandboxSession } from '../../types.js';
+import type {
+  SandboxExecOutput,
+  SandboxProvider,
+  SandboxSession,
+  WorkerResult,
+} from '../../types.js';
 import {
   SandboxWorkerRunner,
   isCodexCapacityError,
@@ -11,6 +16,13 @@ import {
 } from './sandbox-worker.js';
 import { FIX_RESULT_JSON_MARKER } from '../../workflows/pr/fix-result.js';
 import { HANDOFF_JSON_MARKER } from '../../workflows/pr/implementation-handoff.js';
+
+const CODEX_FILES = [
+  'codex-model.txt',
+  'codex-exit-code.txt',
+  'codex-stdout.log',
+  'codex-stderr.log',
+];
 
 // What Codex prints when the model it was asked for is full.
 const CAPACITY_STDOUT = JSON.stringify({
@@ -528,6 +540,7 @@ describe('SandboxWorkerRunner', () => {
       task: fakeTask(),
       maxWallClockMs: 1_000,
       signal: new AbortController().signal,
+      isStopping: () => false,
       publishEvent: async (event) => {
         if (event.type === 'sandbox.write_context_started') {
           throw new Error('ENOSPC: no space left on device');
@@ -884,29 +897,294 @@ describe('the output tail of a codex run', () => {
     assert.equal(result.status, 'failed');
     assert.equal(result.error, 'codex_exec_failed');
   });
+});
 
-  test('When the run died mid-stream then should keep what it printed and pass the failure on', async () => {
-    const operations: string[] = [];
-    const events: Array<{ type: string; data?: Record<string, unknown>; message?: string }> = [];
-    const artifacts: Array<{ name: string; content: string }> = [];
-    const session = fakeSession('only', operations, {
-      codexExecResults: [{ exitCode: 0, stdout: 'the last thing it printed' }],
-      codexExecError: new Error('sandbox run stream closed before exit'),
+describe('following a detached codex run', () => {
+  const streamClosed = new Error('sandbox run stream closed before exit');
+  const cases: Array<{
+    name: string;
+    session: FakeSessionOptions;
+    attach?: (sessionId: string) => Promise<FakeSession | undefined>;
+    startedAt?: number;
+    want: { outcome: RunOutcome; reopened: number; tail: string | undefined };
+  }> = [
+    {
+      name: 'When Codex exits after a few reads then should answer when it exits',
+      session: { codexExecResults: [{ exitCode: 0, stdout: 'done' }], codexReadsBeforeExit: 2 },
+      want: { outcome: { status: 'succeeded' }, reopened: 0, tail: undefined },
+    },
+    {
+      name: 'When a read fails and the sandbox is still there then should read again',
+      session: { codexReadErrors: [streamClosed] },
+      want: { outcome: { status: 'succeeded' }, reopened: 1, tail: undefined },
+    },
+    {
+      name: 'When a read fails and the provider cannot answer then should read the same session again',
+      session: { codexReadErrors: [streamClosed] },
+      attach: () => Promise.reject(new Error('provider unreachable')),
+      want: { outcome: { status: 'succeeded' }, reopened: 1, tail: undefined },
+    },
+    {
+      name: 'When a read fails and the sandbox is gone then should keep what it printed and report the run lost',
+      session: {
+        codexExecResults: [{ exitCode: 0, stdout: 'the last thing it printed' }],
+        codexReadsBeforeExit: 2,
+        codexReadErrors: [undefined, undefined, undefined, streamClosed],
+      },
+      attach: async () => undefined,
+      want: {
+        outcome: { rejected: 'SandboxRunLostError: Fake sandbox only is gone' },
+        reopened: 1,
+        tail: 'the last thing it printed\n',
+      },
+    },
+    {
+      name: 'When the wall clock runs out then should fail the run',
+      session: { codexReadsBeforeExit: 2 },
+      startedAt: 0,
+      want: {
+        outcome: { rejected: 'Error: Codex did not finish within 60s.' },
+        reopened: 0,
+        tail: undefined,
+      },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const artifacts: Array<{ name: string; content: string }> = [];
+      const runner = fakeRunner([fakeSession('only', operations, c.session)], operations, {
+        attach: c.attach,
+      });
+      const sandboxRun = { ...fakeSandboxRun(), startedAt: c.startedAt ?? Date.now() };
+
+      const outcome = await runOutcome(
+        runner.run(fakeContext([], new AbortController(), fakeTask(), sandboxRun, artifacts)),
+      );
+
+      assert.deepEqual(
+        {
+          outcome,
+          reopened: operations.filter((operation) => operation === 'attach:only').length,
+          tail: artifacts.find((artifact) => artifact.name === 'codex-output-tail.txt')?.content,
+        },
+        c.want,
+      );
     });
-    const runner = fakeRunner([session], operations);
+  }
+});
 
-    await assert.rejects(
-      runner.run(
-        fakeContext(events, new AbortController(), fakeTask(), fakeSandboxRun(), artifacts),
-      ),
-      /stream closed before exit/,
-    );
+describe('an abort while codex runs', () => {
+  const cases: Array<{
+    name: string;
+    stopping: boolean;
+    abortDuring: 'setup' | 'codex';
+    want: { rejected: string; released: boolean; terminated: boolean };
+  }> = [
+    {
+      name: 'When the orchestrator stops while Codex runs then should leave the sandbox running',
+      stopping: true,
+      abortDuring: 'codex',
+      want: {
+        rejected: 'SandboxRunReleasedError',
+        released: true,
+        terminated: false,
+      },
+    },
+    {
+      name: 'When a run is aborted while Codex runs then should close the sandbox',
+      stopping: false,
+      abortDuring: 'codex',
+      want: { rejected: 'AbortError', released: false, terminated: true },
+    },
+    {
+      name: 'When the orchestrator stops before Codex starts then should close the sandbox',
+      stopping: true,
+      abortDuring: 'setup',
+      want: { rejected: 'Error', released: false, terminated: true },
+    },
+  ];
 
-    assert.equal(
-      artifacts.find((artifact) => artifact.name === 'codex-output-tail.txt')?.content,
-      'the last thing it printed\n',
-    );
-  });
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const events: Array<{ type: string; data?: Record<string, unknown>; message?: string }> = [];
+      const controller = new AbortController();
+      const session = fakeSession(
+        'only',
+        operations,
+        c.abortDuring === 'codex'
+          ? { codexReadsBeforeExit: 10, onCodexRead: () => controller.abort() }
+          : {
+              writeFileErrorOnCall: 3,
+              writeFileError: new Error('Run aborted.'),
+              abortBeforeWriteFileError: true,
+            },
+        controller,
+      );
+      const runner = fakeRunner([session], operations);
+      const context = fakeContext(events, controller, fakeTask(), {
+        ...fakeSandboxRun(),
+        startedAt: Date.now(),
+      });
+      context.isStopping = () => c.stopping;
+
+      const rejected = await runner.run(context).then(
+        () => 'resolved',
+        (error: unknown) => (error instanceof Error ? error.name : String(error)),
+      );
+
+      assert.deepEqual(
+        {
+          rejected,
+          released: events.some((event) => event.type === 'agent.released'),
+          terminated: operations.includes('terminate:only'),
+        },
+        c.want,
+      );
+    });
+  }
+});
+
+describe('SandboxWorkerRunner.resume', () => {
+  const handoffs = `${HANDOFF_JSON_MARKER} ${JSON.stringify({
+    telemetry_access: { status: 'ok', queries: ['{app="api"} |= "error"'] },
+    candidates: [],
+    verified_issues: [],
+    implementation_handoffs: [],
+  })}`;
+  const cases: Array<{
+    name: string;
+    sandboxSessionId: string | null;
+    attach?: (sessionId: string) => Promise<FakeSession | undefined>;
+    session: FakeSessionOptions;
+    want: {
+      outcome: RunOutcome;
+      resumed: boolean;
+      started: unknown[];
+      terminated: boolean;
+      tail: string | undefined;
+    };
+  }> = [
+    {
+      name: 'When the run never reached a sandbox then should report it lost',
+      sandboxSessionId: null,
+      session: {},
+      want: {
+        outcome: { rejected: 'SandboxRunLostError: the run never reached a sandbox' },
+        resumed: false,
+        started: [],
+        terminated: false,
+        tail: undefined,
+      },
+    },
+    {
+      name: 'When the provider no longer has the sandbox then should report it lost',
+      sandboxSessionId: 'only',
+      attach: async () => undefined,
+      session: {},
+      want: {
+        outcome: { rejected: 'SandboxRunLostError: Fake sandbox only is gone' },
+        resumed: false,
+        started: [],
+        terminated: false,
+        tail: undefined,
+      },
+    },
+    {
+      name: 'When Codex was never started in the sandbox then should report it lost and close the sandbox',
+      sandboxSessionId: 'only',
+      session: {},
+      want: {
+        outcome: { rejected: 'SandboxRunLostError: Codex was never started in the sandbox' },
+        resumed: false,
+        started: [],
+        terminated: true,
+        tail: undefined,
+      },
+    },
+    {
+      name: 'When Codex is still running then should follow it without starting it again',
+      sandboxSessionId: 'only',
+      session: { runningCodex: { model: 'gpt-6-sol', exitCode: 0 }, codexReadsBeforeExit: 1 },
+      want: {
+        outcome: { status: 'succeeded' },
+        resumed: true,
+        started: [],
+        terminated: true,
+        tail: undefined,
+      },
+    },
+    {
+      name: 'When the resumed model is at capacity then should go on to the next model',
+      sandboxSessionId: 'only',
+      session: { runningCodex: { model: 'gpt-6-sol', exitCode: 1, stdout: CAPACITY_STDOUT } },
+      want: {
+        outcome: { status: 'succeeded' },
+        resumed: true,
+        started: ['gpt-6-astra'],
+        terminated: true,
+        tail: undefined,
+      },
+    },
+    {
+      name: 'When the resumed model is no longer one the seat uses then should follow it alone',
+      sandboxSessionId: 'only',
+      session: { runningCodex: { model: 'gpt-4-retired', exitCode: 1, stdout: CAPACITY_STDOUT } },
+      want: {
+        outcome: { status: 'failed' },
+        resumed: true,
+        started: [],
+        terminated: true,
+        tail: `${CAPACITY_STDOUT}\n`,
+      },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const events: Array<{ type: string; data?: Record<string, unknown>; message?: string }> = [];
+      const artifacts: Array<{ name: string; content: string }> = [];
+      const session = fakeSession('only', operations, { ...c.session, readFileContent: handoffs });
+      const runner = fakeRunner([], operations, {
+        attach: c.attach ?? (async () => session),
+        config: (config) => {
+          config.mcp.grafana.enabled = false;
+        },
+      });
+      const task: SandboxTask = {
+        workflow: 'log_review',
+        payload: { repo: 'acme/webapp' },
+        promptOverrides: {},
+      };
+      const sandboxRun: SandboxRun = {
+        ...fakeSandboxRun(),
+        agentName: 'LogReviewer',
+        workflowType: 'log_reviewer',
+        sandboxSessionId: c.sandboxSessionId,
+        startedAt: Date.now(),
+      };
+
+      const outcome = await runOutcome(
+        runner.resume(fakeContext(events, new AbortController(), task, sandboxRun, artifacts)),
+      );
+
+      assert.deepEqual(
+        {
+          outcome,
+          resumed: events.some((event) => event.type === 'agent.resumed'),
+          started: events
+            .filter((event) => event.type === 'agent.started')
+            .map((event) => event.data?.model),
+          terminated: operations.includes('terminate:only'),
+          tail: artifacts.find((artifact) => artifact.name === 'codex-output-tail.txt')?.content,
+        },
+        c.want,
+      );
+    });
+  }
 });
 
 describe('repo secret envs in the sandbox session', () => {
@@ -1110,13 +1388,28 @@ type FakeSessionOptions = {
   waitReadyError?: Error;
   gitCloneError?: Error;
   readFileContent?: string;
-  codexExecResults?: Array<{ exitCode: number; stdout?: string }>;
-  codexExecError?: Error;
+  codexExecResults?: FakeCodexRun[];
+  runningCodex?: FakeCodexRun & { model: string };
+  codexReadsBeforeExit?: number;
+  codexReadErrors?: Array<Error | undefined>;
+  onCodexRead?: () => void;
   writeFileErrorOnCall?: number;
   writeFileError?: Error;
   abortBeforeWriteFileError?: boolean;
   commands?: string[];
 };
+
+type FakeCodexRun = { exitCode: number; stdout?: string };
+
+type RunOutcome = { status: string } | { rejected: string };
+
+async function runOutcome(run: Promise<WorkerResult>): Promise<RunOutcome> {
+  try {
+    return { status: (await run).status };
+  } catch (error) {
+    return { rejected: String(error) };
+  }
+}
 
 function fakeRunner(
   sessions: FakeSession[],
@@ -1127,6 +1420,7 @@ function fakeRunner(
     env?: (env: NodeJS.ProcessEnv) => void;
     captureCreates?: Array<Record<string, unknown>>;
     getPullRequestHead?: SandboxWorkerRunnerDeps['getPullRequestHead'];
+    attach?: (sessionId: string) => Promise<FakeSession | undefined>;
   } = {},
 ): SandboxWorkerRunner {
   const config = fakeConfig();
@@ -1145,6 +1439,13 @@ function fakeRunner(
       operations.push(`create:${session.id}`);
       return session as unknown as SandboxSession;
     },
+    attach: async (sessionId) => {
+      operations.push(`attach:${sessionId}`);
+      const session = options.attach
+        ? await options.attach(sessionId)
+        : sessions.find((candidate) => candidate.id === sessionId);
+      return session as unknown as SandboxSession | undefined;
+    },
     waitReady: (session, signal) =>
       (session as unknown as FakeSession).waitReady(undefined, signal),
     terminate: async (session) => {
@@ -1157,6 +1458,7 @@ function fakeRunner(
 
   return new SandboxWorkerRunner(config, env, provider, {
     sandboxReadyRetryDelayMs: () => 0,
+    codexPollIntervalMs: 0,
     ...(options.getPullRequestHead ? { getPullRequestHead: options.getPullRequestHead } : {}),
   });
 }
@@ -1168,7 +1470,10 @@ function fakeSession(
   controller?: AbortController,
 ): FakeSession {
   let writeFileCalls = 0;
-  let codexCalls = 0;
+  let codexStarts = 0;
+  let codexReads = 0;
+  let exitReads = 0;
+  let codex = options.runningCodex;
   return {
     id,
     async exec(
@@ -1176,22 +1481,36 @@ function fakeSession(
       _options: { args?: string[]; onOutput?: (output: SandboxExecOutput) => void },
     ) {
       operations.push(`exec:${id}`);
-      options.commands?.push([_command, ...(_options.args ?? [])].join(' '));
-      const isCodex = (_options.args ?? []).join(' ').includes('exec --json');
-      if (isCodex) {
-        const scripted = options.codexExecResults?.[codexCalls];
-        codexCalls += 1;
-        if (scripted) {
-          _options.onOutput?.({
-            data: new TextEncoder().encode(`${scripted.stdout ?? ''}\n`),
-            isStderr: false,
-            isFinal: true,
-          });
-        }
-        if (options.codexExecError) throw options.codexExecError;
-        if (scripted) return execResult(scripted.exitCode, scripted.stdout ?? '');
+      const script = (_options.args ?? []).join(' ');
+      options.commands?.push([_command, script].join(' '));
+      if (script.includes('nohup setsid')) {
+        const scripted = options.codexExecResults?.[codexStarts] ?? { exitCode: 0 };
+        codexStarts += 1;
+        codex = { ...scripted, model: '' };
+        exitReads = 0;
+        return execResult(0, '');
       }
-      return execResult(0, '');
+      const file = CODEX_FILES.find((name) => script.includes(name));
+      if (!file) return execResult(0, '');
+      const readError = options.codexReadErrors?.[codexReads];
+      codexReads += 1;
+      options.onCodexRead?.();
+      if (readError) throw readError;
+      if (file === 'codex-model.txt') return execResult(0, codex?.model ?? '');
+      if (file === 'codex-exit-code.txt') {
+        exitReads += 1;
+        const running = exitReads <= (options.codexReadsBeforeExit ?? 0);
+        return execResult(0, codex && !running ? `${codex.exitCode}\n` : '');
+      }
+      const printed = file === 'codex-stdout.log' && codex?.stdout ? `${codex.stdout}\n` : '';
+      const fromLine = Number(/tail -n \+(\d+)/.exec(script)?.[1] ?? 1);
+      return execResult(
+        0,
+        printed
+          .split(/(?<=\n)/)
+          .slice(fromLine - 1)
+          .join(''),
+      );
     },
     async readFile(_path: string) {
       return options.readFileContent ?? 'done';
@@ -1241,8 +1560,9 @@ function fakeContext(
   return {
     sandboxRun,
     task,
-    maxWallClockMs: 1_000,
+    maxWallClockMs: 60_000,
     signal: controller.signal,
+    isStopping: () => false,
     publishEvent: async (event) => {
       events.push({ type: event.type, data: event.data, message: event.message });
     },

@@ -55,6 +55,23 @@ export class TenkiSandboxProvider implements SandboxProvider {
     return sandbox.create(options);
   }
 
+  async attach(
+    sessionId: string,
+    _options: Record<string, unknown>,
+    _signal: AbortSignal,
+  ): Promise<SandboxSession | undefined> {
+    const sdk = await this.loadSdk();
+    const sandbox = await this.openSandbox();
+    try {
+      const session = await sandbox.get(sessionId);
+      // Read a terminated session as gone: Tenki still returns it for a while after it ends.
+      return sdk.isTerminal(session.state) ? undefined : session;
+    } catch (error) {
+      if (error instanceof sdk.SessionNotFoundError) return undefined;
+      throw error;
+    }
+  }
+
   waitReady(session: SandboxSession, signal: AbortSignal): Promise<void> {
     return (session as TenkiSession).waitReady(undefined, signal);
   }

@@ -66,6 +66,11 @@ export interface SandboxProvider {
   name: string;
   apiTarget: string;
   create(options: Record<string, unknown>, signal: AbortSignal): Promise<SandboxSession>;
+  attach(
+    sessionId: string,
+    options: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<SandboxSession | undefined>;
   waitReady(session: SandboxSession, signal: AbortSignal): Promise<void>;
   terminate(session: SandboxSession): Promise<void>;
 }

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { DaytonaProcessExecutionTimeoutError, type Sandbox } from '@daytona/sdk';
+import {
+  DaytonaNotFoundError,
+  DaytonaProcessExecutionTimeoutError,
+  type Sandbox,
+} from '@daytona/sdk';
 
 import { loadConfig, type AppConfig } from '../../config.js';
 import type { SandboxRun } from '../../store/types.js';
@@ -23,7 +27,7 @@ describe('DaytonaWorkerRunner', () => {
 
 describe('DaytonaWorkerRunner.run', () => {
   test('When a run finishes then should drive it on a Daytona sandbox and delete it', async () => {
-    const fake = fakeSandbox({ streamedStdout: '{"type":"turn.completed"}\n' });
+    const fake = fakeSandbox();
     const config = daytonaConfig();
     // api_key keeps Codex auth off the host's ~/.codex, which a unit test has no
     // business reading.
@@ -169,6 +173,49 @@ describe('DaytonaSandboxProvider.apiTarget', () => {
       const provider = new DaytonaSandboxProvider(daytonaConfig(), env);
 
       assert.equal(provider.apiTarget, testCase.want);
+    });
+  }
+});
+
+describe('DaytonaSandboxProvider.attach', () => {
+  const cases = [
+    {
+      name: 'When the sandbox still exists then should reopen it',
+      sandboxId: 'sandbox-1',
+      aborted: false,
+      want: { outcome: 'sandbox-1' },
+    },
+    {
+      name: 'When the sandbox is gone then should answer nothing',
+      sandboxId: 'sandbox-gone',
+      aborted: false,
+      want: { outcome: undefined },
+    },
+    {
+      name: 'When the provider cannot answer then should return error',
+      sandboxId: 'sandbox-broken',
+      aborted: false,
+      want: { outcome: 'Error: Daytona is unavailable' },
+    },
+    {
+      name: 'When the signal is aborted then should return error',
+      sandboxId: 'sandbox-1',
+      aborted: true,
+      want: { outcome: 'Error: Run aborted.' },
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, async () => {
+      const provider = providerWith(fakeSandbox());
+      const controller = new AbortController();
+      if (testCase.aborted) controller.abort();
+
+      const outcome = await provider
+        .attach(testCase.sandboxId, {}, controller.signal)
+        .then((session) => session?.id, String);
+
+      assert.deepEqual({ outcome }, testCase.want);
     });
   }
 });
@@ -544,6 +591,7 @@ function providerWith(
     { DAYTONA_API_KEY: 'key' },
     {
       createClient: () => ({
+        ...fakeClient(fake),
         create: async () => {
           onCreate();
           return fake;
@@ -606,6 +654,9 @@ function fakeSandbox(options: FakeSandboxOptions = {}): FakeSandbox {
         execCommands.push(command);
         const isWorkerExec = command.startsWith('sudo -n -u tenki ');
         if (isWorkerExec && options.execError) throw options.execError;
+        if (isWorkerExec && command.includes('codex-exit-code.txt') && !command.includes('nohup')) {
+          return { exitCode: 0, result: '0\n', artifacts: { stdout: '0\n' } };
+        }
         applyRootMove(command, files);
         const response = isWorkerExec ? options.execResponse : options.rootExecResponse;
         return {
@@ -725,6 +776,11 @@ function daytonaConfig(): AppConfig {
 function fakeClient(fake: FakeSandbox) {
   return {
     create: async () => fake,
+    get: async (sandboxId: string) => {
+      if (sandboxId === 'sandbox-broken') throw new Error('Daytona is unavailable');
+      if (sandboxId !== fake.id) throw new DaytonaNotFoundError(`sandbox ${sandboxId} not found`);
+      return fake;
+    },
   };
 }
 
@@ -746,6 +802,7 @@ function fakeContext(events: string[]): SandboxRunContext {
     task: { workflow: 'pr_maintain', payload: {}, promptOverrides: {} },
     maxWallClockMs: 60_000,
     signal: new AbortController().signal,
+    isStopping: () => false,
     publishEvent: async (event) => {
       events.push(event.type);
     },

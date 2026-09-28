@@ -45,7 +45,12 @@ export async function handleGitHubDelivery(
 ): Promise<GitHubDeliveryOutcome> {
   switch (delivery.eventName) {
     case 'pull_request':
-      if (!deps.config.workflows.prMaintainer.enabled) {
+      // Settling a pull request only ends work, never starts it, so it reaches every
+      // machine that may own the pull request whatever PR maintenance says.
+      if (
+        !deps.config.workflows.prMaintainer.enabled &&
+        stringValue(delivery.payload.action) !== 'closed'
+      ) {
         return { handled: false, reason: 'pr_maintain_disabled' };
       }
       return handlePullRequest(deps, delivery.payload);

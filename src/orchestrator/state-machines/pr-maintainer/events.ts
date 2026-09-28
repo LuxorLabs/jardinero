@@ -619,8 +619,14 @@ function processPrClosingWhileWorking(
   const sandboxRunId = instance.sandboxRunId;
   if (sandboxRunId) {
     try {
-      engine.pool.abort(sandboxRunId);
-      engine.store.finishSandboxRun(sandboxRunId, { runState: 'aborted' });
+      // The pool records how a run it holds ended, cost included, so only a run it
+      // lost is ours to close.
+      const runState = engine.store.getSandboxRun(sandboxRunId)?.runState;
+      if (engine.pool.isExecuting(sandboxRunId)) {
+        engine.pool.abort(sandboxRunId);
+      } else if (runState === 'pending' || runState === 'running') {
+        engine.store.finishSandboxRun(sandboxRunId, { runState: 'aborted' });
+      }
       instance.sandboxRunId = null;
     } catch (error) {
       abortError = asError(error);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { Store } from '../../../store/store.js';
-import type { PrMaintainer, PrMaintainerState } from '../../../store/types.js';
+import type { PrMaintainer, PrMaintainerState, SandboxRunState } from '../../../store/types.js';
 import {
   FakeGitHub,
   FakeLocker,
@@ -35,6 +35,7 @@ import { PrMaintainerStateEngine } from './service.js';
 const MAX_ATTEMPTS = 2;
 const MAX_REPLIES_PER_THREAD = 2;
 const PULL_REQUEST_NUMBER = 4688;
+const FINISHED_RUN_COST_USD = 1.25;
 const OPEN_STATES: PrMaintainerState[] = [
   'prm_pending',
   'prm_working',
@@ -597,35 +598,177 @@ describe('onPrSynchronize', () => {
 });
 
 describe('onPrMerged', () => {
-  const cases: ClosingCase[] = closingCases('prm_merged');
+  const cases: ClosingCase[] = [
+    {
+      name: 'When there is no instance then should ignore it',
+      want: { instanceExists: false },
+    },
+    {
+      name: 'When the pull request was in `prm_pending` then should close it as `prm_merged`',
+      from: 'prm_pending',
+      want: { state: 'prm_merged' },
+    },
+    {
+      name: 'When the pull request was in `prm_waiting` then should close it as `prm_merged`',
+      from: 'prm_waiting',
+      want: { state: 'prm_merged' },
+    },
+    {
+      name: 'When the pull request was in `prm_attempts_exhausted` then should close it as `prm_merged`',
+      from: 'prm_attempts_exhausted',
+      want: { state: 'prm_merged' },
+    },
+    {
+      name: 'When the pull request was in `prm_working` with no sandbox run then should close it as `prm_merged`',
+      from: 'prm_working',
+      want: { state: 'prm_merged' },
+    },
+    {
+      // The agent is still working on a pull request nobody is going to read.
+      name: 'When a sandbox run is in flight in `prm_working` then should abort it and close as `prm_merged`',
+      from: 'prm_working',
+      run: 'in_flight',
+      want: {
+        state: 'prm_merged',
+        abortedRuns: 1,
+        sandboxRun: { runState: 'pending', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `prm_working` finished and its outcome is on its way then should keep its cost and close as `prm_merged`',
+      from: 'prm_working',
+      run: 'reporting',
+      want: {
+        state: 'prm_merged',
+        abortedRuns: 1,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      name: 'When the pool lost the sandbox run in `prm_working` then should record it aborted and close as `prm_merged`',
+      from: 'prm_working',
+      run: 'lost',
+      want: { state: 'prm_merged', sandboxRun: { runState: 'aborted', costUsd: null } },
+    },
+    {
+      name: 'When the sandbox run in `prm_working` finished unreported then should keep its cost and close as `prm_merged`',
+      from: 'prm_working',
+      run: 'finished',
+      want: {
+        state: 'prm_merged',
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      // A repeated webhook must not turn an ending into an error.
+      name: 'When the pull request already ended then should leave the ending alone',
+      from: 'prm_merged',
+      want: { state: 'prm_merged' },
+    },
+    {
+      name: 'When the pull request was dismissed then should leave the ending alone',
+      from: 'prm_dismissed',
+      want: { state: 'prm_dismissed' },
+    },
+  ];
 
   for (const c of cases) {
     test(c.name, async () => {
       const instance = c.from ? openInstanceIn(c.from) : undefined;
-      if (instance) arrangeClosing(instance, c);
+      const sandboxRunId = instance ? arrangeClosing(instance, c) : undefined;
 
       const error = await onPrMerged(engine, pullRequestRef());
 
-      assertClosing(c, instance, error);
+      assertClosing(c, instance, sandboxRunId, error);
     });
   }
 });
-
 describe('onPrClosed', () => {
-  const cases: ClosingCase[] = closingCases('prm_closed');
+  const cases: ClosingCase[] = [
+    {
+      name: 'When there is no instance then should ignore it',
+      want: { instanceExists: false },
+    },
+    {
+      name: 'When the pull request was in `prm_pending` then should close it as `prm_closed`',
+      from: 'prm_pending',
+      want: { state: 'prm_closed' },
+    },
+    {
+      name: 'When the pull request was in `prm_waiting` then should close it as `prm_closed`',
+      from: 'prm_waiting',
+      want: { state: 'prm_closed' },
+    },
+    {
+      name: 'When the pull request was in `prm_attempts_exhausted` then should close it as `prm_closed`',
+      from: 'prm_attempts_exhausted',
+      want: { state: 'prm_closed' },
+    },
+    {
+      name: 'When the pull request was in `prm_working` with no sandbox run then should close it as `prm_closed`',
+      from: 'prm_working',
+      want: { state: 'prm_closed' },
+    },
+    {
+      // The agent is still working on a pull request nobody is going to read.
+      name: 'When a sandbox run is in flight in `prm_working` then should abort it and close as `prm_closed`',
+      from: 'prm_working',
+      run: 'in_flight',
+      want: {
+        state: 'prm_closed',
+        abortedRuns: 1,
+        sandboxRun: { runState: 'pending', costUsd: null },
+      },
+    },
+    {
+      name: 'When the sandbox run in `prm_working` finished and its outcome is on its way then should keep its cost and close as `prm_closed`',
+      from: 'prm_working',
+      run: 'reporting',
+      want: {
+        state: 'prm_closed',
+        abortedRuns: 1,
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      name: 'When the pool lost the sandbox run in `prm_working` then should record it aborted and close as `prm_closed`',
+      from: 'prm_working',
+      run: 'lost',
+      want: { state: 'prm_closed', sandboxRun: { runState: 'aborted', costUsd: null } },
+    },
+    {
+      name: 'When the sandbox run in `prm_working` finished unreported then should keep its cost and close as `prm_closed`',
+      from: 'prm_working',
+      run: 'finished',
+      want: {
+        state: 'prm_closed',
+        sandboxRun: { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD },
+      },
+    },
+    {
+      // A repeated webhook must not turn an ending into an error.
+      name: 'When the pull request already ended then should leave the ending alone',
+      from: 'prm_merged',
+      want: { state: 'prm_merged' },
+    },
+    {
+      name: 'When the pull request was dismissed then should leave the ending alone',
+      from: 'prm_dismissed',
+      want: { state: 'prm_dismissed' },
+    },
+  ];
 
   for (const c of cases) {
     test(c.name, async () => {
       const instance = c.from ? openInstanceIn(c.from) : undefined;
-      if (instance) arrangeClosing(instance, c);
+      const sandboxRunId = instance ? arrangeClosing(instance, c) : undefined;
 
       const error = await onPrClosed(engine, pullRequestRef());
 
-      assertClosing(c, instance, error);
+      assertClosing(c, instance, sandboxRunId, error);
     });
   }
 });
-
 describe('onSandboxRunSucceeded', () => {
   const cases: RunOutcomeCase[] = [
     {
@@ -1228,60 +1371,39 @@ function assertAnnouncement(
   assert.equal(pool.started.length, c.want.startedRuns ?? 0);
 }
 
-function closingCases(finalState: PrMaintainerState): ClosingCase[] {
-  return [
-    ...OPEN_STATES.filter((state) => state !== 'prm_working').map((state) => ({
-      name: `When the pull request was in \`${state}\` then should close it as \`${finalState}\``,
-      from: state,
-      want: { state: finalState },
-    })),
-    {
-      // The agent is still working on a pull request nobody is going to read.
-      name: `When a sandbox run is in flight then should abort it and close as \`${finalState}\``,
-      from: 'prm_working' as PrMaintainerState,
-      attachRunToAbort: true,
-      want: { state: finalState, abortedRuns: 1 },
-    },
-    {
-      // A repeated webhook must not turn an ending into an error.
-      name: 'When the pull request already ended then should leave the ending alone',
-      from: 'prm_merged' as PrMaintainerState,
-      want: { state: 'prm_merged' as PrMaintainerState },
-    },
-    {
-      name: 'When the pull request was dismissed then should leave the ending alone',
-      from: 'prm_dismissed' as PrMaintainerState,
-      want: { state: 'prm_dismissed' as PrMaintainerState },
-    },
-    {
-      name: 'When there is no instance then should ignore it',
-      want: { instanceExists: false },
-    },
-  ];
-}
-
-function arrangeClosing(instance: PrMaintainer, c: ClosingCase): void {
-  if (c.attachRunToAbort) {
-    const runId = store.startSandboxRun({
-      agentName: 'PrMaintainer',
-      workflowType: 'pr_maintainer',
-      workflowInstanceId: instance.id,
-    }).id;
-    instance.sandboxRunId = runId;
-    setState(engine, instance, instance.workflowState);
+function arrangeClosing(instance: PrMaintainer, c: ClosingCase): string | undefined {
+  if (!c.run) return undefined;
+  const runId = store.startSandboxRun({
+    agentName: 'PrMaintainer',
+    workflowType: 'pr_maintainer',
+    workflowInstanceId: instance.id,
+  }).id;
+  instance.sandboxRunId = runId;
+  setState(engine, instance, instance.workflowState);
+  if (c.run === 'in_flight' || c.run === 'reporting') {
     pool.startSandbox(runId);
     pool.started.length = 0;
   }
-  c.arrange?.(instance);
+  if (c.run === 'reporting' || c.run === 'finished') {
+    store.finishSandboxRun(runId, { runState: 'succeeded', costUsd: FINISHED_RUN_COST_USD });
+  }
+  return runId;
 }
 
 function assertClosing(
   c: ClosingCase,
   instance: PrMaintainer | undefined,
+  sandboxRunId: string | undefined,
   error: Error | undefined,
 ): void {
   assertOutcome(c.want, instance, error);
   assert.equal(pool.aborted.length, c.want.abortedRuns ?? 0);
+  if (instance) assert.equal(store.getPrMaintainer(instance.id)?.sandboxRunId, null);
+  const sandboxRun = sandboxRunId ? store.getSandboxRun(sandboxRunId) : undefined;
+  assert.deepEqual(
+    sandboxRun && { runState: sandboxRun.runState, costUsd: sandboxRun.costUsd },
+    c.want.sandboxRun,
+  );
 }
 
 function assertOutcome(
@@ -1322,6 +1444,7 @@ interface Want {
   needsHumanReason?: string;
   lastActedCommitSha?: string;
   abortedRuns?: number;
+  sandboxRun?: { runState: SandboxRunState; costUsd: number | null };
   checked?: boolean;
   errorName?: string;
   unconsumedAsks?: number;
@@ -1364,8 +1487,8 @@ interface StateOnlyCase {
 interface ClosingCase {
   name: string;
   from?: PrMaintainerState;
-  attachRunToAbort?: boolean;
-  arrange?: (instance: PrMaintainer) => void;
+  // The pool still holds an `in_flight` or `reporting` run, and has let go of a `lost` or `finished` one.
+  run?: 'in_flight' | 'reporting' | 'lost' | 'finished';
   want: Want;
 }
 

@@ -102,6 +102,16 @@ describe('handleGitHubDelivery', () => {
       },
     },
     {
+      name: 'When pull request maintenance is off and the pull request merged then should still report it merged',
+      eventName: 'pull_request',
+      payload: pullRequestPayload('closed', { merged: true }),
+      config: configWith({ prMaintainerEnabled: false }),
+      want: {
+        event: 'onPrMerged',
+        implementerEvents: ['linearImplementer.onPrMerged', 'fixImplementer.onPrMerged'],
+      },
+    },
+    {
       name: 'When the pull request action is another one then should report it ignored',
       eventName: 'pull_request',
       payload: pullRequestPayload('assigned'),
@@ -217,7 +227,7 @@ describe('handleGitHubDelivery', () => {
 
   for (const c of cases) {
     test(c.name, async () => {
-      const outcome = await handleGitHubDelivery(deps(), {
+      const outcome = await handleGitHubDelivery(deps(c.config), {
         eventName: c.eventName,
         payload: c.payload,
       });
@@ -350,7 +360,7 @@ describe('handleGitHubDelivery', () => {
     });
   }
 
-  // A disabled workflow must not be reached by its deliveries, whatever they say.
+  // A disabled workflow must not be reached by a delivery that could start work.
   const gateCases: GateCase[] = [
     {
       name: 'When pull request maintenance is off then should report a pull request ignored',
@@ -705,7 +715,6 @@ function recordingPrMaintainer(recorded: RecordedEvent[]) {
   };
 }
 
-// recordingImplementer records which settled-pull-request event reached the machine.
 function recordingImplementer(machine: string, recorded: RecordedEvent[]) {
   const record =
     (name: string) =>
@@ -727,6 +736,7 @@ interface DeliveryCase {
   name: string;
   eventName: string;
   payload: Record<string, unknown>;
+  config?: AppConfig;
   want: {
     event?: string;
     implementerEvents?: string[];

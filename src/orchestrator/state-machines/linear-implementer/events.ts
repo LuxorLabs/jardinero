@@ -17,12 +17,6 @@ export interface PullRequestRef {
   pullRequestNumber: number;
 }
 
-export interface CommentData extends PullRequestRef {
-  // Plain data from the adapter, which decides nothing with it: whether this is
-  // an event at all is decided here.
-  authoredByUs: boolean;
-}
-
 // RunOutcome is what the agent reported. Which fields matter depends on the state it
 // arrives in: the implementer fills the first three, the verifier the rest.
 export interface RunOutcome {
@@ -114,45 +108,6 @@ export async function onIssueCommented(
       case 'li_needs_human':
         return resumeWithFreshBudget(engine, instance);
 
-      case 'li_done':
-      case 'li_abandoned':
-      case 'li_dismissed':
-        return undefined;
-
-      default:
-        return new UnsupportedStateError(instance.workflowState);
-    }
-  } finally {
-    taken.lock.release();
-  }
-}
-
-export async function onPrComment(
-  engine: LinearImplementerStateEngine,
-  data: CommentData,
-): Promise<Error | undefined> {
-  // Our own echo. The only thing stopping an endless reply loop.
-  if (data.authoredByUs) return undefined;
-
-  const taken = await takeLinearImplementerByPullRequest(engine, data);
-  if (!taken) return undefined;
-  const instance = taken.instance;
-  try {
-    switch (instance.workflowState) {
-      case 'li_pending':
-      case 'li_implementing':
-      case 'li_verifying':
-        return undefined;
-
-      // The pull request is PrMaintainer's from here, so a comment on it is not
-      // ours to act on.
-      case 'li_waiting_pr':
-        return undefined;
-
-      case 'li_needs_human':
-        return resumeWithFreshBudget(engine, instance);
-
-      // The ticket already ended; a late event about it changes nothing.
       case 'li_done':
       case 'li_abandoned':
       case 'li_dismissed':

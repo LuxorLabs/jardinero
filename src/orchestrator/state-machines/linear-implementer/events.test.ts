@@ -18,7 +18,6 @@ import {
   onOperatorRetryVerification,
   onPeriodicCheck,
   onPrClosed,
-  onPrComment,
   onPrMerged,
   onSandboxRunFailed,
   onSandboxRunSucceeded,
@@ -166,56 +165,6 @@ describe('onIssueCommented', () => {
       const instance = c.from ? openInstanceIn(c.from) : undefined;
 
       const error = await onIssueCommented(engine, issueRef());
-
-      assertOutcome(c.want, instance, error);
-    });
-  }
-});
-
-describe('onPrComment', () => {
-  const cases: CommentCase[] = [
-    {
-      // Our own echo. The only thing stopping an endless reply loop.
-      name: 'When the comment is ours then should ignore it',
-      from: 'li_needs_human',
-      authoredByUs: true,
-      want: { state: 'li_needs_human', pullRequestNumber: PULL_REQUEST_NUMBER },
-    },
-    {
-      name: 'When no instance follows that pull request then should ignore it',
-      want: { instanceExists: false },
-    },
-    ...['li_pending', 'li_implementing', 'li_verifying'].map((state) => ({
-      name: `When the ticket is in \`${state}\` then should ignore it`,
-      from: state as LinearImplementerState,
-      want: { state: state as LinearImplementerState, pullRequestNumber: PULL_REQUEST_NUMBER },
-    })),
-    {
-      // The pull request is PrMaintainer's from there on.
-      name: 'When PrMaintainer owns the pull request then should ignore it',
-      from: 'li_waiting_pr',
-      want: { state: 'li_waiting_pr', pullRequestNumber: PULL_REQUEST_NUMBER },
-    },
-    {
-      name: 'When we gave up on it then should start again with a fresh budget',
-      from: 'li_needs_human',
-      want: { state: 'li_implementing', startedRuns: 1, pullRequestNumber: PULL_REQUEST_NUMBER },
-    },
-    {
-      name: 'When the ticket was dismissed then should ignore it',
-      from: 'li_dismissed',
-      want: { state: 'li_dismissed', pullRequestNumber: PULL_REQUEST_NUMBER },
-    },
-  ];
-
-  for (const c of cases) {
-    test(c.name, async () => {
-      const instance = c.from ? openInstanceWithPullRequest(c.from) : undefined;
-
-      const error = await onPrComment(engine, {
-        ...pullRequestRef(),
-        authoredByUs: c.authoredByUs ?? false,
-      });
 
       assertOutcome(c.want, instance, error);
     });
@@ -910,10 +859,6 @@ describe('LinearImplementer entry points release the instance lock', () => {
       act: () => onIssueCommented(engine, issueRef()),
     },
     {
-      name: 'When `onPrComment` runs then should release the lock',
-      act: () => onPrComment(engine, { ...pullRequestRef(), authoredByUs: false }),
-    },
-    {
       name: 'When `onPrMerged` runs then should release the lock',
       act: () => onPrMerged(engine, pullRequestRef()),
     },
@@ -1082,13 +1027,6 @@ interface ClosingCase {
   from?: LinearImplementerState;
   // The pool still holds an `in_flight` or `reporting` run, and has let go of a `lost` or `finished` one.
   run?: 'in_flight' | 'reporting' | 'lost' | 'finished';
-  want: Want;
-}
-
-interface CommentCase {
-  name: string;
-  from?: LinearImplementerState;
-  authoredByUs?: boolean;
   want: Want;
 }
 

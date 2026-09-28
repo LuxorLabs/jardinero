@@ -11,12 +11,10 @@ import {
   onOperatorRetryVerification,
   onPeriodicCheck,
   onPrClosed,
-  onPrComment,
   onPrMerged,
   onSandboxRunFailed,
   onSandboxRunSucceeded,
   onSystemRecovery,
-  type CommentData,
   type IssueRef,
   type PullRequestRef,
   type RunOutcome,
@@ -43,7 +41,6 @@ export interface LinearImplementerConfig {
 export interface LinearImplementerStateEngineInterface {
   onIssueAssigned(ref: IssueRef, requestRouterId?: string): Promise<Error | undefined>;
   onIssueCommented(ref: IssueRef): Promise<Error | undefined>;
-  onPrComment(data: CommentData): Promise<Error | undefined>;
   onPrMerged(ref: PullRequestRef): Promise<Error | undefined>;
   onPrClosed(ref: PullRequestRef): Promise<Error | undefined>;
   onSandboxRunSucceeded(sandboxRunId: string, outcome: RunOutcome): Promise<Error | undefined>;
@@ -71,10 +68,6 @@ export class LinearImplementerStateEngine implements LinearImplementerStateEngin
 
   onIssueCommented(ref: IssueRef): Promise<Error | undefined> {
     return onIssueCommented(this, ref);
-  }
-
-  onPrComment(data: CommentData): Promise<Error | undefined> {
-    return onPrComment(this, data);
   }
 
   onPrMerged(ref: PullRequestRef): Promise<Error | undefined> {

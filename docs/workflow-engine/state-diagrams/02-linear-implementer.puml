@@ -60,7 +60,7 @@ Implementing --r-> Verifying: OnSandboxRunSucceeded(draft PR opened)
 Implementing -d-> Implementing: OnSandboxRunFailed\nOnPeriodicCheck(run lost)\nOnSystemRecovery(run lost)\n\n\n\n\n\n
 Implementing -u[#Red]-> NeedsHuman: handleStateLiImplementing(no iterations left)\nOnSandboxRunSucceeded(no PR)
 
-NeedsHuman -d-> Implementing: OnOperatorRetry\nOnIssueAssigned\nOnIssueCommented\nOnPrComment
+NeedsHuman -d-> Implementing: OnOperatorRetry\nOnIssueAssigned\nOnIssueCommented
 NeedsHuman -r-> Dismissed: OnOperatorDismiss
 
 Verifying -l-> Implementing: OnSandboxRunSucceeded(reject, iterations left)
@@ -82,7 +82,9 @@ Dismissed -d-> [*]
 
 note top of NeedsHuman
   Open and not final: an operator retry, a re-assignment or a
-  comment sends it back to work with a fresh corrective budget.
+  comment on the ticket sends it back to work with a fresh
+  corrective budget. A comment on its pull request does not;
+  tagging the agent there hands the pull request to PrMaintainer.
 end note
 
 @enduml

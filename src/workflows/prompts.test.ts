@@ -222,6 +222,7 @@ describe('buildWorkerPrompt', () => {
       prompt_context: '<issue identifier="PROJ-123"><title>Sample issue</title></issue>',
       branch: 'agent/linear-PROJ-123-sample',
       pr_number: 123,
+      verifier_verdict: 'reject',
       verifier_issues: ['The prompt override drops corrective instructions.'],
     });
     const overridden = buildWorkerPrompt('run-904', dispatchTask, {
@@ -399,30 +400,65 @@ describe('a pass that continues a pull request', () => {
     name: string;
     workflow: 'linear' | 'fix_implement';
     payload: Record<string, unknown>;
-    wantContinues: RegExp;
-    wantOpens: RegExp;
-    wantHint?: RegExp;
+    wantPresent: RegExp[];
+    wantAbsent: RegExp[];
   }> = [
     {
-      name: 'When a linear pass names the pull request then should continue it instead of opening one',
+      name: 'When a linear pass answers a rejection then should continue the pull request and address its issues',
       workflow: 'linear',
       payload: linearImplementerPayload(
-        linearImplementer({ pullRequestNumber: 123, verifierIssues: 'tests missing' }),
+        linearImplementer({
+          pullRequestNumber: 123,
+          verifierVerdict: 'reject',
+          verifierIssues: 'tests missing',
+        }),
         'ExampleOrg/example-service',
       ),
-      wantContinues: /You are continuing pull request #123/,
-      wantOpens: /create and push a branch named exactly/,
+      wantPresent: [
+        /You are continuing pull request #123/,
+        /did not accept it/,
+        /Address every listed issue/,
+      ],
+      wantAbsent: [/create and push a branch named exactly/, /failed before it was verified/],
     },
     {
-      name: 'When a linear revision lists no issue then should continue the pull request anyway',
+      name: 'When a linear rejection lists no issue then should continue the pull request anyway',
+      workflow: 'linear',
+      payload: linearImplementerPayload(
+        linearImplementer({ pullRequestNumber: 123, verifierVerdict: 'reject' }),
+        'ExampleOrg/example-service',
+      ),
+      wantPresent: [/You are continuing pull request #123/, /The verification listed no issue/],
+      wantAbsent: [/create and push a branch named exactly/, /failed before it was verified/],
+    },
+    {
+      name: 'When the linear pass that opened the pull request failed then should continue it without a rejection',
       workflow: 'linear',
       payload: linearImplementerPayload(
         linearImplementer({ pullRequestNumber: 123 }),
         'ExampleOrg/example-service',
       ),
-      wantContinues: /You are continuing pull request #123/,
-      wantOpens: /create and push a branch named exactly/,
-      wantHint: /The verification listed no issue/,
+      wantPresent: [/You are continuing pull request #123/, /failed before it was verified/],
+      wantAbsent: [
+        /create and push a branch named exactly/,
+        /did not accept it/,
+        /The verification listed no issue/,
+      ],
+    },
+    {
+      name: 'When a linear pass continues an accepted pull request then should claim neither a rejection nor a failure',
+      workflow: 'linear',
+      payload: linearImplementerPayload(
+        linearImplementer({ pullRequestNumber: 123, verifierVerdict: 'accept' }),
+        'ExampleOrg/example-service',
+      ),
+      wantPresent: [/You are continuing pull request #123/],
+      wantAbsent: [
+        /create and push a branch named exactly/,
+        /did not accept it/,
+        /The verification listed no issue/,
+        /failed before it was verified/,
+      ],
     },
     {
       name: 'When a fix pass names the pull request then should continue it instead of opening one',
@@ -431,8 +467,8 @@ describe('a pass that continues a pull request', () => {
         fixImplementer({ pullRequestNumber: 4166 }),
         'ExampleOrg/example-service',
       ),
-      wantContinues: /You are continuing pull request #4166/,
-      wantOpens: /create and push a branch named exactly/,
+      wantPresent: [/You are continuing pull request #4166/],
+      wantAbsent: [/create and push a branch named exactly/],
     },
   ];
 
@@ -440,9 +476,8 @@ describe('a pass that continues a pull request', () => {
     test(c.name, () => {
       const prompt = buildWorkerPrompt('run-continue', task(c.workflow, c.payload));
 
-      assert.match(prompt, c.wantContinues);
-      assert.doesNotMatch(prompt, c.wantOpens);
-      if (c.wantHint) assert.match(prompt, c.wantHint);
+      for (const present of c.wantPresent) assert.match(prompt, present);
+      for (const absent of c.wantAbsent) assert.doesNotMatch(prompt, absent);
     });
   }
 

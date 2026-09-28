@@ -224,6 +224,7 @@ export async function onSandboxRunSucceeded(
 export async function onSandboxRunFailed(
   engine: LinearImplementerStateEngine,
   sandboxRunId: string,
+  outcome: RunOutcome,
 ): Promise<Error | undefined> {
   const taken = await takeLinearImplementerBySandboxRun(engine, sandboxRunId);
   if (!taken) return undefined;
@@ -231,6 +232,11 @@ export async function onSandboxRunFailed(
   try {
     switch (instance.workflowState) {
       case 'li_implementing':
+        instance.sandboxRunId = null;
+        instance.pullRequestNumber = outcome.pullRequestNumber ?? instance.pullRequestNumber;
+        instance.iterationNumber += 1;
+        return setStateAndRun(engine, instance, instance.workflowState);
+
       case 'li_verifying':
         instance.sandboxRunId = null;
         instance.iterationNumber += 1;

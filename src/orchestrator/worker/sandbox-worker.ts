@@ -382,7 +382,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
         JSON.stringify(verification, null, 2),
       );
       await terminate();
-      const openedPrUrl = verification.openedPrUrl;
+      const openedPrUrl = verification.status === 'failed' ? undefined : verification.openedPrUrl;
       const noPrSkipped =
         isImplementationRun(context.task) &&
         !codexFailed &&

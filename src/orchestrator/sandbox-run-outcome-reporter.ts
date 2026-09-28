@@ -132,7 +132,7 @@ export class InstanceSandboxRunOutcomeReporter implements SandboxRunOutcomeRepor
     }
   }
 
-  async reportFailed(sandboxRunId: string): Promise<void> {
+  async reportFailed(sandboxRunId: string, result?: WorkerResult): Promise<void> {
     const sandboxRun = this.store.getSandboxRun(sandboxRunId);
     if (!sandboxRun) return;
     switch (sandboxRun.workflowType) {
@@ -144,7 +144,7 @@ export class InstanceSandboxRunOutcomeReporter implements SandboxRunOutcomeRepor
       case 'linear_implementer':
         return this.report(
           sandboxRunId,
-          this.engines().linearImplementer.onSandboxRunFailed(sandboxRunId),
+          this.engines().linearImplementer.onSandboxRunFailed(sandboxRunId, pullRequestOf(result)),
         );
       case 'fix_implementer':
         return this.report(
@@ -210,8 +210,8 @@ const _REQUESTED_ACTIONS = new Set<string>([
 ]);
 
 // pullRequestOf parses the number out of the pull request url the agent reported.
-function pullRequestOf(result: WorkerResult): { pullRequestNumber?: number } {
-  const number = pullRequestNumberFrom(result.openedPrUrl);
+function pullRequestOf(result: WorkerResult | undefined): { pullRequestNumber?: number } {
+  const number = pullRequestNumberFrom(result?.openedPrUrl);
   if (number === undefined) return {};
   return {
     pullRequestNumber: number,

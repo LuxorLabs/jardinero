@@ -17,6 +17,7 @@ export function linearImplementerPayload(
     ...optional('linear_session_id', instance.linearSessionId),
     ...optional('prompt_context', instance.promptContext),
     ...optionalNumber('pr_number', instance.pullRequestNumber),
+    ...optional('verifier_verdict', instance.verifierVerdict),
     ...optionalLines('verifier_issues', instance.verifierIssues),
   };
 }

@@ -239,13 +239,86 @@ describe('InstanceSandboxRunOutcomeReporter.reportSucceeded', () => {
       }
     });
   }
+});
 
-  test('When the run is unknown then should hand nothing to anyone', async () => {
-    await reporter.reportSucceeded('missing', succeeded('done'));
+describe('InstanceSandboxRunOutcomeReporter.reportFailed', () => {
+  const cases: FailedCase[] = [
+    {
+      name: 'When a routing run failed then should tell its machine',
+      workflowType: 'request_router',
+      engineOf: (all) => all.requestRouter,
+      want: undefined,
+    },
+    {
+      name: 'When an implementer run failed after opening a pull request then should hand over its number',
+      workflowType: 'linear_implementer',
+      result: {
+        ...failed(),
+        openedPrUrl: 'https://github.com/acme/web.app/pull/4688',
+      },
+      engineOf: (all) => all.linearImplementer,
+      want: { pullRequestNumber: 4688 },
+    },
+    {
+      name: 'When an implementer run failed without a result then should hand over no pull request',
+      workflowType: 'linear_implementer',
+      engineOf: (all) => all.linearImplementer,
+      want: {},
+    },
+    {
+      name: 'When a fix run failed then should tell its machine',
+      workflowType: 'fix_implementer',
+      engineOf: (all) => all.fixImplementer,
+      want: undefined,
+    },
+    {
+      name: 'When a maintenance run failed then should tell its machine',
+      workflowType: 'pr_maintainer',
+      engineOf: (all) => all.prMaintainer,
+      want: undefined,
+    },
+    {
+      name: 'When a scan failed then should tell its machine',
+      workflowType: 'log_reviewer',
+      engineOf: (all) => all.logReviewer,
+      want: undefined,
+    },
+  ];
 
-    assert.deepEqual(everyReport(engines), []);
-  });
+  for (const c of cases) {
+    test(c.name, async () => {
+      const sandboxRunId = startSandboxRun(c.workflowType);
 
+      await reporter.reportFailed(sandboxRunId, c.result);
+
+      assert.deepEqual(c.engineOf(engines).failed, [{ sandboxRunId, outcome: c.want }]);
+      assert.deepEqual(c.engineOf(engines).succeeded, []);
+    });
+  }
+});
+
+describe('InstanceSandboxRunOutcomeReporter for an unknown run', () => {
+  const cases = [
+    {
+      name: 'When a succeeded run is unknown then should hand nothing to anyone',
+      report: () => reporter.reportSucceeded('missing', succeeded('done')),
+    },
+    {
+      name: 'When a failed run is unknown then should hand nothing to anyone',
+      report: () => reporter.reportFailed('missing', failed()),
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      await c.report();
+
+      assert.deepEqual(everyReport(engines), []);
+    });
+  }
+});
+
+describe('InstanceSandboxRunOutcomeReporter when the machine refuses', () => {
   // The machines answer with their failure instead of throwing, and the periodic
   // check reaches the instance again, so the report is dropped.
   test('When the machine refuses the outcome then should not throw', async () => {
@@ -253,45 +326,6 @@ describe('InstanceSandboxRunOutcomeReporter.reportSucceeded', () => {
     engines.prMaintainer.answers = new Error('refused');
 
     await assert.doesNotReject(() => reporter.reportSucceeded(sandboxRunId, succeeded('done')));
-  });
-});
-
-describe('InstanceSandboxRunOutcomeReporter.reportFailed', () => {
-  const cases: FailedCase[] = [
-    {
-      name: 'request router',
-      workflowType: 'request_router',
-      engineOf: (all) => all.requestRouter,
-    },
-    {
-      name: 'linear implementer',
-      workflowType: 'linear_implementer',
-      engineOf: (all) => all.linearImplementer,
-    },
-    {
-      name: 'fix implementer',
-      workflowType: 'fix_implementer',
-      engineOf: (all) => all.fixImplementer,
-    },
-    { name: 'pr maintainer', workflowType: 'pr_maintainer', engineOf: (all) => all.prMaintainer },
-    { name: 'log reviewer', workflowType: 'log_reviewer', engineOf: (all) => all.logReviewer },
-  ];
-
-  for (const c of cases) {
-    test(`When a ${c.name} run failed then should tell its machine`, async () => {
-      const sandboxRunId = startSandboxRun(c.workflowType);
-
-      await reporter.reportFailed(sandboxRunId);
-
-      assert.deepEqual(c.engineOf(engines).failed, [sandboxRunId]);
-      assert.deepEqual(c.engineOf(engines).succeeded, []);
-    });
-  }
-
-  test('When the run is unknown then should hand nothing to anyone', async () => {
-    await reporter.reportFailed('missing');
-
-    assert.deepEqual(everyReport(engines), []);
   });
 });
 
@@ -305,6 +339,10 @@ function startSandboxRun(workflowType: WorkflowType): string {
 
 function succeeded(summary: string): WorkerResult {
   return { status: 'succeeded', costUsd: null, summary };
+}
+
+function failed(): WorkerResult {
+  return { status: 'failed', costUsd: null, summary: 'boom', error: 'codex_exec_failed' };
 }
 
 // reporterWith answers a reporter reading a config a case bent, so the caps and the dry
@@ -350,7 +388,7 @@ function handoff(fields: Partial<ImplementationHandoff> = {}): ImplementationHan
 class RecordingEngine {
   readonly findings: Array<{ finding: Finding; logReviewerId?: string }> = [];
   readonly succeeded: Array<{ sandboxRunId: string; outcome: unknown }> = [];
-  readonly failed: string[] = [];
+  readonly failed: Array<{ sandboxRunId: string; outcome: unknown }> = [];
   answers: Error | undefined;
 
   onSandboxRunSucceeded(sandboxRunId: string, outcome?: unknown): Promise<Error | undefined> {
@@ -358,8 +396,8 @@ class RecordingEngine {
     return Promise.resolve(this.answers);
   }
 
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined> {
-    this.failed.push(sandboxRunId);
+  onSandboxRunFailed(sandboxRunId: string, outcome?: unknown): Promise<Error | undefined> {
+    this.failed.push({ sandboxRunId, outcome });
     return Promise.resolve(this.answers);
   }
 
@@ -416,5 +454,7 @@ interface SucceededCase {
 interface FailedCase {
   name: string;
   workflowType: WorkflowType;
+  result?: WorkerResult;
   engineOf: (all: RecordingEngines) => RecordingEngine;
+  want: Record<string, unknown> | undefined;
 }

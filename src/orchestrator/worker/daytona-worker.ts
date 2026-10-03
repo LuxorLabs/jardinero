@@ -6,6 +6,7 @@ import {
   DaytonaNotFoundError,
   DaytonaProcessExecutionTimeoutError,
   type CreateSandboxFromSnapshotParams,
+  type DaytonaConfig,
   type Sandbox,
 } from '@daytona/sdk';
 
@@ -55,6 +56,8 @@ const CREATE_TIMEOUT_SECONDS = 600;
 const EXIT_CODE_ATTEMPTS = 8;
 const EXIT_CODE_POLL_MS = 250;
 
+const DEFAULT_DAYTONA_API_URL = 'https://app.daytona.io/api';
+
 // Command results the session consumes, structural because the SDK does not
 // re-export its ExecuteResponse type from the package root.
 interface DaytonaExecResponse {
@@ -97,17 +100,9 @@ export class DaytonaSandboxProvider implements SandboxProvider {
     private readonly env = process.env,
     deps: Pick<DaytonaWorkerRunnerDeps, 'createClient'> = {},
   ) {
-    const apiUrl = env[config.worker.daytonaApiUrlEnv]?.trim();
-    this.apiTarget = daytonaApiTarget(apiUrl);
+    this.apiTarget = daytonaApiTarget(env[config.worker.daytonaApiUrlEnv]?.trim());
     this.createClient =
-      deps.createClient ??
-      (() => {
-        const apiKey = this.env[this.config.worker.daytonaApiKeyEnv];
-        if (!apiKey) {
-          throw new Error(`Missing ${this.config.worker.daytonaApiKeyEnv}.`);
-        }
-        return new Daytona({ apiKey, ...(apiUrl ? { apiUrl } : {}) });
-      });
+      deps.createClient ?? (() => new Daytona(daytonaClientConfig(this.config, this.env)));
   }
 
   async create(options: Record<string, unknown>, signal: AbortSignal): Promise<SandboxSession> {
@@ -385,6 +380,20 @@ export function daytonaSandboxName(value: string): string {
     .slice(0, 63)
     .replace(/-$/g, '');
   return normalized || `jardinero-${randomUUID().slice(0, 8)}`;
+}
+
+// daytonaClientConfig always names the endpoint: left to itself the SDK falls
+// back to DAYTONA_API_URL from the process env, and refuses to construct when a
+// working-directory .env also sets it, even to an empty value.
+export function daytonaClientConfig(config: AppConfig, env: NodeJS.ProcessEnv): DaytonaConfig {
+  const apiKey = env[config.worker.daytonaApiKeyEnv];
+  if (!apiKey) {
+    throw new Error(`Missing ${config.worker.daytonaApiKeyEnv}.`);
+  }
+  return {
+    apiKey,
+    apiUrl: env[config.worker.daytonaApiUrlEnv]?.trim() || DEFAULT_DAYTONA_API_URL,
+  };
 }
 
 function daytonaApiTarget(apiUrl: string | undefined): string {

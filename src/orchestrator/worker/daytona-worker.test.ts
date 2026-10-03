@@ -4,6 +4,7 @@ import { describe, test } from 'node:test';
 import {
   DaytonaNotFoundError,
   DaytonaProcessExecutionTimeoutError,
+  type DaytonaConfig,
   type Sandbox,
 } from '@daytona/sdk';
 
@@ -14,6 +15,7 @@ import { captureLogs } from '../../testing/logger.js';
 import {
   DaytonaSandboxProvider,
   DaytonaWorkerRunner,
+  daytonaClientConfig,
   daytonaSandboxCreateParams,
   daytonaSandboxName,
   unusedResourceOverrides,
@@ -570,6 +572,58 @@ describe('daytonaSandboxName', () => {
   test('When the value has no usable characters then should mint a name', () => {
     assert.match(daytonaSandboxName('___'), /^jardinero-[a-f0-9]{8}$/);
   });
+});
+
+describe('daytonaClientConfig', () => {
+  const cases: Array<{
+    name: string;
+    urlEnv?: string;
+    env: Record<string, string>;
+    want: DaytonaConfig | string;
+  }> = [
+    {
+      name: 'When the configured credential is absent then should refuse naming the variable',
+      env: { DAYTONA_API_URL: 'https://api.example.test/api' },
+      want: 'Missing DAYTONA_API_KEY.',
+    },
+    {
+      name: 'When an override is set then should pass it trimmed',
+      env: { DAYTONA_API_KEY: 'key', DAYTONA_API_URL: ' https://api.example.test/api ' },
+      want: { apiKey: 'key', apiUrl: 'https://api.example.test/api' },
+    },
+    {
+      name: 'When the override is blank then should name the public API',
+      env: { DAYTONA_API_KEY: 'key', DAYTONA_API_URL: '' },
+      want: { apiKey: 'key', apiUrl: 'https://app.daytona.io/api' },
+    },
+    {
+      name: 'When the override is absent then should name the public API',
+      env: { DAYTONA_API_KEY: 'key' },
+      want: { apiKey: 'key', apiUrl: 'https://app.daytona.io/api' },
+    },
+    {
+      name: 'When the override variable is renamed then should ignore `DAYTONA_API_URL`',
+      urlEnv: 'JARDINERO_DAYTONA_API_URL',
+      env: { DAYTONA_API_KEY: 'key', DAYTONA_API_URL: 'https://api.example.test/api' },
+      want: { apiKey: 'key', apiUrl: 'https://app.daytona.io/api' },
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      const config = daytonaConfig();
+      if (testCase.urlEnv) config.worker.daytonaApiUrlEnv = testCase.urlEnv;
+
+      let got: DaytonaConfig | string;
+      try {
+        got = daytonaClientConfig(config, testCase.env);
+      } catch (error) {
+        got = (error as Error).message;
+      }
+
+      assert.deepEqual(got, testCase.want);
+    });
+  }
 });
 
 interface FakeSandbox extends Sandbox {

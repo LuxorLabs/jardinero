@@ -10,6 +10,7 @@ import {
   type AgentKind,
   MAX_PROMPT_LENGTH,
 } from '../../workflows/agents.js';
+import { CODEX_AUTH_REVOKED } from '../../adapters/codex/codex-auth-revoked.js';
 import { type AppConfig, configuredRepositoryNames, workflowConcurrencies } from '../../config.js';
 import { nowMs } from '../../platform/time.js';
 import { REPLY_CAP_REACHED_NOTE } from '../../orchestrator/state-machines/execution.js';
@@ -603,6 +604,7 @@ function dashboardSnapshot(context: ApiContext): DashboardSnapshot {
     requires_attention: counts
       .filter((count) => AWAITING_A_PERSON_STATES.includes(count.workflowState))
       .reduce((total, count) => total + count.instanceCount, 0),
+    codex_auth_blocked: context.store.getHostBlock()?.reason === CODEX_AUTH_REVOKED,
   };
 }
 

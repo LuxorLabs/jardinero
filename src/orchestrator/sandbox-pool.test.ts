@@ -143,11 +143,27 @@ describe('SandboxPool.hasRoomFor', () => {
       },
       want: false,
     },
+    {
+      name: 'When Codex auth is revoked then should answer there is none',
+      fingerprint: 'dead',
+      arrange: () => {
+        store.setHostBlock({ reason: 'codex_auth_revoked', authFingerprint: 'dead' });
+      },
+      want: false,
+    },
+    {
+      name: 'When auth.json changed after a revocation then should have room',
+      fingerprint: 'fresh',
+      arrange: () => {
+        store.setHostBlock({ reason: 'codex_auth_revoked', authFingerprint: 'dead' });
+      },
+      want: true,
+    },
   ];
 
   for (const c of cases) {
     test(c.name, async () => {
-      const pool = createPool();
+      const pool = createPool(c.fingerprint ? () => c.fingerprint as string : undefined);
       runner.blockUntilReleased = true;
       c.arrange?.(pool);
       // The runner listens for the abort on its first turn, so stop() can only end a
@@ -591,13 +607,13 @@ let config: {
   maxConcurrentSandboxesByWorkflow: Partial<Record<WorkflowType, number>>;
 };
 
-function createPool(): SandboxPool {
+function createPool(authFingerprint?: () => string): SandboxPool {
   config = {
     maxConcurrentSandboxes: 4,
     maxWallClockMs: 60_000,
     maxConcurrentSandboxesByWorkflow: {},
   };
-  return new SandboxPool(store, runner, tasks, reporter, config);
+  return new SandboxPool(store, runner, tasks, reporter, config, authFingerprint);
 }
 
 function startSandboxRun(workflowType: WorkflowType = 'pr_maintainer'): SandboxRun {
@@ -690,6 +706,7 @@ interface StartCase {
 
 interface RoomCase {
   name: string;
+  fingerprint?: string;
   arrange?: (pool: SandboxPool) => void;
   want: boolean;
 }

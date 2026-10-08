@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { loadConfig } from '../../config.js';
+import { CODEX_AUTH_REVOKED } from '../codex/codex-auth-revoked.js';
+import { hostCodexAuthFingerprint } from '../codex/codex-auth.js';
 import type { Store } from '../../store/store.js';
 import { createTestStore } from '../../testing/store.js';
 import type { LinearReadDeps } from './linear-delivery.js';
@@ -360,6 +362,22 @@ describe('handleLinearDelivery', () => {
         reason: 'prompted_not_supported',
         assigned: [],
         sessionId: 'session-1',
+      },
+    },
+    {
+      name: 'When Codex login is revoked then should hand it over and name that',
+      arrange: (store) => {
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: {
+        handled: true,
+        reason: 'codex_auth_revoked',
+        assigned: ['JAR-42'],
+        sessionId: 'session-1',
+        repository: 'acme/orchestrator',
       },
     },
     {

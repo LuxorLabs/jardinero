@@ -188,6 +188,16 @@ export function DashboardShell({ tab }: { tab: DashboardTab }) {
           </>
         )}
 
+        {snapshot?.codex_auth_blocked && (
+          <div
+            role="alert"
+            className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-[13px] text-danger"
+          >
+            Codex login is revoked. Run <code>codex login</code> and write the new auth.json into
+            the secret store. No sandbox will start until that file changes.
+          </div>
+        )}
+
         <Suspense fallback={null}>
           {tab === 'overview' && <OverviewTab />}
           {tab === 'operation' && <OperationTab />}

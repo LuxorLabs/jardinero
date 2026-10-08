@@ -42,7 +42,10 @@ export interface FixImplementerConfig {
 export interface FixImplementerStateEngineInterface {
   onFindingReported(finding: Finding, logReviewerId?: string): Promise<Error | undefined>;
   onSandboxRunSucceeded(sandboxRunId: string, outcome: RunOutcome): Promise<Error | undefined>;
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined>;
+  onSandboxRunFailed(
+    sandboxRunId: string,
+    outcome?: { error?: string },
+  ): Promise<Error | undefined>;
   onPrMerged(ref: PullRequestRef): Promise<Error | undefined>;
   onPrClosed(ref: PullRequestRef): Promise<Error | undefined>;
   onOperatorRetry(fixImplementerId: string): Promise<Error | undefined>;
@@ -69,8 +72,11 @@ export class FixImplementerStateEngine implements FixImplementerStateEngineInter
     return onSandboxRunSucceeded(this, sandboxRunId, outcome);
   }
 
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined> {
-    return onSandboxRunFailed(this, sandboxRunId);
+  onSandboxRunFailed(
+    sandboxRunId: string,
+    outcome?: { error?: string },
+  ): Promise<Error | undefined> {
+    return onSandboxRunFailed(this, sandboxRunId, outcome);
   }
 
   onPrMerged(ref: PullRequestRef): Promise<Error | undefined> {

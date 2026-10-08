@@ -37,6 +37,12 @@ export function hostCodexAuthExists(): boolean {
   }
 }
 
+// The hash of the file the runner forwards. A new login changes it, which is how
+// a stored Codex revocation knows the operator replaced auth.json.
+export function hostCodexAuthFingerprint(): string {
+  return readHostCodexAuth()?.hash ?? '';
+}
+
 export function resetCodexAuthCacheForTest(): void {
   hostCodexAuthCache = null;
   hostCodexCredentialsCache = null;

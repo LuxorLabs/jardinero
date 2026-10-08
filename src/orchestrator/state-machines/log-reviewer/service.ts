@@ -26,7 +26,10 @@ export interface LogReviewerConfig {
 export interface LogReviewerStateEngineInterface {
   onScheduledScan(target: ScanTarget, requestRouterId?: string): Promise<Error | undefined>;
   onSandboxRunSucceeded(sandboxRunId: string, outcome: ScanOutcome): Promise<Error | undefined>;
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined>;
+  onSandboxRunFailed(
+    sandboxRunId: string,
+    outcome?: { error?: string },
+  ): Promise<Error | undefined>;
   onPeriodicCheck(logReviewerId: string): Promise<Error | undefined>;
   onSystemRecovery(logReviewerId: string): Promise<Error | undefined>;
 }
@@ -47,8 +50,11 @@ export class LogReviewerStateEngine implements LogReviewerStateEngineInterface {
     return onSandboxRunSucceeded(this, sandboxRunId, outcome);
   }
 
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined> {
-    return onSandboxRunFailed(this, sandboxRunId);
+  onSandboxRunFailed(
+    sandboxRunId: string,
+    outcome?: { error?: string },
+  ): Promise<Error | undefined> {
+    return onSandboxRunFailed(this, sandboxRunId, outcome);
   }
 
   onPeriodicCheck(logReviewerId: string): Promise<Error | undefined> {

@@ -1,3 +1,9 @@
+import {
+  CODEX_AUTH_REVOKED,
+  codexAuthIsBlocked,
+  isCodexAuthRevokedError,
+  recordCodexAuthRevoked,
+} from '../../../adapters/codex/codex-auth-revoked.js';
 import type { PrMaintainer, PrMaintainerState } from '../../../store/types.js';
 import {
   type AgentPullRequestFacts,
@@ -231,6 +237,11 @@ export async function onPrComment(
   if (!taken) return undefined;
   const instance = taken.instance;
   try {
+    if (codexAuthIsBlocked(engine.store)) {
+      await markCommentPickedUp(engine, instance, data);
+      if (instance.workflowState === 'prm_working') return undefined;
+      return await parkForCodexAuth(engine, instance);
+    }
     switch (instance.workflowState) {
       // The pass in flight consumes this ask when it ends, so the comment is taken
       // and marked even though it gets no pass of its own.
@@ -358,6 +369,9 @@ export async function onOperatorRetry(
   try {
     switch (instance.workflowState) {
       case 'prm_attempts_exhausted':
+        if (codexAuthIsBlocked(engine.store)) {
+          return await parkForCodexAuth(engine, instance);
+        }
         instance.attemptCount = 0;
         instance.needsHumanReason = null;
         return setStateAndRun(engine, instance, 'prm_pending');
@@ -505,11 +519,16 @@ export async function onSandboxRunSucceeded(
 export async function onSandboxRunFailed(
   engine: PrMaintainerStateEngine,
   sandboxRunId: string,
+  outcome: { error?: string } = {},
 ): Promise<Error | undefined> {
   const taken = await takePrMaintainerBySandboxRun(engine, sandboxRunId);
   if (!taken) return undefined;
   const instance = taken.instance;
   try {
+    if (isCodexAuthRevokedError(outcome.error) && instance.workflowState === 'prm_working') {
+      instance.sandboxRunId = null;
+      return await parkForCodexAuth(engine, instance);
+    }
     switch (instance.workflowState) {
       case 'prm_working':
         instance.sandboxRunId = null;
@@ -909,6 +928,32 @@ async function takePrMaintainerBySandboxRun(
     return undefined;
   }
   return taken;
+}
+
+async function parkForCodexAuth(
+  engine: PrMaintainerStateEngine,
+  instance: PrMaintainer,
+): Promise<Error | undefined> {
+  const alreadyTold = instance.needsHumanReason === CODEX_AUTH_REVOKED;
+  instance.needsHumanReason = CODEX_AUTH_REVOKED;
+  recordCodexAuthRevoked(engine.store);
+  const repository = engine.store.getRepositoryById(instance.repositoryId);
+  if (!alreadyTold && repository) {
+    const error = await engine.github.reportCodexAuthRevoked(
+      repository.fullName,
+      instance.pullRequestNumber,
+    );
+    if (error) {
+      engine.store.appendEvent({
+        eventType: 'orchestrator.github_reply_failed',
+        workflowType: 'pr_maintainer',
+        workflowInstanceId: instance.id,
+        repositoryId: instance.repositoryId,
+        metadata: { pull_request_number: instance.pullRequestNumber, error: error.message },
+      });
+    }
+  }
+  return setState(engine, instance, 'prm_attempts_exhausted');
 }
 
 // prMaintainerLockKey is taken by every entry point, so two events for one pull request

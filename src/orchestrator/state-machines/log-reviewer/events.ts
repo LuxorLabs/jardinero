@@ -1,3 +1,7 @@
+import {
+  isCodexAuthRevokedError,
+  recordCodexAuthRevoked,
+} from '../../../adapters/codex/codex-auth-revoked.js';
 import { nowMs } from '../../../platform/time.js';
 import type { LogReviewer } from '../../../store/types.js';
 import { consumeRequest, recordWorkflowInstanceOpened, type Lock } from '../execution.js';
@@ -123,11 +127,17 @@ export async function onSandboxRunSucceeded(
 export async function onSandboxRunFailed(
   engine: LogReviewerStateEngine,
   sandboxRunId: string,
+  outcome: { error?: string } = {},
 ): Promise<Error | undefined> {
   const taken = await takeLogReviewerBySandboxRun(engine, sandboxRunId);
   if (!taken) return undefined;
   const instance = taken.instance;
   try {
+    if (isCodexAuthRevokedError(outcome.error) && instance.workflowState === 'lr_working') {
+      instance.sandboxRunId = null;
+      recordCodexAuthRevoked(engine.store);
+      return setState(engine, instance, 'lr_failed');
+    }
     switch (instance.workflowState) {
       case 'lr_working':
         // Pending on the same instance keeps the cron from opening a second scan of the

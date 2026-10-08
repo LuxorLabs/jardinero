@@ -34,7 +34,6 @@ export function codexAuthIsBlocked(
 ): boolean {
   const block = store.getHostBlock();
   if (!block) return false;
-  if (block.reason !== CODEX_AUTH_REVOKED) return true;
   if (block.authFingerprint !== fingerprint) {
     store.clearHostBlock();
     return false;

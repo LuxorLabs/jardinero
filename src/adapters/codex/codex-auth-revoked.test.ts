@@ -113,13 +113,6 @@ describe('codexAuthIsBlocked', () => {
       want: false,
       wantCleared: true,
     },
-    {
-      name: 'When a different host block is stored then should stay blocked',
-      block: { reason: 'other', authFingerprint: 'dead', createdAt: 1, updatedAt: 1 },
-      fingerprint: 'fresh',
-      want: true,
-      wantCleared: false,
-    },
   ];
 
   for (const c of cases) {

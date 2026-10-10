@@ -1,3 +1,4 @@
+import { CODEX_AUTH_REVOKED_MESSAGE } from '../../adapters/codex/codex-auth-revoked.js';
 import type { AgentActivityContent } from '../../adapters/linear/linear-api.js';
 import { createAgentActivity } from '../../adapters/linear/linear-api.js';
 import type {
@@ -120,6 +121,12 @@ function ackLinearSession(context: LinearWebhookContext, outcome: LinearDelivery
 // asking.
 function linearAckContent(outcome: LinearDeliveryOutcome): AgentActivityContent | undefined {
   const issue = outcome.issueIdentifier ?? 'the issue';
+  if (outcome.handled && outcome.reason === 'codex_auth_revoked') {
+    return {
+      type: 'error',
+      body: CODEX_AUTH_REVOKED_MESSAGE,
+    };
+  }
   if (outcome.handled) {
     return {
       type: 'thought',

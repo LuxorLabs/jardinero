@@ -1,3 +1,8 @@
+import {
+  CODEX_AUTH_REVOKED,
+  isCodexAuthRevokedError,
+  recordCodexAuthRevoked,
+} from '../../../adapters/codex/codex-auth-revoked.js';
 import { recordWorkflowInstanceOpened } from '../execution.js';
 import type { CreateRequestInput } from '../../../store/store.js';
 import type { RequestRouter, SubjectType } from '../../../store/types.js';
@@ -90,6 +95,7 @@ export async function onSandboxRunSucceeded(
 export async function onSandboxRunFailed(
   engine: RequestRouterStateEngine,
   sandboxRunId: string,
+  outcome: { error?: string } = {},
 ): Promise<Error | undefined> {
   const taken = await takeRequestRouterBySandboxRun(engine, sandboxRunId);
   if (!taken) return undefined;
@@ -98,7 +104,12 @@ export async function onSandboxRunFailed(
     switch (instance.workflowState) {
       case 'rr_routing':
         instance.sandboxRunId = null;
-        instance.resolutionNote = 'routing_run_failed';
+        if (isCodexAuthRevokedError(outcome.error)) {
+          instance.resolutionNote = CODEX_AUTH_REVOKED;
+          recordCodexAuthRevoked(engine.store);
+        } else {
+          instance.resolutionNote = 'routing_run_failed';
+        }
         return setState(engine, instance, 'rr_unresolvable');
 
       default:

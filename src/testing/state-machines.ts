@@ -97,6 +97,7 @@ export class FakeGitHub
   readonly released: number[] = [];
   readonly implementationPrLookups: string[] = [];
   readonly pickedUp: Array<{ repositoryFullName: string } & PickedUpComment> = [];
+  readonly authRevokedOn: Array<{ repositoryFullName: string; pullRequestNumber: number }> = [];
   refusal: Error | undefined;
   readFailure: Error | undefined;
   pickupRefusal: Error | undefined;
@@ -140,6 +141,15 @@ export class FakeGitHub
   ): Promise<Error | undefined> {
     if (this.pickupRefusal) return Promise.resolve(this.pickupRefusal);
     this.pickedUp.push({ repositoryFullName, ...comment });
+    return Promise.resolve(undefined);
+  }
+
+  reportCodexAuthRevoked(
+    repositoryFullName: string,
+    pullRequestNumber: number,
+  ): Promise<Error | undefined> {
+    if (this.refusal) return Promise.resolve(this.refusal);
+    this.authRevokedOn.push({ repositoryFullName, pullRequestNumber });
     return Promise.resolve(undefined);
   }
 }

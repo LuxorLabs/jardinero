@@ -247,7 +247,7 @@ describe('InstanceSandboxRunOutcomeReporter.reportFailed', () => {
       name: 'When a routing run failed then should tell its machine',
       workflowType: 'request_router',
       engineOf: (all) => all.requestRouter,
-      want: undefined,
+      want: {},
     },
     {
       name: 'When an implementer run failed after opening a pull request then should hand over its number',
@@ -257,7 +257,7 @@ describe('InstanceSandboxRunOutcomeReporter.reportFailed', () => {
         openedPrUrl: 'https://github.com/acme/web.app/pull/4688',
       },
       engineOf: (all) => all.linearImplementer,
-      want: { pullRequestNumber: 4688 },
+      want: { pullRequestNumber: 4688, error: 'codex_exec_failed' },
     },
     {
       name: 'When an implementer run failed without a result then should hand over no pull request',
@@ -266,22 +266,29 @@ describe('InstanceSandboxRunOutcomeReporter.reportFailed', () => {
       want: {},
     },
     {
+      name: 'When a run failed because Codex login is revoked then should hand over that error',
+      workflowType: 'linear_implementer',
+      result: { ...failed(), error: 'codex_auth_revoked' },
+      engineOf: (all) => all.linearImplementer,
+      want: { error: 'codex_auth_revoked' },
+    },
+    {
       name: 'When a fix run failed then should tell its machine',
       workflowType: 'fix_implementer',
       engineOf: (all) => all.fixImplementer,
-      want: undefined,
+      want: {},
     },
     {
       name: 'When a maintenance run failed then should tell its machine',
       workflowType: 'pr_maintainer',
       engineOf: (all) => all.prMaintainer,
-      want: undefined,
+      want: {},
     },
     {
       name: 'When a scan failed then should tell its machine',
       workflowType: 'log_reviewer',
       engineOf: (all) => all.logReviewer,
-      want: undefined,
+      want: {},
     },
   ];
 

@@ -1,3 +1,8 @@
+import {
+  CODEX_AUTH_REVOKED,
+  isCodexAuthRevokedError,
+  recordCodexAuthRevoked,
+} from '../../../adapters/codex/codex-auth-revoked.js';
 import { asError, recordWorkflowInstanceOpened } from '../execution.js';
 import type { FixImplementerTargetScope } from '../../../store/store.js';
 import type { FixImplementer } from '../../../store/types.js';
@@ -154,11 +159,18 @@ export async function onSandboxRunSucceeded(
 export async function onSandboxRunFailed(
   engine: FixImplementerStateEngine,
   sandboxRunId: string,
+  outcome: { error?: string } = {},
 ): Promise<Error | undefined> {
   const taken = await takeFixImplementerBySandboxRun(engine, sandboxRunId);
   if (!taken) return undefined;
   const instance = taken.instance;
   try {
+    if (isCodexAuthRevokedError(outcome.error) && instance.workflowState === 'fi_implementing') {
+      instance.sandboxRunId = null;
+      instance.needsHumanReason = CODEX_AUTH_REVOKED;
+      recordCodexAuthRevoked(engine.store);
+      return setState(engine, instance, 'fi_needs_human');
+    }
     switch (instance.workflowState) {
       case 'fi_implementing':
         instance.sandboxRunId = null;

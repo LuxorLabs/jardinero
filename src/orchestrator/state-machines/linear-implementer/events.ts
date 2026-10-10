@@ -1,3 +1,9 @@
+import {
+  CODEX_AUTH_REVOKED,
+  codexAuthIsBlocked,
+  isCodexAuthRevokedError,
+  recordCodexAuthRevoked,
+} from '../../../adapters/codex/codex-auth-revoked.js';
 import type { LinearImplementer, VerifierVerdict } from '../../../store/types.js';
 import { asError, consumeRequest, recordWorkflowInstanceOpened, type Lock } from '../execution.js';
 import { runLinearImplementerFSM, setState, UnsupportedStateError } from './engine.js';
@@ -28,6 +34,7 @@ export interface RunOutcome {
   // A run that ended without producing a verdict at all is broken, not negative,
   // and gets a bounded number of re-runs rather than counting as a rejection.
   hasVerdict?: boolean;
+  error?: string;
 }
 
 interface TakenLinearImplementer {
@@ -53,6 +60,9 @@ export async function onIssueAssigned(
       // one whose dispatch is still owed.
       case 'li_pending':
         consumeRequest(engine.store, 'linear_implementer', requestRouterId, instance);
+        if (codexAuthIsBlocked(engine.store)) {
+          return await parkForCodexAuth(engine, instance, false);
+        }
         return runLinearImplementerFSM(engine, instance);
 
       // Already being worked, and re-assigning is not a second ticket: the pass in
@@ -66,12 +76,18 @@ export async function onIssueAssigned(
       // Re-assigning something we gave up on is a person asking again.
       case 'li_needs_human':
         consumeRequest(engine.store, 'linear_implementer', requestRouterId, instance);
+        if (codexAuthIsBlocked(engine.store)) {
+          return await parkForCodexAuth(engine, instance, false);
+        }
         return resumeWithFreshBudget(engine, instance);
 
       // The pull request was closed without merging, so the ticket is still
       // open work and delegating it again is a second pass.
       case 'li_abandoned':
         consumeRequest(engine.store, 'linear_implementer', requestRouterId, instance);
+        if (codexAuthIsBlocked(engine.store)) {
+          return await parkForCodexAuth(engine, instance, false);
+        }
         return resumeWithFreshBudget(engine, instance);
 
       // Already delivered. Re-assigning is refused: this one is done, and whatever is
@@ -106,6 +122,9 @@ export async function onIssueCommented(
         return undefined;
 
       case 'li_needs_human':
+        if (codexAuthIsBlocked(engine.store)) {
+          return await parkForCodexAuth(engine, instance, false);
+        }
         return resumeWithFreshBudget(engine, instance);
 
       case 'li_done':
@@ -230,6 +249,14 @@ export async function onSandboxRunFailed(
   if (!taken) return undefined;
   const instance = taken.instance;
   try {
+    if (
+      isCodexAuthRevokedError(outcome.error) &&
+      (instance.workflowState === 'li_implementing' || instance.workflowState === 'li_verifying')
+    ) {
+      instance.sandboxRunId = null;
+      instance.pullRequestNumber = outcome.pullRequestNumber ?? instance.pullRequestNumber;
+      return await parkForCodexAuth(engine, instance);
+    }
     switch (instance.workflowState) {
       case 'li_implementing':
         instance.sandboxRunId = null;
@@ -295,6 +322,9 @@ export async function onOperatorRetry(
   try {
     switch (instance.workflowState) {
       case 'li_needs_human':
+        if (codexAuthIsBlocked(engine.store)) {
+          return await parkForCodexAuth(engine, instance, false);
+        }
         return resumeWithFreshBudget(engine, instance);
 
       // Nothing to retry: the work is either owed, in flight, or finished.
@@ -680,6 +710,28 @@ async function takeLinearImplementerBySandboxRun(
     return undefined;
   }
   return taken;
+}
+
+async function parkForCodexAuth(
+  engine: LinearImplementerStateEngine,
+  instance: LinearImplementer,
+  writeBack = true,
+): Promise<Error | undefined> {
+  instance.needsHumanReason = CODEX_AUTH_REVOKED;
+  recordCodexAuthRevoked(engine.store);
+  const sessionId = instance.linearSessionId;
+  if (writeBack && sessionId && engine.linear) {
+    const error = await engine.linear.reportCodexAuthRevoked(sessionId);
+    if (error) {
+      engine.store.appendEvent({
+        eventType: 'orchestrator.linear_reply_failed',
+        workflowType: 'linear_implementer',
+        workflowInstanceId: instance.id,
+        metadata: { session_id: sessionId, error: error.message },
+      });
+    }
+  }
+  return setState(engine, instance, 'li_needs_human');
 }
 
 // linearImplementerLockKey is taken by every entry point, so two events for one ticket

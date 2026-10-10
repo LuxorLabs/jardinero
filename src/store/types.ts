@@ -222,6 +222,13 @@ export interface SandboxRun {
   endedAt: number | null;
 }
 
+export interface HostBlock {
+  reason: string;
+  authFingerprint: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface EventLogEntry {
   id: string;
   eventType: string;

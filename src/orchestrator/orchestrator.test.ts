@@ -95,6 +95,7 @@ function build(): Orchestrator {
       markReadyForReview: () => Promise.resolve(undefined),
       findOpenImplementationPullRequest: () => Promise.resolve(undefined),
       markCommentPickedUp: () => Promise.resolve(undefined),
+      reportCodexAuthRevoked: () => Promise.resolve(undefined),
     },
   });
 }

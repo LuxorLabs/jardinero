@@ -170,8 +170,8 @@ importers:
         specifier: 0.214.0
         version: 0.214.0(debug@4.4.3)
       '@tenkicloud/sandbox':
-        specifier: 1.2.0
-        version: 1.2.0
+        specifier: 1.3.0
+        version: 1.3.0
       dotenv:
         specifier: 18.0.4
         version: 18.0.4
@@ -1420,8 +1420,8 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@tenkicloud/sandbox@1.2.0':
-    resolution: {integrity: sha512-yFIPosWjnQ1M7h7rc6/jYIgFb0l2oWlXd5O8euoOQuL6uuOOCf/6huv1goyf/TO88IZWfT4OUoZZn1A/LTOkRg==}
+  '@tenkicloud/sandbox@1.3.0':
+    resolution: {integrity: sha512-wJ5dFLs7cZJl87ATP0MAZ0r8FIeYw1EorKu+JpQFxwwq6OYplewlGvpddBaOn1hLw601QL/jHXJzAKy8e85zvA==}
     engines: {node: '>=18'}
 
   '@types/node@25.9.8':
@@ -3595,7 +3595,7 @@ snapshots:
       tailwindcss: 4.3.3
       vite: 8.3.1(@types/node@25.9.8)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  '@tenkicloud/sandbox@1.2.0':
+  '@tenkicloud/sandbox@1.3.0':
     dependencies:
       '@bufbuild/protobuf': 2.12.1
       '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.12.1)

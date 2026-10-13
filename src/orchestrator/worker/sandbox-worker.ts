@@ -640,10 +640,6 @@ export class SandboxWorkerRunner implements SandboxRunner {
     const isLogReview = context.task.workflow === 'log_review';
     const options: Record<string, unknown> = {
       name: `agent-${context.task.workflow}-${context.sandboxRun.id.slice(0, 8)}`,
-      // log_review is light regardless of repo, so it keeps the small box even when a
-      // repo has a big `resources` override; per-repo sizing applies to the rest.
-      cpuCores: isLogReview ? 2 : (resources?.cpuCores ?? 4),
-      memoryMb: isLogReview ? 4096 : (resources?.memoryMb ?? 8192),
       allowInbound: false,
       allowOutbound: true,
       maxDurationMs: context.maxWallClockMs,
@@ -663,6 +659,15 @@ export class SandboxWorkerRunner implements SandboxRunner {
         [SANDBOX_METADATA.workflowInstance]: `${context.sandboxRun.workflowType}:${context.sandboxRun.workflowInstanceId}`,
       },
     };
+    // A sandbox restores at its image's native size; Tenki refuses a request below
+    // that, and Daytona ignores the request entirely. A size is sent only to size up
+    // for a repo whose runtime gate needs more cores or memory than its image was
+    // built with (`resources`). log_review carries no such need, so it always takes
+    // the native size, even for a repo that set `resources`.
+    if (!isLogReview && resources) {
+      options.cpuCores = resources.cpuCores;
+      options.memoryMb = resources.memoryMb;
+    }
     const image = resolveWorkerImage(this.config, repo);
     if (image) {
       options.image = image;

@@ -1310,6 +1310,70 @@ describe('repo secret envs in the sandbox session', () => {
   }
 });
 
+describe('sandbox create sizing', () => {
+  const RESOURCES = { cpuCores: 8, memoryMb: 16384 };
+  const cases: Array<{
+    name: string;
+    task: SandboxTask;
+    logReview?: boolean;
+    resources?: { cpuCores: number; memoryMb: number };
+    wantCpu: number | undefined;
+    wantMemory: number | undefined;
+  }> = [
+    {
+      name: `When the run is log_review then should omit cpu/memory so the image's native size is used`,
+      task: { workflow: 'log_review', payload: { repo: 'acme/webapp' }, promptOverrides: {} },
+      logReview: true,
+      wantCpu: undefined,
+      wantMemory: undefined,
+    },
+    {
+      name: `When log_review's repo sets a resources override then should still omit so it takes the native size`,
+      task: { workflow: 'log_review', payload: { repo: 'acme/webapp' }, promptOverrides: {} },
+      logReview: true,
+      resources: RESOURCES,
+      wantCpu: undefined,
+      wantMemory: undefined,
+    },
+    {
+      name: `When a non-log_review repo sets no resources override then should omit cpu/memory`,
+      task: linearTask({}),
+      wantCpu: undefined,
+      wantMemory: undefined,
+    },
+    {
+      name: `When a non-log_review repo sets a resources override then should send that size`,
+      task: linearTask({}),
+      resources: RESOURCES,
+      wantCpu: 8,
+      wantMemory: 16384,
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const creates: Array<Record<string, unknown>> = [];
+      const repo = c.task.payload.repo as string;
+      const runner = fakeRunner([fakeSession('only', operations)], operations, {
+        captureCreates: creates,
+        config: (config) => {
+          config.mcp.grafana.enabled = false;
+          if (c.resources) config.worker.repos[repo] = { resources: c.resources };
+        },
+      });
+
+      const sandboxRun = c.logReview
+        ? { ...fakeSandboxRun(), agentName: 'LogReviewer', workflowType: 'log_reviewer' as const }
+        : fakeSandboxRun();
+      await runner.run(fakeContext([], new AbortController(), c.task, sandboxRun));
+
+      assert.equal(creates[0]?.cpuCores, c.wantCpu);
+      assert.equal(creates[0]?.memoryMb, c.wantMemory);
+    });
+  }
+});
+
 describe('checking out the pull request a pass continues', () => {
   const cases: Array<{
     name: string;

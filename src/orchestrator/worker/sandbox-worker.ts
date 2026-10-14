@@ -659,11 +659,9 @@ export class SandboxWorkerRunner implements SandboxRunner {
         [SANDBOX_METADATA.workflowInstance]: `${context.sandboxRun.workflowType}:${context.sandboxRun.workflowInstanceId}`,
       },
     };
-    // A sandbox restores at its image's native size; Tenki refuses a request below
-    // that, and Daytona ignores the request entirely. A size is sent only to size up
-    // for a repo whose runtime gate needs more cores or memory than its image was
-    // built with (`resources`). log_review carries no such need, so it always takes
-    // the native size, even for a repo that set `resources`.
+    // A sandbox starts at its image's size: Tenki refuses a smaller request, Freestyle
+    // only grows to it and Daytona ignores it. So a size is sent only for a repo whose
+    // `resources` asks for more, and never for log_review, which needs no more.
     if (!isLogReview && resources) {
       options.cpuCores = resources.cpuCores;
       options.memoryMb = resources.memoryMb;

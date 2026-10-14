@@ -1315,34 +1315,25 @@ describe('sandbox create sizing', () => {
   const cases: Array<{
     name: string;
     task: SandboxTask;
-    logReview?: boolean;
     resources?: { cpuCores: number; memoryMb: number };
     wantCpu: number | undefined;
     wantMemory: number | undefined;
   }> = [
     {
-      name: `When the run is log_review then should omit cpu/memory so the image's native size is used`,
+      name: 'When a `log_review` repo sets `resources` then should omit cpu and memory',
       task: { workflow: 'log_review', payload: { repo: 'acme/webapp' }, promptOverrides: {} },
-      logReview: true,
-      wantCpu: undefined,
-      wantMemory: undefined,
-    },
-    {
-      name: `When log_review's repo sets a resources override then should still omit so it takes the native size`,
-      task: { workflow: 'log_review', payload: { repo: 'acme/webapp' }, promptOverrides: {} },
-      logReview: true,
       resources: RESOURCES,
       wantCpu: undefined,
       wantMemory: undefined,
     },
     {
-      name: `When a non-log_review repo sets no resources override then should omit cpu/memory`,
+      name: 'When a repo sets no `resources` then should omit cpu and memory',
       task: linearTask({}),
       wantCpu: undefined,
       wantMemory: undefined,
     },
     {
-      name: `When a non-log_review repo sets a resources override then should send that size`,
+      name: 'When a repo sets `resources` then should send that size',
       task: linearTask({}),
       resources: RESOURCES,
       wantCpu: 8,
@@ -1363,9 +1354,10 @@ describe('sandbox create sizing', () => {
         },
       });
 
-      const sandboxRun = c.logReview
-        ? { ...fakeSandboxRun(), agentName: 'LogReviewer', workflowType: 'log_reviewer' as const }
-        : fakeSandboxRun();
+      const sandboxRun =
+        c.task.workflow === 'log_review'
+          ? { ...fakeSandboxRun(), agentName: 'LogReviewer', workflowType: 'log_reviewer' as const }
+          : fakeSandboxRun();
       await runner.run(fakeContext([], new AbortController(), c.task, sandboxRun));
 
       assert.equal(creates[0]?.cpuCores, c.wantCpu);

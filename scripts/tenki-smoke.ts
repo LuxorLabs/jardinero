@@ -110,8 +110,9 @@ function createSessionOptions(): Record<string, unknown> {
   }
   const options: Record<string, unknown> = {
     name: `jardinero-smoke-${Date.now()}`,
-    cpuCores: 1,
-    memoryMb: 2048,
+    // No cpu/memory: the sandbox restores at the image's native size, the same path
+    // production takes for a repo with no `resources` override. Requesting a size below
+    // what the snapshot was captured at is refused by Tenki.
     allowInbound: false,
     allowOutbound: true,
     maxDurationMs: 10 * 60_000,

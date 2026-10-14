@@ -1310,6 +1310,62 @@ describe('repo secret envs in the sandbox session', () => {
   }
 });
 
+describe('sandbox create sizing', () => {
+  const RESOURCES = { cpuCores: 8, memoryMb: 16384 };
+  const cases: Array<{
+    name: string;
+    task: SandboxTask;
+    resources?: { cpuCores: number; memoryMb: number };
+    wantCpu: number | undefined;
+    wantMemory: number | undefined;
+  }> = [
+    {
+      name: 'When a `log_review` repo sets `resources` then should omit cpu and memory',
+      task: { workflow: 'log_review', payload: { repo: 'acme/webapp' }, promptOverrides: {} },
+      resources: RESOURCES,
+      wantCpu: undefined,
+      wantMemory: undefined,
+    },
+    {
+      name: 'When a repo sets no `resources` then should omit cpu and memory',
+      task: linearTask({}),
+      wantCpu: undefined,
+      wantMemory: undefined,
+    },
+    {
+      name: 'When a repo sets `resources` then should send that size',
+      task: linearTask({}),
+      resources: RESOURCES,
+      wantCpu: 8,
+      wantMemory: 16384,
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const creates: Array<Record<string, unknown>> = [];
+      const repo = c.task.payload.repo as string;
+      const runner = fakeRunner([fakeSession('only', operations)], operations, {
+        captureCreates: creates,
+        config: (config) => {
+          config.mcp.grafana.enabled = false;
+          if (c.resources) config.worker.repos[repo] = { resources: c.resources };
+        },
+      });
+
+      const sandboxRun =
+        c.task.workflow === 'log_review'
+          ? { ...fakeSandboxRun(), agentName: 'LogReviewer', workflowType: 'log_reviewer' as const }
+          : fakeSandboxRun();
+      await runner.run(fakeContext([], new AbortController(), c.task, sandboxRun));
+
+      assert.equal(creates[0]?.cpuCores, c.wantCpu);
+      assert.equal(creates[0]?.memoryMb, c.wantMemory);
+    });
+  }
+});
+
 describe('checking out the pull request a pass continues', () => {
   const cases: Array<{
     name: string;

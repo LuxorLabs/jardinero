@@ -202,7 +202,7 @@ That one command creates the VM, streams the setup to your terminal, captures th
 
 `--linux-user root` is not optional despite the CLI's help offering root as the default: a base image that already carries a uid 1000 user gets that user instead, and the setup installs packages and writes under `/etc`.
 
-The snapshot must contain `git`, `gh`, Node 24, Codex, `sudo` and the repository toolchain. The runner creates the `tenki` user, injects the run credentials, and grows CPU or memory when the configured floor exceeds the snapshot's current size. Freestyle resources are grow-only, so choose `freestyle/ubuntu-sm` as the build base if log-review runs must stay at their 2 vCPU and 4 GiB shape.
+The snapshot must contain `git`, `gh`, Node 24, Codex, `sudo` and the repository toolchain. The runner creates the `tenki` user, injects the run credentials, and grows CPU or memory when a repository's `resources` override exceeds the snapshot's size. Every other run, log review included, runs at the snapshot's size, so size the snapshot for the heaviest gate it must run.
 
 Put the snapshot id or slug in the same image field:
 

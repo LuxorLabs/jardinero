@@ -22,7 +22,10 @@ export interface RequestRouterConfig {
 export interface RequestRouterStateEngineInterface {
   onRequestReceived(input: CreateRequestInput): Promise<Error | undefined>;
   onSandboxRunSucceeded(sandboxRunId: string, outcome: RoutingOutcome): Promise<Error | undefined>;
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined>;
+  onSandboxRunFailed(
+    sandboxRunId: string,
+    outcome?: { error?: string },
+  ): Promise<Error | undefined>;
   onPeriodicCheck(requestRouterId: string): Promise<Error | undefined>;
   onSystemRecovery(requestRouterId: string): Promise<Error | undefined>;
 }
@@ -44,8 +47,11 @@ export class RequestRouterStateEngine implements RequestRouterStateEngineInterfa
     return onSandboxRunSucceeded(this, sandboxRunId, outcome);
   }
 
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined> {
-    return onSandboxRunFailed(this, sandboxRunId);
+  onSandboxRunFailed(
+    sandboxRunId: string,
+    outcome?: { error?: string },
+  ): Promise<Error | undefined> {
+    return onSandboxRunFailed(this, sandboxRunId, outcome);
   }
 
   onPeriodicCheck(requestRouterId: string): Promise<Error | undefined> {

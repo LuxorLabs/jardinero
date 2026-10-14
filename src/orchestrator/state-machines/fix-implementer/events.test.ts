@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { Store } from '../../../store/store.js';
 import type { FixImplementer, FixImplementerState, SandboxRunState } from '../../../store/types.js';
+import { CODEX_AUTH_REVOKED } from '../../../adapters/codex/codex-auth-revoked.js';
 import { FakeGitHub, FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
 import { createTestStore } from '../../../testing/store.js';
 import { setState } from './engine.js';
@@ -316,6 +317,12 @@ describe('onSandboxRunSucceeded', () => {
 describe('onSandboxRunFailed', () => {
   const cases: RunOutcomeCase[] = [
     {
+      name: 'When Codex login is revoked then should park without retrying',
+      from: 'fi_implementing',
+      error: CODEX_AUTH_REVOKED,
+      want: { state: 'fi_needs_human', needsHumanReason: CODEX_AUTH_REVOKED },
+    },
+    {
       name: 'When the first fix run died then should run the same pass again',
       from: 'fi_implementing',
       want: { state: 'fi_implementing', startedRuns: 1 },
@@ -352,7 +359,7 @@ describe('onSandboxRunFailed', () => {
       }
       const runId = attachRun(instance, c);
 
-      const error = await onSandboxRunFailed(engine, runId);
+      const error = await onSandboxRunFailed(engine, runId, { error: c.error });
 
       assertOutcome(c.want, instance, error);
     });
@@ -1057,6 +1064,7 @@ interface RunOutcomeCase {
   name: string;
   from: FixImplementerState;
   outcome?: RunOutcome;
+  error?: string;
   detachRun?: boolean;
   foreignRun?: boolean;
   lostRuns?: number;

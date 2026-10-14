@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { Store } from '../../../store/store.js';
 import type { LogReviewer, LogReviewerState, SandboxRunState } from '../../../store/types.js';
+import { CODEX_AUTH_REVOKED } from '../../../adapters/codex/codex-auth-revoked.js';
 import { FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
 import { createTestStore } from '../../../testing/store.js';
 import { setState } from './engine.js';
@@ -162,6 +163,12 @@ describe('onSandboxRunSucceeded', () => {
 describe('onSandboxRunFailed', () => {
   const cases: RunOutcomeCase[] = [
     {
+      name: 'When Codex login is revoked then should fail the scan',
+      from: 'lr_working',
+      error: CODEX_AUTH_REVOKED,
+      want: { state: 'lr_failed' },
+    },
+    {
       name: 'When the scan failed then should keep the same scan pending',
       from: 'lr_working',
       want: { state: 'lr_pending' },
@@ -184,7 +191,7 @@ describe('onSandboxRunFailed', () => {
       const instance = openInstanceIn(c.from);
       const runId = attachRun(instance, c);
 
-      const error = await onSandboxRunFailed(engine, runId);
+      const error = await onSandboxRunFailed(engine, runId, { error: c.error });
 
       assertOutcome(c.want, instance, error);
     });
@@ -417,6 +424,7 @@ interface ScanCase {
 interface RunOutcomeCase {
   name: string;
   from: LogReviewerState;
+  error?: string;
   detachRun?: boolean;
   foreignRun?: boolean;
   want: Want;

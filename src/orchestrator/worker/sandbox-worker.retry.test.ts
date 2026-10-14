@@ -805,6 +805,13 @@ describe('a pass that declares no pull request', () => {
       want: { status: 'succeeded', error: undefined, noPrReason: undefined },
     },
     {
+      name: 'When Codex exits because login is revoked then should name `codex_auth_revoked`',
+      task: linearTask({}),
+      finalMessage: 'workspace routing discovery unauthorized (401)',
+      codexExitCode: 1,
+      want: { status: 'failed', error: 'codex_auth_revoked', noPrReason: undefined },
+    },
+    {
       name: 'When codex exits failing after a `no_pr` declaration then should fail',
       task: linearTask({}),
       finalMessage: noPrDeclaration,

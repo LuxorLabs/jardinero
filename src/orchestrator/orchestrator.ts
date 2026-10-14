@@ -6,6 +6,7 @@ import type { OperatorCommandable } from './engine-commands.js';
 import type { WorkflowType } from '../store/types.js';
 import type { SandboxRunner } from './sandbox-pool.js';
 import { recoverOpenInstancesAfterBoot } from './boot-recovery.js';
+import { LinearSessions } from './linear-sessions.js';
 import { PeriodicCheckTimer } from './periodic-check-timer.js';
 import { createDiscordWorkAnnouncer } from '../adapters/discord/discord-announcer.js';
 import { SandboxPool } from './sandbox-pool.js';
@@ -92,6 +93,7 @@ export class Orchestrator implements WorkflowEngines {
         checkWaitMs: config.workflows.linearImplementer.checkWaitMs,
       },
       announcer,
+      new LinearSessions(config, deps.env, deps.fetchImpl),
     );
     this.fixImplementer = new FixImplementerStateEngine(
       store,

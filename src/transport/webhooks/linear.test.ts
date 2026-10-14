@@ -141,6 +141,11 @@ describe('linearWebhookResponse', () => {
       want: { type: 'thought', body: /Picked up the issue/ },
     },
     {
+      name: 'When Codex login is revoked then should tell the session to relogin',
+      outcome: { handled: true, reason: 'codex_auth_revoked', sessionId: 'session-1' },
+      want: { type: 'error', body: /codex login/ },
+    },
+    {
       name: 'When the team has no repository then should tell the session an operator must map it',
       outcome: { handled: false, reason: 'no_repo_for_team', sessionId: 'session-1' },
       want: { type: 'error', body: /No repository is configured for this team/ },

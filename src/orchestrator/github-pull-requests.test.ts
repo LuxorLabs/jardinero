@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { CODEX_AUTH_REVOKED_MESSAGE } from '../adapters/codex/codex-auth-revoked.js';
 import { type AppConfig, loadConfig } from '../config.js';
 import { GitHubPullRequests } from './github-pull-requests.js';
 import type { PickedUpComment } from './state-machines/pr-maintainer/service.js';
@@ -110,6 +111,52 @@ describe('GitHubPullRequests.markReadyForReview', () => {
       assert.equal(calls, c.want.calls);
       if (c.want.error) assert.match(error?.message ?? '', c.want.error);
       else assert.equal(error, undefined);
+    });
+  }
+});
+
+describe('GitHubPullRequests.reportCodexAuthRevoked', () => {
+  const cases: WriteCase[] = [
+    {
+      name: 'When the token is present then should post the relogin comment',
+      answers: [new Response('{}', { status: 201 })],
+      want: { calls: 1 },
+    },
+    {
+      name: 'When github refuses the comment then should answer the error',
+      answers: [() => new Response('nope', { status: 403 })],
+      want: { error: /HTTP 403/, calls: 1 },
+    },
+    {
+      name: 'When there is no token then should answer the error without asking',
+      withToken: false,
+      answers: [],
+      want: { error: /missing github token/, calls: 0 },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      let calls = 0;
+      let body: string | undefined;
+      const github = new GitHubPullRequests(CONFIG, env(c.withToken), ((
+        _input: string,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const answer = c.answers[calls];
+        calls += 1;
+        body = String(init?.body ?? '');
+        return Promise.resolve(typeof answer === 'function' ? answer() : (answer as Response));
+      }) as unknown as typeof fetch);
+
+      const error = await github.reportCodexAuthRevoked(REPOSITORY, PULL_REQUEST_NUMBER);
+
+      assert.equal(calls, c.want.calls);
+      if (c.want.error) assert.match(error?.message ?? '', c.want.error);
+      else {
+        assert.equal(error, undefined);
+        assert.match(body ?? '', new RegExp(CODEX_AUTH_REVOKED_MESSAGE.slice(0, 20)));
+      }
     });
   }
 });

@@ -54,6 +54,7 @@ export interface DashboardSnapshot {
   sandboxes_cap: number;
   open_instances: number;
   requires_attention: number;
+  codex_auth_blocked: boolean;
 }
 
 export type WorkflowStateTone = 'working' | 'waiting' | 'attention' | 'closed' | 'done';

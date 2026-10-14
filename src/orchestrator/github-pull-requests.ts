@@ -3,7 +3,9 @@ import {
   listOpenPullRequests,
   markPullRequestReadyForReview,
 } from '../adapters/github/github-pull-requests.js';
+import { postPullRequestComment } from '../adapters/github/github-comments.js';
 import { postCommentReaction } from '../adapters/github/github-reactions.js';
+import { CODEX_AUTH_REVOKED_MESSAGE } from '../adapters/codex/codex-auth-revoked.js';
 import { type AppConfig, resolveGitHubTokenEnv } from '../config.js';
 import { logger } from '../platform/logger.js';
 import {
@@ -67,6 +69,26 @@ export class GitHubPullRequests
       await markPullRequestReadyForReview({
         repo: repositoryFullName,
         pullRequestNumber,
+        token,
+        fetchImpl: this.fetchImpl,
+      });
+      return undefined;
+    } catch (error: unknown) {
+      return error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  async reportCodexAuthRevoked(
+    repositoryFullName: string,
+    pullRequestNumber: number,
+  ): Promise<Error | undefined> {
+    const token = this.env[resolveGitHubTokenEnv(this.config, repositoryFullName)];
+    if (!token) return new Error('missing github token');
+    try {
+      await postPullRequestComment({
+        repo: repositoryFullName,
+        pullRequestNumber,
+        body: CODEX_AUTH_REVOKED_MESSAGE,
         token,
         fetchImpl: this.fetchImpl,
       });

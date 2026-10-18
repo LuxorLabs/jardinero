@@ -167,8 +167,8 @@ importers:
   .:
     dependencies:
       '@daytona/sdk':
-        specifier: 0.218.0
-        version: 0.218.0(debug@4.4.3)
+        specifier: 0.220.0
+        version: 0.220.0(debug@4.4.3)
       '@tenkicloud/sandbox':
         specifier: 1.4.1
         version: 1.4.1
@@ -475,17 +475,17 @@ packages:
     peerDependencies:
       '@bufbuild/protobuf': ^2.7.0
 
-  '@daytona/analytics-api-client@0.218.0':
-    resolution: {integrity: sha512-RFptNzzabMADIiSmqeZc0Y9Lan5hLBhh/lkuhKMUsCx7fdj8GpUdWZ46xdPCQQ/2qa4wafeU63V8US6FPyCJsg==}
+  '@daytona/analytics-api-client@0.220.0':
+    resolution: {integrity: sha512-3BGYILzjo2aFTJhLd6XBXlNEQBSo9Zr2Nj31OdX9o50fMRVUwVydF6ekIGkPGSLwskz6b6xxg5BSS+f9dbrxCQ==}
 
-  '@daytona/api-client@0.218.0':
-    resolution: {integrity: sha512-eWUW/KjcV3Hrq1KI1izfLR1QilRadBFMrdl2M5rFZhrgXBecgQ4PA2kb276w2uQq9gQWvYrrh8l7DSPQiBN13Q==}
+  '@daytona/api-client@0.220.0':
+    resolution: {integrity: sha512-XaMEtiQCaIHc3T7y3HUqx1A5eWSnd+FJvhpSHDwP3Snu9Nnhy4t+K2LHBWgJQn9dGtWXsdOsbB9K0BqpmFJtyA==}
 
-  '@daytona/sdk@0.218.0':
-    resolution: {integrity: sha512-dPlUCg26+3zPln58L+QWhV1kd/k4DTzv2Qf5mpad8ZIGm0t9vaSLQ0P2klVrtoKV0s6fTlJ9vqmj1GiCdciZZA==}
+  '@daytona/sdk@0.220.0':
+    resolution: {integrity: sha512-PJio3vbDwRApzlsK6AGO7r4CHJcF9PI5DWuUW2yUnA2MVJSh/jotS0onKBv6boC5F+oboljTibUMxrwVPIrOlQ==}
 
-  '@daytona/toolbox-api-client@0.218.0':
-    resolution: {integrity: sha512-8ZI4Mc9xEan1hAkEJVvSxvJbnGkIhc4JhA5o6woBOs5MVHwOnXepqozeBl73CkxgEUl3ZLS9c8TOf95UYZ9aeA==}
+  '@daytona/toolbox-api-client@0.220.0':
+    resolution: {integrity: sha512-Kn94AOxhGQil0XygOOR26SaCkndE4dOtxYS0hLbqrTxcP3H1uq1HGFGSRkHFQNkaR8eL9QwFUPSMqd0Vr3A64A==}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -1423,9 +1423,6 @@ packages:
   '@tenkicloud/sandbox@1.4.1':
     resolution: {integrity: sha512-0H7+EornkIlTc6GTMFMdkSKijvXOjqYkSWsZNeEcYh7vPjtnxFmrElTUXEBmPTeZXL2gmt+iPrhEcBthBopGHw==}
     engines: {node: '>=18'}
-
-  '@types/node@25.9.8':
-    resolution: {integrity: sha512-VfMrScDmMhUJQmd5hArdQnFvK0OIeD36uN2Va1FcpYaLB/BgkgM8Ulc50XtYISPMz7APJ30+N0T5EM0jlcdfRw==}
 
   '@types/node@25.9.9':
     resolution: {integrity: sha512-b4e2xxj/yMeT2hNlD6x7zNFiQK2Dlmkb9CQ6v3/1G2RezKN4YS2lcEv8lzGm1mhs4f2lM4yNAMI/zUDBZBBt7w==}
@@ -2759,27 +2756,27 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 2.12.1
 
-  '@daytona/analytics-api-client@0.218.0(debug@4.4.3)':
+  '@daytona/analytics-api-client@0.220.0(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/api-client@0.218.0(debug@4.4.3)':
+  '@daytona/api-client@0.220.0(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/sdk@0.218.0(debug@4.4.3)':
+  '@daytona/sdk@0.220.0(debug@4.4.3)':
     dependencies:
       '@aws-sdk/client-s3': 3.1141.0
       '@aws-sdk/lib-storage': 3.1141.0(@aws-sdk/client-s3@3.1141.0)
-      '@daytona/analytics-api-client': 0.218.0(debug@4.4.3)
-      '@daytona/api-client': 0.218.0(debug@4.4.3)
-      '@daytona/toolbox-api-client': 0.218.0(debug@4.4.3)
+      '@daytona/analytics-api-client': 0.220.0(debug@4.4.3)
+      '@daytona/api-client': 0.220.0(debug@4.4.3)
+      '@daytona/toolbox-api-client': 0.220.0(debug@4.4.3)
       '@iarna/toml': 2.2.5
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/exporter-trace-otlp-http': 0.222.0(@opentelemetry/api@1.9.1)
@@ -2807,7 +2804,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@daytona/toolbox-api-client@0.218.0(debug@4.4.3)':
+  '@daytona/toolbox-api-client@0.220.0(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
@@ -3624,10 +3621,6 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@types/node@25.9.8':
-    dependencies:
-      undici-types: 7.24.6
-
   '@types/node@25.9.9':
     dependencies:
       undici-types: 7.24.6
@@ -4200,7 +4193,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.2
-      '@types/node': 25.9.8
+      '@types/node': 25.9.9
       long: 5.3.2
 
   proxy-from-env@2.1.0: {}

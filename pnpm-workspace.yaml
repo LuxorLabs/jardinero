@@ -19,6 +19,9 @@ allowBuilds:
 minimumReleaseAge: 20160 # 14 days, in minutes
 minimumReleaseAgeStrict: true
 minimumReleaseAgeExcludePrune: true
+minimumReleaseAgeExclude:
+  # Renovate security update: vite@8.3.3
+  - vite@8.3.3
 
 # These versions were locked before the cooldown existed and cannot satisfy it retroactively;
 # @tenkicloud/sandbox was pinned by hand, the rest came in transitively under vite. Each

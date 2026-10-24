@@ -3,7 +3,7 @@
   "version": "0.10.1",
   "private": true,
   "license": "MIT",
-  "packageManager": "pnpm@12.9.1",
+  "packageManager": "pnpm@12.11.2",
   "type": "module",
   "scripts": {
     "build": "pnpm run build:server && pnpm run build:web",

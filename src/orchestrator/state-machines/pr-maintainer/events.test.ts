@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
+import { CODEX_AUTH_REVOKED } from '../../../adapters/codex/codex-auth-revoked.js';
+import { hostCodexAuthFingerprint } from '../../../adapters/codex/codex-auth.js';
 import type { Store } from '../../../store/store.js';
 import type { PrMaintainer, PrMaintainerState, SandboxRunState } from '../../../store/types.js';
 import {
@@ -213,6 +215,51 @@ describe('onPrComment', () => {
       name: 'When it was just taken then should dispatch the pass',
       from: 'prm_pending',
       want: { state: 'prm_working', startedRuns: 1, attemptCount: 1, pickedUp: true },
+    },
+    {
+      name: 'When Codex login is revoked then should park the pull request and write on it',
+      from: 'prm_pending',
+      arrange: () => {
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: {
+        state: 'prm_attempts_exhausted',
+        needsHumanReason: CODEX_AUTH_REVOKED,
+        pickedUp: true,
+        wroteAuthRevoked: true,
+      },
+    },
+    {
+      name: 'When a sandbox run is in flight and Codex login is revoked then should mark it without dispatching',
+      from: 'prm_working',
+      arrange: () => {
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: { state: 'prm_working', pickedUp: true },
+    },
+    {
+      name: 'When Codex login is already parked then should mark a later comment without writing again',
+      from: 'prm_attempts_exhausted',
+      mentionsUs: true,
+      arrange: (instance) => {
+        instance.needsHumanReason = CODEX_AUTH_REVOKED;
+        setState(engine, instance, 'prm_attempts_exhausted');
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: {
+        state: 'prm_attempts_exhausted',
+        needsHumanReason: CODEX_AUTH_REVOKED,
+        pickedUp: true,
+      },
     },
     {
       // The pass in flight consumes the ask when it ends, so the comment is marked
@@ -857,6 +904,16 @@ describe('onSandboxRunSucceeded', () => {
 describe('onSandboxRunFailed', () => {
   const cases: RunOutcomeCase[] = [
     {
+      name: 'When Codex login is revoked then should park without spending an attempt',
+      from: 'prm_working',
+      outcome: { error: CODEX_AUTH_REVOKED },
+      want: {
+        state: 'prm_attempts_exhausted',
+        needsHumanReason: CODEX_AUTH_REVOKED,
+        wroteAuthRevoked: true,
+      },
+    },
+    {
       name: 'When attempts are left then should dispatch another pass',
       from: 'prm_working',
       want: { state: 'prm_working', startedRuns: 1, attemptCount: 1 },
@@ -893,11 +950,33 @@ describe('onSandboxRunFailed', () => {
       const runId = attachRun(instance, c);
       c.arrange?.(instance);
 
-      const error = await onSandboxRunFailed(engine, runId);
+      const error = await onSandboxRunFailed(engine, runId, c.outcome);
 
       assertOutcome(c.want, instance, error);
     });
   }
+});
+
+describe('The GitHub write-back on a revoked Codex login', () => {
+  test('When GitHub refuses the write then should record it and park anyway', async () => {
+    const instance = openInstanceIn('prm_working');
+    const runId = attachRun(instance, {
+      name: 'write-back refusal',
+      from: 'prm_working',
+      want: {},
+    });
+    github.refusal = new Error('HTTP 403');
+
+    await onSandboxRunFailed(engine, runId, { error: CODEX_AUTH_REVOKED });
+
+    assert.equal(store.getPrMaintainer(instance.id)?.workflowState, 'prm_attempts_exhausted');
+    assert.equal(
+      store
+        .listEvents({ workflowType: 'pr_maintainer' }, { limit: 20 })
+        .rows.filter((row) => row.eventType === 'orchestrator.github_reply_failed').length,
+      1,
+    );
+  });
 });
 
 describe('onOperatorRetry', () => {
@@ -912,6 +991,19 @@ describe('onOperatorRetry', () => {
         setState(engine, instance, 'prm_attempts_exhausted');
       },
       want: { state: 'prm_working', startedRuns: 1, attemptCount: 1 },
+    },
+    {
+      name: 'When Codex login is still revoked then should stay parked',
+      from: 'prm_attempts_exhausted',
+      arrange: (instance) => {
+        instance.needsHumanReason = CODEX_AUTH_REVOKED;
+        setState(engine, instance, 'prm_attempts_exhausted');
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: { state: 'prm_attempts_exhausted', needsHumanReason: CODEX_AUTH_REVOKED },
     },
     {
       name: 'When the instance is pending then should ignore it',
@@ -1470,6 +1562,11 @@ function assertOutcome(
       want.unconsumedAsks,
     );
   }
+  if (want.wroteAuthRevoked) {
+    assert.deepEqual(github.authRevokedOn, [
+      { repositoryFullName: 'acme/web.app', pullRequestNumber: PULL_REQUEST_NUMBER },
+    ]);
+  }
 }
 
 interface Want {
@@ -1484,6 +1581,7 @@ interface Want {
   checked?: boolean;
   errorName?: string;
   unconsumedAsks?: number;
+  wroteAuthRevoked?: boolean;
 }
 
 interface AnnouncementCase {
@@ -1534,6 +1632,7 @@ interface RunOutcomeCase {
   pendingAsks?: number;
   detachRun?: boolean;
   foreignRun?: boolean;
+  outcome?: { error?: string };
   arrange?: (instance: PrMaintainer) => void;
   want: Want;
 }

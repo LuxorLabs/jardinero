@@ -53,6 +53,10 @@ export interface GitHubCommentWriter {
     repositoryFullName: string,
     comment: PickedUpComment,
   ): Promise<Error | undefined>;
+  reportCodexAuthRevoked(
+    repositoryFullName: string,
+    pullRequestNumber: number,
+  ): Promise<Error | undefined>;
 }
 
 export interface PrMaintainerConfig {
@@ -81,7 +85,10 @@ export interface PrMaintainerStateEngineInterface {
   onPrMerged(ref: PullRequestRef): Promise<Error | undefined>;
   onPrClosed(ref: PullRequestRef): Promise<Error | undefined>;
   onSandboxRunSucceeded(sandboxRunId: string): Promise<Error | undefined>;
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined>;
+  onSandboxRunFailed(
+    sandboxRunId: string,
+    outcome?: { error?: string },
+  ): Promise<Error | undefined>;
   onOperatorRetry(prMaintainerId: string): Promise<Error | undefined>;
   onOperatorDismiss(prMaintainerId: string): Promise<Error | undefined>;
   onPeriodicCheck(prMaintainerId: string): Promise<Error | undefined>;
@@ -143,8 +150,11 @@ export class PrMaintainerStateEngine implements PrMaintainerStateEngineInterface
     return onSandboxRunSucceeded(this, sandboxRunId);
   }
 
-  onSandboxRunFailed(sandboxRunId: string): Promise<Error | undefined> {
-    return onSandboxRunFailed(this, sandboxRunId);
+  onSandboxRunFailed(
+    sandboxRunId: string,
+    outcome?: { error?: string },
+  ): Promise<Error | undefined> {
+    return onSandboxRunFailed(this, sandboxRunId, outcome);
   }
 
   onOperatorRetry(prMaintainerId: string): Promise<Error | undefined> {

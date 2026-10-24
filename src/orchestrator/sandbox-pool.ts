@@ -1,3 +1,5 @@
+import { codexAuthIsBlocked } from '../adapters/codex/codex-auth-revoked.js';
+import { hostCodexAuthFingerprint } from '../adapters/codex/codex-auth.js';
 import type { Store } from '../store/store.js';
 import type { SandboxRun, WorkflowType } from '../store/types.js';
 import { logger } from '../platform/logger.js';
@@ -82,6 +84,7 @@ export class SandboxPool implements SandboxPoolInterface {
     private readonly tasks: SandboxTaskFactory,
     private readonly reporter: SandboxRunOutcomeReporter,
     private readonly config: SandboxPoolConfig,
+    private readonly authFingerprint: () => string = hostCodexAuthFingerprint,
   ) {}
 
   startSandbox(sandboxRunId: string): boolean {
@@ -184,6 +187,7 @@ export class SandboxPool implements SandboxPoolInterface {
   // handler can ask before it creates a run row the pool would only refuse.
   hasRoomFor(workflowType: WorkflowType): boolean {
     if (this.stopping) return false;
+    if (codexAuthIsBlocked(this.store, this.authFingerprint())) return false;
     if (this.executing.size >= this.config.maxConcurrentSandboxes) return false;
     const cap = this.config.maxConcurrentSandboxesByWorkflow[workflowType];
     if (cap === undefined) return true;

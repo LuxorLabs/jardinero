@@ -7,6 +7,8 @@ import type {
   LinearImplementerState,
   SandboxRunState,
 } from '../../../store/types.js';
+import { CODEX_AUTH_REVOKED } from '../../../adapters/codex/codex-auth-revoked.js';
+import { hostCodexAuthFingerprint } from '../../../adapters/codex/codex-auth.js';
 import { FakeGitHub, FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
 import { createTestStore } from '../../../testing/store.js';
 import { setState } from './engine.js';
@@ -35,6 +37,7 @@ let cleanup: () => void;
 let pool: FakeSandboxPool;
 let locker: FakeLocker;
 let github: FakeGitHub;
+let linear: FakeLinear;
 let engine: LinearImplementerStateEngine;
 let repositoryId: string;
 
@@ -42,12 +45,21 @@ beforeEach(() => {
   ({ store, cleanup } = createTestStore());
   pool = new FakeSandboxPool();
   github = new FakeGitHub();
+  linear = new FakeLinear();
   locker = new FakeLocker();
   repositoryId = store.upsertRepository('acme/web.app').id;
-  engine = new LinearImplementerStateEngine(store, pool, github, locker, {
-    maxIterations: MAX_ITERATIONS,
-    checkWaitMs: { li_pending: 0, li_implementing: 0, li_verifying: 0, li_waiting_pr: 0 },
-  });
+  engine = new LinearImplementerStateEngine(
+    store,
+    pool,
+    github,
+    locker,
+    {
+      maxIterations: MAX_ITERATIONS,
+      checkWaitMs: { li_pending: 0, li_implementing: 0, li_verifying: 0, li_waiting_pr: 0 },
+    },
+    undefined,
+    linear,
+  );
 });
 
 afterEach(() => {
@@ -64,6 +76,17 @@ describe('onIssueAssigned', () => {
       name: 'When the dispatch is still owed then should dispatch it',
       from: 'li_pending',
       want: { state: 'li_implementing', startedRuns: 1 },
+    },
+    {
+      name: 'When Codex login is revoked then should park the ticket',
+      from: 'li_pending',
+      arrange: () => {
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: { state: 'li_needs_human', needsHumanReason: CODEX_AUTH_REVOKED },
     },
     ...['li_implementing', 'li_verifying', 'li_waiting_pr'].map((state) => ({
       name: `When the ticket is already being worked in \`${state}\` then should leave it alone`,
@@ -83,10 +106,32 @@ describe('onIssueAssigned', () => {
       want: { state: 'li_implementing', startedRuns: 1 },
     },
     {
+      name: 'When we gave up on it and Codex login is still revoked then should stay parked',
+      from: 'li_needs_human',
+      arrange: () => {
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: { state: 'li_needs_human', needsHumanReason: CODEX_AUTH_REVOKED },
+    },
+    {
       // The pull request was closed unmerged, so the ticket is still open work.
       name: 'When the ticket was abandoned then should start a second pass',
       from: 'li_abandoned',
       want: { state: 'li_implementing', startedRuns: 1 },
+    },
+    {
+      name: 'When the ticket was abandoned and Codex login is revoked then should park it',
+      from: 'li_abandoned',
+      arrange: () => {
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: { state: 'li_needs_human', needsHumanReason: CODEX_AUTH_REVOKED },
     },
     {
       name: 'When the ticket is already delivered then should refuse to start again',
@@ -149,6 +194,17 @@ describe('onIssueCommented', () => {
       want: { state: 'li_implementing', startedRuns: 1 },
     },
     {
+      name: 'When we gave up on it and Codex login is still revoked then should stay parked',
+      from: 'li_needs_human',
+      arrange: () => {
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: { state: 'li_needs_human', needsHumanReason: CODEX_AUTH_REVOKED },
+    },
+    {
       name: 'When the ticket already ended then should ignore it',
       from: 'li_done',
       want: { state: 'li_done' },
@@ -163,6 +219,7 @@ describe('onIssueCommented', () => {
   for (const c of cases) {
     test(c.name, async () => {
       const instance = c.from ? openInstanceIn(c.from) : undefined;
+      if (instance) c.arrange?.(instance);
 
       const error = await onIssueCommented(engine, issueRef());
 
@@ -491,6 +548,26 @@ describe('onSandboxRunSucceeded', () => {
 describe('onSandboxRunFailed', () => {
   const cases: RunOutcomeCase[] = [
     {
+      name: 'When Codex login is revoked then should park without spending an iteration',
+      from: 'li_implementing',
+      outcome: { error: CODEX_AUTH_REVOKED },
+      want: {
+        state: 'li_needs_human',
+        needsHumanReason: CODEX_AUTH_REVOKED,
+        wroteSession: true,
+      },
+    },
+    {
+      name: 'When a verifier run dies because Codex login is revoked then should park without spending an iteration',
+      from: 'li_verifying',
+      outcome: { error: CODEX_AUTH_REVOKED },
+      want: {
+        state: 'li_needs_human',
+        needsHumanReason: CODEX_AUTH_REVOKED,
+        wroteSession: true,
+      },
+    },
+    {
       name: 'When the first implementer run died then should run the same pass again',
       from: 'li_implementing',
       want: { state: 'li_implementing', startedRuns: 1, iterationNumber: 1 },
@@ -564,6 +641,28 @@ describe('onSandboxRunFailed', () => {
   }
 });
 
+describe('The Linear write-back on a revoked Codex login', () => {
+  test('When Linear refuses the write then should record it and park anyway', async () => {
+    const instance = openInstanceIn('li_implementing');
+    const runId = attachRun(instance, {
+      name: 'write-back refusal',
+      from: 'li_implementing',
+      want: {},
+    });
+    linear.refusal = new Error('HTTP 401');
+
+    await onSandboxRunFailed(engine, runId, { error: CODEX_AUTH_REVOKED });
+
+    assert.equal(store.getLinearImplementer(instance.id)?.workflowState, 'li_needs_human');
+    assert.equal(
+      store
+        .listEvents({ workflowType: 'linear_implementer' }, { limit: 20 })
+        .rows.filter((row) => row.eventType === 'orchestrator.linear_reply_failed').length,
+      1,
+    );
+  });
+});
+
 describe('onOperatorRetry', () => {
   const cases: StateCase[] = [
     {
@@ -574,6 +673,17 @@ describe('onOperatorRetry', () => {
         setState(engine, instance, 'li_needs_human');
       },
       want: { state: 'li_implementing', startedRuns: 1 },
+    },
+    {
+      name: 'When a person retries and Codex login is still revoked then should stay parked',
+      from: 'li_needs_human',
+      arrange: () => {
+        store.setHostBlock({
+          reason: CODEX_AUTH_REVOKED,
+          authFingerprint: hostCodexAuthFingerprint(),
+        });
+      },
+      want: { state: 'li_needs_human', needsHumanReason: CODEX_AUTH_REVOKED },
     },
     ...['li_pending', 'li_implementing', 'li_verifying', 'li_waiting_pr'].map((state) => ({
       name: `When the ticket is in \`${state}\` then should ignore it`,
@@ -915,8 +1025,14 @@ function issueRef(): {
   repositoryId: string;
   linearIssueId: string;
   linearIssueIdentifier: string;
+  linearSessionId: string;
 } {
-  return { repositoryId, linearIssueId: 'iss-1', linearIssueIdentifier: 'JAR-58' };
+  return {
+    repositoryId,
+    linearIssueId: 'iss-1',
+    linearIssueIdentifier: 'JAR-58',
+    linearSessionId: 'session-1',
+  };
 }
 
 function pullRequestRef(): { repositoryId: string; pullRequestNumber: number } {
@@ -1028,6 +1144,7 @@ function assertOutcome(
   assert.equal(stored?.verifierVerdict, want.verifierVerdict ?? null);
   assert.equal(stored?.iterationNumber, want.iterationNumber ?? 0);
   if (want.released) assert.deepEqual(github.released, want.released);
+  if (want.wroteSession) assert.deepEqual(linear.revoked, ['session-1']);
 }
 
 interface Want {
@@ -1042,6 +1159,7 @@ interface Want {
   verifierVerdict?: string;
   iterationNumber?: number;
   errorName?: string;
+  wroteSession?: boolean;
 }
 
 interface StateCase {
@@ -1088,4 +1206,15 @@ interface PeriodicCase {
 interface LockCase {
   name: string;
   act: () => Promise<Error | undefined>;
+}
+
+class FakeLinear {
+  readonly revoked: string[] = [];
+  refusal: Error | undefined;
+
+  reportCodexAuthRevoked(sessionId: string): Promise<Error | undefined> {
+    if (this.refusal) return Promise.resolve(this.refusal);
+    this.revoked.push(sessionId);
+    return Promise.resolve(undefined);
+  }
 }

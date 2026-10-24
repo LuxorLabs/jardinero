@@ -27,7 +27,23 @@ describe('GET /dashboard/api/session', () => {
       // A finished ticket or scan is not holding anything, so only the stuck one counts.
       assert.equal(body.open_instances, 1);
       assert.equal(body.requires_attention, 1);
+      assert.equal(body.codex_auth_blocked, false);
       assert.ok(body.version.length > 0);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test('When Codex login is revoked then should say so on the snapshot', async () => {
+    const fixture = await createHttpFixture();
+    try {
+      fixture.store.setHostBlock({ reason: 'codex_auth_revoked', authFingerprint: 'dead' });
+
+      const response = await fetch(`${fixture.baseUrl}/dashboard/api/session`);
+      const body = (await response.json()) as DashboardSnapshot;
+
+      assert.equal(response.status, 200);
+      assert.equal(body.codex_auth_blocked, true);
     } finally {
       await fixture.cleanup();
     }

@@ -29,6 +29,12 @@ export interface GitHubWriter {
   ): Promise<Error | undefined>;
 }
 
+// LinearSessionWriter is what this machine writes on a Linear agent session when the
+// host cannot run Codex. It answers an error instead of throwing.
+export interface LinearSessionWriter {
+  reportCodexAuthRevoked(sessionId: string): Promise<Error | undefined>;
+}
+
 export interface LinearImplementerConfig {
   // maxIterations bounds the passes one ticket gets; a rejection, a missing verdict and a
   // lost run each spend one.
@@ -60,6 +66,7 @@ export class LinearImplementerStateEngine implements LinearImplementerStateEngin
     readonly locker: Locker,
     readonly config: LinearImplementerConfig,
     readonly announcer?: WorkAnnouncer,
+    readonly linear?: LinearSessionWriter,
   ) {}
 
   onIssueAssigned(ref: IssueRef, requestRouterId?: string): Promise<Error | undefined> {

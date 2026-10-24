@@ -12,6 +12,10 @@ import {
   type AppConfig,
   type CodexEffort,
 } from '../../config.js';
+import {
+  CODEX_AUTH_REVOKED,
+  isCodexAuthRevokedOutput,
+} from '../../adapters/codex/codex-auth-revoked.js';
 import { type Logger, logger } from '../../platform/logger.js';
 import type {
   WorkerResult,
@@ -424,7 +428,9 @@ export class SandboxWorkerRunner implements SandboxRunner {
         implementationHandoffRejections: handoffExtraction?.rejections,
         linearVerification,
         error: codexFailed
-          ? 'codex_exec_failed'
+          ? isCodexAuthRevokedOutput(result)
+            ? CODEX_AUTH_REVOKED
+            : 'codex_exec_failed'
           : logReviewFailure
             ? (logReviewTelemetryValidation?.reason ?? 'log_review_telemetry_unverified')
             : verification.status === 'failed'

@@ -31,6 +31,7 @@ import {
   TERMINAL_STATES,
   type EventLogEntry,
   type EventLogFilter,
+  type HostBlock,
   type FixImplementer,
   type FixImplementerState,
   type LinearImplementer,
@@ -386,6 +387,57 @@ export class Store {
 
   // initializeAfterBoot orphans the runs a dead process left in flight, except those
   // running in a sandbox, which the pool tries to resume.
+  // ---------------------------------------------------------------- host_block
+
+  getHostBlock(): HostBlock | undefined {
+    const row = this.db.prepare('SELECT * FROM host_block WHERE id = ?').get('host') as
+      | Row
+      | undefined;
+    if (!row) return undefined;
+    return {
+      reason: text(row.reason),
+      authFingerprint: text(row.auth_fingerprint),
+      createdAt: Number(row.created_at),
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  setHostBlock(fields: { reason: string; authFingerprint: string }): void {
+    const existing = this.getHostBlock();
+    const now = nowMs();
+    if (
+      existing &&
+      existing.reason === fields.reason &&
+      existing.authFingerprint === fields.authFingerprint
+    ) {
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO host_block (id, reason, auth_fingerprint, created_at, updated_at)
+         VALUES ('host', ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           reason = excluded.reason,
+           auth_fingerprint = excluded.auth_fingerprint,
+           updated_at = excluded.updated_at`,
+      )
+      .run(fields.reason, fields.authFingerprint, existing?.createdAt ?? now, now);
+    this.appendEvent({
+      eventType: 'orchestrator.codex_auth_revoked',
+      metadata: { reason: fields.reason },
+    });
+  }
+
+  clearHostBlock(): void {
+    const existing = this.getHostBlock();
+    if (!existing) return;
+    this.db.prepare('DELETE FROM host_block WHERE id = ?').run('host');
+    this.appendEvent({
+      eventType: 'orchestrator.codex_auth_cleared',
+      metadata: { reason: existing.reason },
+    });
+  }
+
   initializeAfterBoot(): void {
     const result = this.db
       .prepare(

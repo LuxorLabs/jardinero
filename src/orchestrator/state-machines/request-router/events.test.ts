@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { CreateRequestInput, Store } from '../../../store/store.js';
 import type { RequestRouter, RequestRouterState, SandboxRunState } from '../../../store/types.js';
+import { CODEX_AUTH_REVOKED } from '../../../adapters/codex/codex-auth-revoked.js';
 import { FakeLocker, FakeSandboxPool } from '../../../testing/state-machines.js';
 import { createTestStore } from '../../../testing/store.js';
 import { setState } from './engine.js';
@@ -136,6 +137,12 @@ describe('onSandboxRunSucceeded', () => {
 describe('onSandboxRunFailed', () => {
   const cases: RunOutcomeCase[] = [
     {
+      name: 'When Codex login is revoked then should end it unresolvable naming that',
+      from: 'rr_routing',
+      error: CODEX_AUTH_REVOKED,
+      want: { state: 'rr_unresolvable', resolutionNote: CODEX_AUTH_REVOKED },
+    },
+    {
       name: 'When the router agent failed then should end it unresolvable',
       from: 'rr_routing',
       want: { state: 'rr_unresolvable', resolutionNote: 'routing_run_failed' },
@@ -158,7 +165,7 @@ describe('onSandboxRunFailed', () => {
       const instance = openInstanceIn(c.from);
       const runId = attachRun(instance, c);
 
-      const error = await onSandboxRunFailed(engine, runId);
+      const error = await onSandboxRunFailed(engine, runId, { error: c.error });
 
       assertOutcome(c.want, instance, error);
     });
@@ -376,6 +383,7 @@ interface RunOutcomeCase {
   name: string;
   from: RequestRouterState;
   outcome?: RoutingOutcome;
+  error?: string;
   detachRun?: boolean;
   foreignRun?: boolean;
   want: Want;

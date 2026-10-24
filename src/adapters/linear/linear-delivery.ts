@@ -1,3 +1,4 @@
+import { codexAuthIsBlocked } from '../codex/codex-auth-revoked.js';
 import type { AppConfig, LinearTeamRepoConfig } from '../../config.js';
 import type { LinearImplementerStateEngineInterface } from '../../orchestrator/state-machines/linear-implementer/service.js';
 import { isFreshLinearWebhookTimestamp } from '../../transport/webhooks/linear-signature.js';
@@ -116,9 +117,11 @@ export async function handleLinearDelivery(
     },
     request.id,
   );
-  return error
-    ? { handled: false, reason: error.message, ...answered }
-    : { handled: true, ...answered };
+  if (error) return { handled: false, reason: error.message, ...answered };
+  if (codexAuthIsBlocked(deps.store)) {
+    return { handled: true, reason: 'codex_auth_revoked', ...answered };
+  }
+  return { handled: true, ...answered };
 }
 
 // readLinearDelivery reads who was delegated what. Only AgentSessionEvent/created

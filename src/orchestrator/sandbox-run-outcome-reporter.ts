@@ -139,27 +139,30 @@ export class InstanceSandboxRunOutcomeReporter implements SandboxRunOutcomeRepor
       case 'request_router':
         return this.report(
           sandboxRunId,
-          this.engines().requestRouter.onSandboxRunFailed(sandboxRunId),
+          this.engines().requestRouter.onSandboxRunFailed(sandboxRunId, failureOf(result)),
         );
       case 'linear_implementer':
         return this.report(
           sandboxRunId,
-          this.engines().linearImplementer.onSandboxRunFailed(sandboxRunId, pullRequestOf(result)),
+          this.engines().linearImplementer.onSandboxRunFailed(sandboxRunId, {
+            ...pullRequestOf(result),
+            ...failureOf(result),
+          }),
         );
       case 'fix_implementer':
         return this.report(
           sandboxRunId,
-          this.engines().fixImplementer.onSandboxRunFailed(sandboxRunId),
+          this.engines().fixImplementer.onSandboxRunFailed(sandboxRunId, failureOf(result)),
         );
       case 'pr_maintainer':
         return this.report(
           sandboxRunId,
-          this.engines().prMaintainer.onSandboxRunFailed(sandboxRunId),
+          this.engines().prMaintainer.onSandboxRunFailed(sandboxRunId, failureOf(result)),
         );
       case 'log_reviewer':
         return this.report(
           sandboxRunId,
-          this.engines().logReviewer.onSandboxRunFailed(sandboxRunId),
+          this.engines().logReviewer.onSandboxRunFailed(sandboxRunId, failureOf(result)),
         );
     }
   }
@@ -210,6 +213,10 @@ const _REQUESTED_ACTIONS = new Set<string>([
 ]);
 
 // pullRequestOf parses the number out of the pull request url the agent reported.
+function failureOf(result: WorkerResult | undefined): { error?: string } {
+  return result?.error ? { error: result.error } : {};
+}
+
 function pullRequestOf(result: WorkerResult | undefined): { pullRequestNumber?: number } {
   const number = pullRequestNumberFrom(result?.openedPrUrl);
   if (number === undefined) return {};

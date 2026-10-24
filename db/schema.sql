@@ -3,6 +3,16 @@ PRAGMA foreign_keys = ON;
 
 -- ---------------------------------------------------------------- global
 
+-- One row: a host-level halt that is not a ticket failure. Codex login death is
+-- the reason this exists; a new auth.json fingerprint clears it.
+CREATE TABLE IF NOT EXISTS host_block (
+  id               TEXT PRIMARY KEY CHECK (id = 'host'),
+  reason           TEXT NOT NULL,
+  auth_fingerprint TEXT NOT NULL,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS repository (
   id                  TEXT PRIMARY KEY,
   full_name           TEXT NOT NULL UNIQUE CHECK (full_name = lower(full_name)),

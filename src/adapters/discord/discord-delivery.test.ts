@@ -21,7 +21,7 @@ let repositoryId: string;
 let sharedChannelRepositoryId: string;
 let delegatedTickets: string[];
 let delegationError: Error | undefined;
-let openedTickets: Array<{ teamKey: string; text: string; ownerLinearUserId?: string }>;
+let openedTickets: Array<{ teamKey: string; text: string; repositoryFullName: string }>;
 let openingError: Error | undefined;
 let discordCalls: Array<{ url: string; body: Record<string, unknown> }>;
 let editFails: boolean;
@@ -390,6 +390,13 @@ describe('Discord commands that open work', () => {
     assert.equal(ask?.replyTargetId, 'thread-1');
     assert.equal(ask?.repositoryId, repositoryId);
     assert.equal(ask?.subjectExternalId, 'JAR-79');
+    assert.deepEqual(openedTickets, [
+      {
+        teamKey: 'JAR',
+        text: 'fix the typo in the miners tab',
+        repositoryFullName: 'acme/orchestrator',
+      },
+    ]);
     assert.deepEqual(delegatedTickets, ['issue-uuid-79']);
   });
 

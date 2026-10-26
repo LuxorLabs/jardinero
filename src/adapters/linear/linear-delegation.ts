@@ -59,7 +59,7 @@ export async function delegateLinearIssue(
 // for a ticket somebody wrote by hand.
 export async function openLinearIssueForRequest(
   deps: LinearDelegationDeps,
-  request: { teamKey: string; text: string },
+  request: { teamKey: string; text: string; repositoryFullName: string },
 ): Promise<CreatedLinearIssue | Error> {
   const token = (deps.env ?? process.env)[deps.config.workflows.linearImplementer.apiTokenEnv];
   if (!token) return new Error('the linear api token is unset');
@@ -69,14 +69,13 @@ export async function openLinearIssueForRequest(
     fetchImpl: deps.fetchImpl,
     teamKey: request.teamKey,
     title: titleOf(request.text),
-    description: request.text,
+    description: `${request.text}\n\nRepository: https://github.com/${request.repositoryFullName}`,
   });
   if (!created) return new Error(`linear refused to open a ticket in ${request.teamKey}`);
   return created;
 }
 
-// A ticket needs a title and the person wrote prose, so the first line is it; the whole text
-// is the description either way.
+// titleOf takes the first line of the prose as the ticket title.
 function titleOf(text: string): string {
   const firstLine = text.trim().split('\n')[0].trim();
   return firstLine.length > TITLE_LIMIT ? `${firstLine.slice(0, TITLE_LIMIT - 1)}…` : firstLine;

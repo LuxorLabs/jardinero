@@ -573,7 +573,8 @@ describe('POST /webhooks/discord', () => {
               input: {
                 teamId: 'team-uuid',
                 title: 'fix the typo in the miners tab',
-                description: 'fix the typo in the miners tab',
+                description:
+                  'fix the typo in the miners tab\n\nRepository: https://github.com/acme/widgets',
               },
             },
           ],

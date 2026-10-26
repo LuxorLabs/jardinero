@@ -29,6 +29,7 @@ export interface DiscordDeliveryDeps {
   openTicketForRequest(request: {
     teamKey: string;
     text: string;
+    repositoryFullName: string;
   }): Promise<{ identifier: string; linearIssueId: string } | Error>;
   // What one conversation is about, so a command asked inside a thread answers about the
   // work that thread follows and nothing else.
@@ -166,7 +167,11 @@ async function handleCodeCommand(
   }
 
   const text = invocation.options.request ?? '';
-  const opened = await deps.openTicketForRequest({ teamKey: teamKeys[0], text });
+  const opened = await deps.openTicketForRequest({
+    teamKey: teamKeys[0],
+    text,
+    repositoryFullName: repository.repositoryFullName,
+  });
   if (opened instanceof Error) {
     return answerCommand(deps, invocation, `That could not be started: ${opened.message}.`, {
       handled: false,

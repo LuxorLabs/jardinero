@@ -5,7 +5,7 @@ import { logger } from '../platform/logger.js';
 import { nowMs } from '../platform/time.js';
 import { adminResponse } from './admin/admin.js';
 import { requireAdmin } from './auth.js';
-import { readRawBody } from './request.js';
+import { isRewrittenPath, readRawBody } from './request.js';
 import { capsuleResponse } from './capsule/capsule.js';
 import type { ApiContext, ServerContext } from './context.js';
 import {
@@ -75,6 +75,12 @@ async function routeRequest(
 ): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://localhost');
   const method = request.method ?? 'GET';
+
+  // Refuse a path the parser would route somewhere it does not name, the way an unknown route is.
+  if (isRewrittenPath(request.url ?? '/')) {
+    sendJson(response, 404, { error: 'not_found' });
+    return;
+  }
 
   if (method === 'GET' && url.pathname === '/') {
     send(response, { status: 302, headers: { location: '/dashboard' } });

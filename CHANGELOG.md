@@ -1,5 +1,13 @@
 # jardinero
 
+## [0.11.1] - 2026-10-27
+
+### Patch Changes
+
+- [#150](https://github.com/LuxorLabs/jardinero/pull/150) [`6c3bb61`](https://github.com/LuxorLabs/jardinero/commit/6c3bb611d054d8420616d4717799939eef08edcd) Thanks [@luciocorral](https://github.com/luciocorral)! - worker: re-create the commits a run pushed through the GitHub API, so GitHub signs them and a branch that requires signed commits can merge the pull request
+
+- [#149](https://github.com/LuxorLabs/jardinero/pull/149) [`5830ba2`](https://github.com/LuxorLabs/jardinero/commit/5830ba2d01e30ffdb53482512dd4473653cc141f) Thanks [@luciocorral](https://github.com/luciocorral)! - discord: link tickets and pull requests in messages, and quote the `/jardinero-code` request in the message that opens its thread
+
 ## [0.11.0] - 2026-10-27
 
 ### Minor Changes

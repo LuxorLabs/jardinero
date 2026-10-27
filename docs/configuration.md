@@ -89,8 +89,8 @@ by Linear project name or id:
 
 Routing happens before the sandbox is created. An explicit GitHub reference in the
 ticket wins when it names exactly one configured repository for the team, then the
-project mapping, then the team default. An unknown or ambiguous reference falls
-through instead of failing.
+project mapping, then the last configured repository the ticket names, then the team
+default. An unknown reference falls through instead of failing.
 
 ## Log review
 

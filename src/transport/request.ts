@@ -46,6 +46,14 @@ export function bodyTooLargeResponse(): HandlerResponse {
   return { status: 413, body: { error: 'request_body_too_large' } };
 }
 
+// isRewrittenPath answers whether the URL parser would move a raw path elsewhere: a `.` or
+// `..` segment, plain or spelled with `%2e`, a backslash, or a leading `//` it reads as a host.
+export function isRewrittenPath(rawUrl: string): boolean {
+  const path = rawUrl.split(/[?#]/, 1)[0] ?? '';
+  if (path.includes('\\') || path.startsWith('//')) return true;
+  return path.split('/').some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment));
+}
+
 // readJsonObjectBody reads and classifies, so a handler receives a parsed object or
 // nothing at all.
 export async function readJsonObjectBody(

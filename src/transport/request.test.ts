@@ -6,6 +6,7 @@ import {
   RequestBodyTooLargeError,
   bodyTooLargeResponse,
   headerValue,
+  isRewrittenPath,
   parseJsonObjectBody,
   readJsonObjectBody,
   readRawBody,
@@ -108,6 +109,92 @@ describe('bodyTooLargeResponse', () => {
       body: { error: 'request_body_too_large' },
     });
   });
+});
+
+describe('isRewrittenPath', () => {
+  const cases: Array<{ name: string; rawUrl: string; want: boolean }> = [
+    {
+      name: 'When the path has a backslash then should be rewritten',
+      rawUrl: '/webhooks\\..\\dashboard',
+      want: true,
+    },
+    {
+      name: 'When the path starts with `//` then should be rewritten',
+      rawUrl: '//attacker.example/dashboard/api/agents',
+      want: true,
+    },
+    {
+      name: 'When a segment is `..` then should be rewritten',
+      rawUrl: '/webhooks/github/../../dashboard/api/agents',
+      want: true,
+    },
+    {
+      name: 'When a segment is `%2e%2e` then should be rewritten',
+      rawUrl: '/webhooks/github/%2e%2e/%2e%2e/dashboard/api/agents',
+      want: true,
+    },
+    {
+      name: 'When a segment is `%2E%2E` then should be rewritten',
+      rawUrl: '/webhooks/github/%2E%2E/%2E%2E/dashboard/api/agents',
+      want: true,
+    },
+    {
+      name: 'When a segment mixes `.` and `%2e` then should be rewritten',
+      rawUrl: '/webhooks/github/.%2e/dashboard/api/agents',
+      want: true,
+    },
+    {
+      name: 'When a segment is `.` then should be rewritten',
+      rawUrl: '/dashboard/./api/agents',
+      want: true,
+    },
+    {
+      name: 'When an absolute-form target climbs with `..` then should be rewritten',
+      rawUrl: 'http://jardinero.example/webhooks/github/../dashboard',
+      want: true,
+    },
+    {
+      name: 'When the path is plain then should not be rewritten',
+      rawUrl: '/dashboard/api/agents',
+      want: false,
+    },
+    {
+      name: 'When the query holds `..` then should not be rewritten',
+      rawUrl: '/dashboard/api/events?cursor=../..',
+      want: false,
+    },
+    {
+      name: 'When the path carries a fragment then should not be rewritten',
+      rawUrl: '/dashboard#runs',
+      want: false,
+    },
+    {
+      name: 'When the parser would only percent-encode a character then should not be rewritten',
+      rawUrl: '/dashboard/{run}',
+      want: false,
+    },
+    {
+      name: 'When an encoded slash hides `..` inside a segment then should not be rewritten',
+      rawUrl: '/dashboard/assets/%2e%2e%2f%2e%2e%2fpackage.json',
+      want: false,
+    },
+    {
+      name: 'When a segment only starts with dots then should not be rewritten',
+      rawUrl: '/dashboard/assets/..index.js',
+      want: false,
+    },
+    {
+      name: 'When the target is in absolute form then should not be rewritten',
+      rawUrl: 'http://jardinero.example/webhooks/github',
+      want: false,
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.equal(isRewrittenPath(testCase.rawUrl), testCase.want);
+    });
+  }
 });
 
 describe('readJsonObjectBody', () => {

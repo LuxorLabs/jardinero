@@ -878,6 +878,35 @@ describe('signPullRequestCommits', () => {
       },
     },
     {
+      name: 'When github authors a created commit as someone else then should refuse before moving the branch',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [[listedCommit('c1')]],
+      created: () =>
+        jsonResponse({
+          sha: 'new-1',
+          verification: { verified: true },
+          author: { email: '9+other-app[bot]@users.noreply.github.com' },
+        }),
+      want: {
+        error:
+          'GitHub authored the commit re-created for acme/webapp#42 as 9+other-app[bot]@users.noreply.github.com, not as worker.git_author_email agent@acme.test',
+        refused: true,
+        writes: [{ create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } }],
+      },
+    },
+    {
+      name: 'When github answers a created commit without an author then should refuse before moving the branch',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [[listedCommit('c1')]],
+      created: () => jsonResponse({ sha: 'new-1', verification: { verified: true } }),
+      want: {
+        error:
+          'GitHub authored the commit re-created for acme/webapp#42 as undefined, not as worker.git_author_email agent@acme.test',
+        refused: true,
+        writes: [{ create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } }],
+      },
+    },
+    {
       name: 'When github refuses to move the branch then should return error',
       head: signingHead({ headRefOid: 'c1' }),
       pages: [[listedCommit('c1')]],
@@ -1052,7 +1081,11 @@ function signingFetch(c: SigningCase, writes: SigningWrite[]): typeof fetch {
       writes.push({ create: JSON.parse(init?.body ?? '{}') });
       return (
         c.created?.() ??
-        jsonResponse({ sha: `new-${writes.length}`, verification: { verified: true } })
+        jsonResponse({
+          sha: `new-${writes.length}`,
+          verification: { verified: true },
+          author: { email: 'agent@acme.test' },
+        })
       );
     }
     if (c.listing) return c.listing();

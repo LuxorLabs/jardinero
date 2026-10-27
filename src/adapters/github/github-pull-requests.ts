@@ -457,10 +457,10 @@ function pullRequestCommit(item: unknown, ref: string): PullRequestCommit {
   };
 }
 
-// createSignedCommit creates a commit and refuses it unless GitHub signed it, so the branch
-// never moves onto an unsigned one.
+// createSignedCommit creates a commit and refuses it unless GitHub signed it as the agent, so the
+// branch never moves onto an unsigned commit or one a later pass would take for someone else's.
 async function createSignedCommit(
-  options: { repo: string; token: string; fetchImpl?: typeof fetch },
+  options: { repo: string; token: string; authorEmail: string; fetchImpl?: typeof fetch },
   ref: string,
   commit: { message: string; tree: string; parents: string[] },
 ): Promise<string> {
@@ -471,6 +471,15 @@ async function createSignedCommit(
   }
   if (pathOf(body, ['verification'])?.verified !== true) {
     throw new CommitSigningRefusal(`GitHub did not sign the commit re-created for ${ref}`);
+  }
+  const authorEmail = pathOf(body, ['author'])?.email;
+  if (
+    typeof authorEmail !== 'string' ||
+    authorEmail.toLowerCase() !== options.authorEmail.toLowerCase()
+  ) {
+    throw new CommitSigningRefusal(
+      `GitHub authored the commit re-created for ${ref} as ${String(authorEmail)}, not as worker.git_author_email ${options.authorEmail}`,
+    );
   }
   return sha;
 }

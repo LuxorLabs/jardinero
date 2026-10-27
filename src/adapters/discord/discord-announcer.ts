@@ -9,7 +9,7 @@ import { logger } from '../../platform/logger.js';
 import type { WorkAnnouncer, WorkConversation } from '../../orchestrator/work-announcer.js';
 import type { Store } from '../../store/store.js';
 import { postDiscordMessage, startDiscordThreadFromMessage } from './discord-api.js';
-import { linearIssueMention, pullRequestMention } from './discord-links.js';
+import { discordPlainText, linearIssueMention, pullRequestMention } from './discord-markdown.js';
 
 export interface DiscordAnnouncerDeps {
   config: AppConfig;
@@ -241,7 +241,7 @@ function watchLink(deps: DiscordAnnouncerDeps, work: WorkConversation): string {
   return url ? `Follow it [here](${url}).` : '';
 }
 
-// reasonOf escapes markdown in the reason, so Discord shows it as written.
+// reasonOf answers the recorded reason as plain text, or says none was recorded.
 function reasonOf(recorded: string | null | undefined): string {
-  return (recorded ?? 'no reason was recorded').replace(/[\\`*_~|[\]]/g, '\\$&');
+  return discordPlainText(recorded ?? 'no reason was recorded');
 }

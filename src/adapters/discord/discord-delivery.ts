@@ -15,7 +15,7 @@ import {
   startDiscordThreadFromMessage,
 } from './discord-api.js';
 import type { DiscordCommandInvocation } from './discord-interaction.js';
-import { linearIssueMention } from './discord-links.js';
+import { discordPlainText, linearIssueMention } from './discord-markdown.js';
 
 export interface DiscordDeliveryDeps {
   config: AppConfig;
@@ -384,11 +384,21 @@ function threadStarter(
   const request = invocation.options.request?.trim();
   if (!request) return asked;
   const quoting = `${asked}\n>>> `;
-  const room = DISCORD_MESSAGE_MAX_LENGTH - quoting.length;
-  if (request.length <= room) return quoting + request;
-  // Cut before a surrogate pair rather than through it, so the message stays valid UTF-16.
-  const end = /[\uD800-\uDBFF]/.test(request[room - 2] ?? '') ? room - 2 : room - 1;
-  return `${quoting}${request.slice(0, end)}…`;
+  return quoting + quotedRequest(request, DISCORD_MESSAGE_MAX_LENGTH - quoting.length);
+}
+
+// quotedRequest escapes the request and cuts it to fit in room by whole characters, so the
+// cut splits neither an emoji nor an escape.
+function quotedRequest(request: string, room: number): string {
+  const escaped = discordPlainText(request);
+  if (escaped.length <= room) return escaped;
+  let cut = '';
+  for (const character of request) {
+    const piece = discordPlainText(character);
+    if (cut.length + piece.length > room - 1) break;
+    cut += piece;
+  }
+  return `${cut}…`;
 }
 
 // answerCommand replaces the deferred reply's placeholder. A failed reply is recorded and the

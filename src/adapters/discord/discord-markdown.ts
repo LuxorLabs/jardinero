@@ -15,3 +15,8 @@ export function pullRequestMention(repositoryFullName: string | undefined, numbe
     ? `[#${number}](${formatGitHubPullRequestUrl(repositoryFullName, number)})`
     : `#${number}`;
 }
+
+// discordPlainText escapes Discord markdown and mention syntax, so the text shows as written.
+export function discordPlainText(text: string): string {
+  return text.replace(/[\\`*_~|[\]#<]/g, '\\$&');
+}

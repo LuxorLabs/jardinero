@@ -478,6 +478,13 @@ describe('The message that opens a thread', () => {
         '<@1001> asked Jardinero to implement [JAR-79](https://linear.app/acme/issue/JAR-79)\n>>> fix the typo\nin the miners tab',
     },
     {
+      name: 'When the words carry markup then should quote them as written',
+      commandName: 'jardinero-code',
+      options: [{ name: 'request', value: '# fix [this](https://elsewhere.example) for <@2002>' }],
+      wantContent:
+        '<@1001> asked Jardinero to implement [JAR-79](https://linear.app/acme/issue/JAR-79)\n>>> \\# fix \\[this\\](https://elsewhere.example) for \\<@2002>',
+    },
+    {
       name: 'When the words do not fit in one message then should cut them short',
       commandName: 'jardinero-code',
       options: [{ name: 'request', value: 'a'.repeat(2_100) }],
@@ -487,6 +494,12 @@ describe('The message that opens a thread', () => {
       name: 'When the cut falls inside an emoji then should cut before it',
       commandName: 'jardinero-code',
       options: [{ name: 'request', value: `${'a'.repeat(1_910)}🙂${'a'.repeat(200)}` }],
+      wantContent: `<@1001> asked Jardinero to implement [JAR-79](https://linear.app/acme/issue/JAR-79)\n>>> ${'a'.repeat(1_910)}…`,
+    },
+    {
+      name: 'When the cut falls inside an escape then should cut before it',
+      commandName: 'jardinero-code',
+      options: [{ name: 'request', value: `${'a'.repeat(1_910)}*${'a'.repeat(200)}` }],
       wantContent: `<@1001> asked Jardinero to implement [JAR-79](https://linear.app/acme/issue/JAR-79)\n>>> ${'a'.repeat(1_910)}…`,
     },
   ];

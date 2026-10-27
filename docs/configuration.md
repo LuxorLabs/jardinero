@@ -92,6 +92,8 @@ ticket wins when it names exactly one configured repository for the team, then t
 project mapping, then the last configured repository the ticket names, then the team
 default. An unknown reference falls through instead of failing.
 
+`workflows.linear_implementer.workspace_url` is the Linear workspace url, such as `https://linear.app/acme`. When it is set, the Discord thread messages and command replies link the tickets they name; when it is empty, they show the bare identifier.
+
 ## Log review
 
 `workflows.log_reviewer` is off by default. When enabled, it scans the targets in

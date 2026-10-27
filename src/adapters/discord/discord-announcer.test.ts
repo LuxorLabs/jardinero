@@ -24,6 +24,7 @@ beforeEach(() => {
   config.discord.enabled = true;
   config.discord.repoChannels = { 'acme/orchestrator': 'channel-repo' };
   config.discord.alertsChannelId = 'channel-alerts';
+  config.workflows.linearImplementer.workspaceUrl = 'https://linear.app/acme';
   repositoryId = store.upsertRepository('acme/orchestrator').id;
   posts = [];
   mentions = [];
@@ -46,26 +47,28 @@ describe('createDiscordWorkAnnouncer', () => {
       name: 'When the ticket starts being written then should say which one',
       announce: (announcer, work) =>
         announcer.ticketImplementationStarted(work, { identifier: 'JAR-58' }),
-      wantContent: 'Writing JAR-58.',
+      wantContent: 'Writing [JAR-58](https://linear.app/acme/issue/JAR-58).',
     },
     {
       name: 'When the pass is being verified then should say so',
       announce: (announcer, work) =>
         announcer.ticketVerificationStarted(work, { identifier: 'JAR-58' }),
-      wantContent: 'Verifying what was written for JAR-58.',
+      wantContent: 'Verifying what was written for [JAR-58](https://linear.app/acme/issue/JAR-58).',
     },
     {
       name: 'When verification turned a pass down then should say which attempt goes next',
       announce: (announcer, work) =>
         announcer.ticketRejectedByVerifier(work, { identifier: 'JAR-58', attempt: 2 }),
-      wantContent: 'Verification turned that pass down, writing JAR-58 again (attempt 2).',
+      wantContent:
+        'Verification turned that pass down, writing [JAR-58](https://linear.app/acme/issue/JAR-58) again (attempt 2).',
     },
     {
       // Somebody has to step in, so the operator's channel hears it too.
       name: 'When the ticket parks then should say why, in the conversation and in alerts',
       announce: (announcer, work) =>
         announcer.ticketParked(work, { identifier: 'JAR-58', reason: 'iterations_exhausted' }),
-      wantContent: 'JAR-58 needs a person: iterations\\_exhausted.',
+      wantContent:
+        '[JAR-58](https://linear.app/acme/issue/JAR-58) needs a person: iterations\\_exhausted.',
       wantChannelIds: ['channel-repo', 'channel-alerts'],
     },
     {
@@ -77,14 +80,15 @@ describe('createDiscordWorkAnnouncer', () => {
           reason: 'the [login page](https://elsewhere.example) is _gone_',
         }),
       wantContent:
-        'JAR-58 needs a person: the \\[login page\\](https://elsewhere.example) is \\_gone\\_.',
+        '[JAR-58](https://linear.app/acme/issue/JAR-58) needs a person: the \\[login page\\](https://elsewhere.example) is \\_gone\\_.',
       wantChannelIds: ['channel-repo', 'channel-alerts'],
     },
     {
       name: 'When the ticket parks with no reason recorded then should say that',
       announce: (announcer, work) =>
         announcer.ticketParked(work, { identifier: 'JAR-58', reason: null }),
-      wantContent: 'JAR-58 needs a person: no reason was recorded.',
+      wantContent:
+        '[JAR-58](https://linear.app/acme/issue/JAR-58) needs a person: no reason was recorded.',
       wantChannelIds: ['channel-repo', 'channel-alerts'],
     },
     {
@@ -98,7 +102,7 @@ describe('createDiscordWorkAnnouncer', () => {
       // the machine that owns it from here on does the talking.
       name: 'When a pull request is adopted then should say it is ready for review',
       announce: (announcer, work) => announcer.pullRequestAdopted(work, { number: 4688 }),
-      wantContent: '#4688 is ready for review.',
+      wantContent: '[#4688](https://github.com/acme/orchestrator/pull/4688) is ready for review.',
     },
     {
       name: 'When the passes run out then should say why, in the conversation and in alerts',
@@ -107,18 +111,20 @@ describe('createDiscordWorkAnnouncer', () => {
           number: 4688,
           reason: 'attempts_exhausted',
         }),
-      wantContent: '#4688 needs a person: attempts\\_exhausted.',
+      wantContent:
+        '[#4688](https://github.com/acme/orchestrator/pull/4688) needs a person: attempts\\_exhausted.',
       wantChannelIds: ['channel-repo', 'channel-alerts'],
     },
     {
       name: 'When the pull request merges then should say so',
       announce: (announcer, work) => announcer.pullRequestMerged(work, { number: 4688 }),
-      wantContent: '#4688 was merged.',
+      wantContent: '[#4688](https://github.com/acme/orchestrator/pull/4688) was merged.',
     },
     {
       name: 'When the pull request closes unmerged then should say so',
       announce: (announcer, work) => announcer.pullRequestClosed(work, { number: 4688 }),
-      wantContent: '#4688 was closed without merging.',
+      wantContent:
+        '[#4688](https://github.com/acme/orchestrator/pull/4688) was closed without merging.',
     },
     {
       name: 'When a request could not be placed then should answer with the questions',
@@ -238,14 +244,22 @@ describe('Where the work can be watched', () => {
         config.server.publicUrl = 'https://jardinero.example.test';
       },
       wantPosts: [
-        { channelId: 'channel-repo', content: 'Writing JAR-58.' },
+        {
+          channelId: 'channel-repo',
+          content: 'Writing [JAR-58](https://linear.app/acme/issue/JAR-58).',
+        },
         { channelId: 'thread-opened', content: WATCHING },
       ],
     },
     {
       // Nowhere to send anybody, so the thread is opened with nothing said in it.
       name: 'When the deployment has no public url then should say only the moment',
-      wantPosts: [{ channelId: 'channel-repo', content: 'Writing JAR-58.' }],
+      wantPosts: [
+        {
+          channelId: 'channel-repo',
+          content: 'Writing [JAR-58](https://linear.app/acme/issue/JAR-58).',
+        },
+      ],
     },
     {
       name: 'When the work already has a conversation then should say only the moment',
@@ -253,7 +267,12 @@ describe('Where the work can be watched', () => {
         config.server.publicUrl = 'https://jardinero.example.test';
         store.saveDiscordConversation({ conversationKey: 'work-1', threadId: 'thread-known' });
       },
-      wantPosts: [{ channelId: 'thread-known', content: 'Writing JAR-58.' }],
+      wantPosts: [
+        {
+          channelId: 'thread-known',
+          content: 'Writing [JAR-58](https://linear.app/acme/issue/JAR-58).',
+        },
+      ],
     },
   ];
 
@@ -364,7 +383,12 @@ describe('Announcements that never land', () => {
     announcer().ticketImplementationStarted(conversation(), { identifier: 'JAR-58' });
 
     await settled();
-    assert.deepEqual(posts, [{ channelId: 'channel-repo', content: 'Writing JAR-58.' }]);
+    assert.deepEqual(posts, [
+      {
+        channelId: 'channel-repo',
+        content: 'Writing [JAR-58](https://linear.app/acme/issue/JAR-58).',
+      },
+    ]);
     assert.equal(store.findDiscordConversation('work-1')?.threadId, 'thread-opened');
     assert.deepEqual(
       store

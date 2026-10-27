@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
+
+import { loadConfig } from '../../config.js';
+import { linearIssueMention, pullRequestMention } from './discord-links.js';
+
+describe('linearIssueMention', () => {
+  const cases: Array<{ name: string; workspaceUrl: string; want: string }> = [
+    {
+      name: 'When the Linear workspace is configured then should link the ticket',
+      workspaceUrl: 'https://linear.app/acme',
+      want: '[JAR-58](https://linear.app/acme/issue/JAR-58)',
+    },
+    {
+      name: 'When the workspace url ends in a slash then should link the ticket without doubling it',
+      workspaceUrl: 'https://linear.app/acme/',
+      want: '[JAR-58](https://linear.app/acme/issue/JAR-58)',
+    },
+    {
+      name: 'When the Linear workspace is not configured then should name the ticket bare',
+      workspaceUrl: '',
+      want: 'JAR-58',
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      const config = loadConfig();
+      config.workflows.linearImplementer.workspaceUrl = testCase.workspaceUrl;
+
+      assert.equal(linearIssueMention(config, 'JAR-58'), testCase.want);
+    });
+  }
+});
+
+describe('pullRequestMention', () => {
+  const cases: Array<{ name: string; repositoryFullName?: string; want: string }> = [
+    {
+      name: 'When the repository is known then should link the pull request',
+      repositoryFullName: 'acme/orchestrator',
+      want: '[#4688](https://github.com/acme/orchestrator/pull/4688)',
+    },
+    {
+      name: 'When the repository is not known then should name the pull request bare',
+      want: '#4688',
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.equal(pullRequestMention(testCase.repositoryFullName, 4688), testCase.want);
+    });
+  }
+});

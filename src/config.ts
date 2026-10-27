@@ -13,23 +13,21 @@ import type {
   WorkflowType,
 } from './store/types.js';
 
-// Codex CLI reasoning-effort levels, passed as `-c model_reasoning_effort=<level>`. The
-// scale is Codex-specific: xhigh and max are CLI extensions, not API values.
+// CODEX_EFFORTS are the Codex CLI reasoning-effort levels, passed as
+// `-c model_reasoning_effort`; xhigh and max are CLI levels, not API values.
 export const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type CodexEffort = (typeof CODEX_EFFORTS)[number];
 
 export interface LinearTeamRepoRoutingConfig {
   default: string;
   projects: Record<string, string>;
-  // Repositories this team may select by naming a GitHub reference in the issue,
-  // without tying the repository to a Linear project.
+  // repos are the repositories this team may select by naming a GitHub reference in the
+  // issue, without tying the repository to a Linear project.
   repos: string[];
 }
 
 export type LinearTeamRepoConfig = string | LinearTeamRepoRoutingConfig;
 
-// Low-to-high ordering used to clamp effort. Keyed by CodexEffort so the compiler
-// forces every level to have a rank.
 const EFFORT_RANK: Record<CodexEffort, number> = {
   low: 0,
   medium: 1,
@@ -125,8 +123,6 @@ export interface AppConfig {
       pollIntervalMin: number;
       pollBranchPrefix: string;
       agentLogin: string;
-      // Emoji reactions the orchestrator posts on a triggering comment to signal
-      // it was seen and later handled, closing the silent gap before the reply.
       commentReactions: {
         enabled: boolean;
         pickup: ReactionContent;
@@ -160,18 +156,15 @@ export interface AppConfig {
     linearImplementer: {
       enabled: boolean;
       maxConcurrentRuns: number;
-      // Written at runtime with the minted token, not provided as a secret.
+      // apiTokenEnv is written at runtime with the minted token, not provided as a secret.
       apiTokenEnv: string;
       clientIdEnv: string;
       clientSecretEnv: string;
       tokenRefreshMin: number;
       webhookSecretEnv: string;
-      // Linear team key -> repo routing for delegated issues from that team.
+      workspaceUrl: string;
       teamRepos: Record<string, LinearTeamRepoConfig>;
-      // Implement/verify loop: rejected work is revised on the same branch up to
-      // this many iterations; 0 disables verification and PRs open ready.
       maxIterations: number;
-      // Reasoning effort for the verifier seat.
       verifyEffort: CodexEffort;
       checkWaitMs: Partial<Record<LinearImplementerState, number>>;
     };
@@ -203,16 +196,14 @@ export interface AppConfig {
     sandboxReadyBackoffJitterMs: number;
     implementationEffort: CodexEffort;
     triageEffort: CodexEffort;
-    // Stamped onto every sandbox's metadata so an operator (and a future
-    // re-attach path) can tell which orchestrator deployment owns it. Distinct
-    // per deployment when several share a Tenki workspace.
+    // orchestratorId is stamped on every sandbox, so the reaper skips other deployments'
+    // sandboxes in a shared Tenki workspace.
     orchestratorId: string;
-    // Backstop for the reaper: Tenki terminates an idle-paused sandbox after this
-    // long instead of leaving it paused indefinitely. Bounds the leak for any
-    // sandbox the reaper does not reclaim (e.g. its run row was pruned).
+    // sandboxPauseRetentionMs is how long Tenki keeps a paused sandbox before terminating it,
+    // so a sandbox the reaper fails to reclaim does not stay paused forever.
     sandboxPauseRetentionMs: number;
-    // How often the reaper sweeps the Tenki workspace for leaked sandboxes; < 1
-    // disables it.
+    // sandboxReaperIntervalMin is how often the reaper sweeps the Tenki workspace for leaked
+    // sandboxes; < 1 disables it.
     sandboxReaperIntervalMin: number;
   };
   githubApp: {
@@ -228,15 +219,9 @@ export interface AppConfig {
     applicationIdEnv: string;
     publicKeyEnv: string;
     botTokenEnv: string;
-    // Role ids allowed to run the commands. An empty list admits nobody, because a
-    // command spends money and a missing role must fail closed.
     allowedRoleIds: string[];
-    // Repository full name -> its channel. Several repositories may share one, so the
-    // reverse reading only answers when a channel maps to exactly one repository.
     repoChannels: Record<string, string>;
-    // Where work whose repository has no channel is announced.
     defaultChannelId: string;
-    // Where an instance parked for a person, and Jardinero's own breakage, is announced.
     alertsChannelId: string;
   };
   people: PersonConfig[];
@@ -284,9 +269,8 @@ export interface LogReviewPermissionSignalsConfig {
 
 type RawConfig = Record<string, unknown>;
 
-// How long a state waits before the periodic check revisits it. Only the states with
-// work to revisit appear; one left out is never checked, which is what keeps the clock
-// off the states a webhook or a finished run wakes.
+// DEFAULT_*_CHECK_WAIT_MS map each state to how long it waits before the periodic check
+// revisits it. A state left out is never checked: a webhook or a finished run wakes it.
 const DEFAULT_REQUEST_ROUTER_CHECK_WAIT_MS: Partial<Record<RequestRouterState, number>> = {
   rr_pending: 60_000,
   rr_routing: 120_000,
@@ -336,8 +320,6 @@ export function loadConfig(
     server: {
       host: stringAt(raw, ['server', 'host'], '0.0.0.0'),
       port: numberAt(raw, ['server', 'port'], 3000),
-      // Public base URL of this instance; used to build dashboard run links in
-      // Linear write-backs. Empty (default) omits the link, e.g. for local dev.
       publicUrl: stringAt(raw, ['server', 'public_url'], ''),
     },
     auth: {
@@ -502,6 +484,7 @@ export function loadConfig(
           ['workflows', 'linear_implementer', 'webhook_secret_env'],
           'LINEAR_WEBHOOK_SECRET',
         ),
+        workspaceUrl: stringAt(raw, ['workflows', 'linear_implementer', 'workspace_url'], ''),
         teamRepos: linearTeamReposAt(raw, ['workflows', 'linear_implementer', 'team_repos']),
         maxIterations: numberAt(raw, ['workflows', 'linear_implementer', 'max_iterations'], 15),
         verifyEffort: effortAt(raw, ['workflows', 'linear_implementer', 'verify_effort'], 'high'),
@@ -607,10 +590,14 @@ export function loadConfig(
   validateWorkflowConfig(config);
   validateDiscordConfig(config.discord);
   validatePeopleConfig(config.people);
-  validateServerPublicUrl(config.server.publicUrl);
+  validateOptionalHttpUrl(config.server.publicUrl, 'server.public_url');
+  validateOptionalHttpUrl(
+    config.workflows.linearImplementer.workspaceUrl,
+    'workflows.linear_implementer.workspace_url',
+  );
   assertWorkerGenerationsResolve(config.worker);
-  // A real runner with no resolvable default image boots fine but fails opaquely at
-  // sandbox creation; catch the old flat `worker.image` config (now `worker.default`).
+  // Fail boot when a real runner has no default image; otherwise it fails opaquely at
+  // sandbox creation.
   if (config.worker.runner !== 'mock' && config.worker.default.image.trim().length === 0) {
     throw new Error(
       `worker.default.image is required when worker.runner is "${config.worker.runner}"; the flat worker.image key was replaced by worker.default.image.`,
@@ -619,8 +606,7 @@ export function loadConfig(
   return config;
 }
 
-// workflowConcurrencies is how many sandboxes each machine may run at once, the cap the
-// pool enforces and the dashboard shows.
+// workflowConcurrencies is how many sandboxes each machine may run at once.
 export function workflowConcurrencies(config: AppConfig): Record<WorkflowType, number> {
   return {
     request_router: config.workflows.requestRouter.maxConcurrentRuns,
@@ -631,8 +617,7 @@ export function workflowConcurrencies(config: AppConfig): Record<WorkflowType, n
   };
 }
 
-// discordChannelForRepository is where a repository's work is announced: its own channel,
-// or the default, so an announcement is never dropped for want of a destination.
+// discordChannelForRepository answers the repository's own channel, or the default one.
 export function discordChannelForRepository(
   config: AppConfig,
   repositoryFullName: string,
@@ -644,9 +629,8 @@ export function discordChannelForRepository(
   return config.discord.defaultChannelId || undefined;
 }
 
-// repositoriesForDiscordChannel is every repository that reports to a channel, in the
-// order the config lists them. Several may share one, so the caller decides what to do
-// with more than one rather than being handed an arbitrary pick.
+// repositoriesForDiscordChannel answers every repository mapped to a channel, in config
+// order, and leaves picking one to the caller.
 export function repositoriesForDiscordChannel(config: AppConfig, channelId: string): string[] {
   const normalizedChannelId = channelId.trim();
   return Object.entries(config.discord.repoChannels)
@@ -654,9 +638,8 @@ export function repositoriesForDiscordChannel(config: AppConfig, channelId: stri
     .map(([repo]) => repo);
 }
 
-// personForDiscordUserId, personForGithubLogin and personForLinearUserId are how an event
-// that arrives under one identity is answered under another. The config is the only place
-// people are declared, so a change to them takes a restart and nothing else.
+// personForDiscordUserId, personForGithubLogin and personForLinearUserId find the same
+// person under another identity.
 export function personForDiscordUserId(
   config: AppConfig,
   discordUserId: string,
@@ -679,8 +662,7 @@ export function personForLinearUserId(
   return config.people.find((person) => person.linearUserId === linearUserId.trim());
 }
 
-// repositoryForLinearTeamKey answers the repository a Linear team's work lands in, which is
-// what the team's prefix in a ticket identifier says.
+// repositoryForLinearTeamKey answers the default repository of a Linear team.
 export function repositoryForLinearTeamKey(config: AppConfig, teamKey: string): string | undefined {
   const normalized = teamKey.trim().toLowerCase();
   for (const [key, routing] of Object.entries(config.workflows.linearImplementer.teamRepos)) {
@@ -690,8 +672,7 @@ export function repositoryForLinearTeamKey(config: AppConfig, teamKey: string): 
   return undefined;
 }
 
-// linearTeamKeysForRepository answers every Linear team whose issues are implemented in a
-// repository, which is what turns a bare ticket number into an identifier.
+// linearTeamKeysForRepository answers every Linear team routed to a repository.
 export function linearTeamKeysForRepository(
   config: AppConfig,
   repositoryFullName: string,
@@ -742,9 +723,8 @@ export function githubAppCredentialsFor(
   return undefined;
 }
 
-// configuredRepositoryNames is the repositories the config declares we work in: the
-// scan targets, every repository the Linear routing can reach, and every one a Discord
-// channel is mapped to.
+// configuredRepositoryNames answers every repository named by the log review targets, the
+// Linear routing or the Discord channels.
 export function configuredRepositoryNames(config: AppConfig): string[] {
   const names = new Set<string>();
   for (const target of config.workflows.logReviewer.repos) names.add(target.repo);
@@ -767,9 +747,8 @@ export interface RepoConfigGap {
   missing: string[];
 }
 
-// validateRepoConfig answers what every repository we work in still lacks. Each piece is
-// written where its subsystem is configured, so a repository missing one is only visible
-// reading them together.
+// validateRepoConfig answers what each configured repository is missing across the
+// subsystems that name it.
 export function validateRepoConfig(config: AppConfig): RepoConfigGap[] {
   const gaps: RepoConfigGap[] = [];
   for (const repositoryFullName of configuredRepositoryNames(config)) {
@@ -785,8 +764,7 @@ export function validateRepoConfig(config: AppConfig): RepoConfigGap[] {
   return gaps;
 }
 
-// Which channel names this repository, unlike `discordChannelForRepository`, which falls
-// back to the default.
+// discordChannelOwnedBy answers the repository's own channel, without the default fallback.
 function discordChannelOwnedBy(config: AppConfig, repositoryFullName: string): string | undefined {
   const normalizedRepo = repositoryFullName.trim().toLowerCase();
   for (const [repo, channelId] of Object.entries(config.discord.repoChannels)) {
@@ -808,7 +786,6 @@ export function resolveWorkerResources(
   return workerRepoTarget(config, repo)?.resources ?? config.worker.default.resources;
 }
 
-// resolveWorkerSecretEnvs answers the env var names a repo's sandboxes are given.
 export function resolveWorkerSecretEnvs(config: AppConfig, repo: string | undefined): string[] {
   return workerRepoTarget(config, repo)?.secretEnvs ?? [];
 }
@@ -996,9 +973,8 @@ function stringRecordAt(
   };
 }
 
-// checkWaitMsAt layers per-state overrides on the code defaults, so an environment can
-// retune one state without restating the map. A state the workflow does not check is
-// refused: accepting it would read as a cadence change and do nothing.
+// checkWaitMsAt layers per-state overrides on the code defaults, and refuses a state the
+// workflow never checks, since its override would do nothing.
 function checkWaitMsAt<S extends string>(
   raw: RawConfig,
   keys: string[],
@@ -1057,9 +1033,9 @@ function validateLokiPushUrl(value: string): void {
   }
 }
 
-// validateServerPublicUrl accepts empty, which only omits the dashboard link, but a set
-// value must be a real http or https URL so a typo is caught at boot.
-function validateServerPublicUrl(value: string): void {
+// validateOptionalHttpUrl accepts an empty value and fails boot on anything else that is not
+// an http or https URL.
+function validateOptionalHttpUrl(value: string, path: string): void {
   if (value.trim().length === 0) return;
   try {
     const url = new URL(value);
@@ -1067,7 +1043,7 @@ function validateServerPublicUrl(value: string): void {
       throw new Error('unsupported protocol');
     }
   } catch {
-    throw new Error('server.public_url must be a valid http or https URL when set');
+    throw new Error(`${path} must be a valid http or https URL when set`);
   }
 }
 
@@ -1170,7 +1146,6 @@ function workerResourcesAt(value: unknown, path: string): WorkerResources | unde
     }
     return n;
   };
-  // Both are required as a unit; a partial block is a config mistake, so fail loud.
   return { cpuCores: read('cpu_cores'), memoryMb: read('memory_mb') };
 }
 
@@ -1288,7 +1263,6 @@ function modelGenerationsAt(raw: RawConfig): Record<string, ModelGeneration> {
       }
       seats[seat] = model.trim();
     }
-    // Merge per-seat so overriding one seat of a built-in generation keeps the others.
     const profileForGen = { ...merged[gen], ...seats };
     if (
       typeof profileForGen.implementation !== 'string' ||

@@ -1,5 +1,27 @@
 # jardinero
 
+## [0.11.0] - 2026-10-27
+
+### Minor Changes
+
+- [#94](https://github.com/LuxorLabs/jardinero/pull/94) [`a598d44`](https://github.com/LuxorLabs/jardinero/commit/a598d44172316f64639a235b563e2a980f76ebed) Thanks [@luciocorral](https://github.com/luciocorral)! - worker: run Codex detached in the sandbox and poll it, so a lost stream or an orchestrator restart no longer loses the run
+
+### Patch Changes
+
+- [#146](https://github.com/LuxorLabs/jardinero/pull/146) [`01b8898`](https://github.com/LuxorLabs/jardinero/commit/01b88986c12c2eef39d49ef930fe83cff3383c63) Thanks [@luciocorral](https://github.com/luciocorral)! - linear: write the repository a `/jardinero-code` resolved into the ticket it opens, and route a ticket that names several of the team's repositories and has no project to the last one it names
+
+- [#107](https://github.com/LuxorLabs/jardinero/pull/107) [`c6739a6`](https://github.com/LuxorLabs/jardinero/commit/c6739a633514cdb7b5c699c6f10f8019ad9b0a67) Thanks [@cbascom](https://github.com/cbascom)! - worker: always pass the Daytona API endpoint to the SDK, so an empty `DAYTONA_API_URL` in `.env` no longer fails every sandbox create
+
+- [#96](https://github.com/LuxorLabs/jardinero/pull/96) [`ed5b121`](https://github.com/LuxorLabs/jardinero/commit/ed5b1213056527704cd1ae2ed6fe340f92274713) Thanks [@luciocorral](https://github.com/luciocorral)! - orchestrator: close a PR maintainer that ran out of attempts when its pull request ends and the webhook is lost
+
+- [#97](https://github.com/LuxorLabs/jardinero/pull/97) [`e97f9bb`](https://github.com/LuxorLabs/jardinero/commit/e97f9bb92585a523e49536405ab11eea34039ce3) Thanks [@luciocorral](https://github.com/luciocorral)! - orchestrator: continue the pull request a failed Linear implementer run opened instead of opening another
+
+- [#98](https://github.com/LuxorLabs/jardinero/pull/98) [`ab1cc35`](https://github.com/LuxorLabs/jardinero/commit/ab1cc35224fbf942ac29563f143965dfda1a5625) Thanks [@luciocorral](https://github.com/luciocorral)! - orchestrator: stop the workflow when an operator kills its sandbox run instead of dispatching another one
+
+- [#95](https://github.com/LuxorLabs/jardinero/pull/95) [`dfdd379`](https://github.com/LuxorLabs/jardinero/commit/dfdd379fbd652c6c9789c1b20444e809f90929b7) Thanks [@luciocorral](https://github.com/luciocorral)! - orchestrator: end the Linear and Fix instances that own a pull request when it is merged or closed
+
+- [#122](https://github.com/LuxorLabs/jardinero/pull/122) [`57a019d`](https://github.com/LuxorLabs/jardinero/commit/57a019dc82d2d3aa5c0a061b9c0d384a41e6d607) Thanks [@cbascom](https://github.com/cbascom)! - worker: size sandboxes from the image's native snapshot size, sending cpu/memory only to size up a repo with a `resources` override, so Tenki's new restore-floor enforcement stops rejecting log_review and under-sized runs
+
 ## [0.10.1] - 2026-09-26
 
 ### Patch Changes

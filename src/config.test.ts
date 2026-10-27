@@ -132,6 +132,7 @@ describe('loadConfig', () => {
             clientSecretEnv: 'LINEAR_CLIENT_SECRET',
             tokenRefreshMin: 1440,
             webhookSecretEnv: 'LINEAR_WEBHOOK_SECRET',
+            workspaceUrl: '',
             teamRepos: {},
             maxIterations: 15,
             verifyEffort: 'high',
@@ -599,6 +600,7 @@ describe('Linear implementer config', () => {
       `
     enabled: true
     max_concurrent_runs: 2
+    workspace_url: "https://linear.app/acme"
     team_repos:
       JAR: "acme/orchestrator"
 `,
@@ -606,6 +608,7 @@ describe('Linear implementer config', () => {
 
     assert.equal(config.workflows.linearImplementer.enabled, true);
     assert.equal(config.workflows.linearImplementer.maxConcurrentRuns, 2);
+    assert.equal(config.workflows.linearImplementer.workspaceUrl, 'https://linear.app/acme');
   });
 
   // 0 iterations disables verification and opens PRs ready, so it must be accepted.
@@ -678,6 +681,14 @@ describe('Linear team routing', () => {
 
 describe('Linear implementer config the loader refuses', () => {
   const cases: Array<{ name: string; yaml: string; wantError: RegExp }> = [
+    {
+      name: 'When `workspace_url` is not a url then should return error',
+      yaml: `
+      workspace_url: "linear.app/acme"
+  `,
+      wantError:
+        /workflows\.linear_implementer\.workspace_url must be a valid http or https URL when set/,
+    },
     {
       name: 'When it is enabled with no team repos then should return error',
       yaml: `

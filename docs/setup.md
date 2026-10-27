@@ -359,6 +359,7 @@ Then say which repository a team's tickets are implemented in. Boot refuses an e
 workflows:
   linear_implementer:
     enabled: true
+    workspace_url: "https://linear.app/your-workspace"
     team_repos:
       ENG: "your-org/your-repo"
 ```

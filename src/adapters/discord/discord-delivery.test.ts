@@ -35,6 +35,7 @@ beforeEach(() => {
   config = loadConfig();
   config.server.publicUrl = 'https://jardinero.example.test';
   config.discord.enabled = true;
+  config.workflows.linearImplementer.workspaceUrl = 'https://linear.app/acme';
   config.workflows.linearImplementer.teamRepos = {
     JAR: 'acme/orchestrator',
     SYS: { default: 'acme/fleet', projects: {}, repos: ['acme/energy'] },
@@ -76,7 +77,8 @@ describe('handleDiscordCommand', () => {
       commandName: 'jardinero-code',
       options: [{ name: 'request', value: 'fix the typo in the miners tab' }],
       wantOutcome: { handled: true },
-      wantReply: 'Opened JAR-79 and started on it. Follow it in <#thread-1>.',
+      wantReply:
+        'Opened [JAR-79](https://linear.app/acme/issue/JAR-79) and started on it. Follow it in <#thread-1>.',
     },
     {
       name: 'When the code command names no repository then should ask for one',
@@ -110,8 +112,7 @@ describe('handleDiscordCommand', () => {
         delegationError = new Error('linear refused to delegate JAR-79');
       },
       wantOutcome: { handled: false, reason: 'linear refused to delegate JAR-79' },
-      wantReply:
-        'Opened JAR-79, but it could not be started: linear refused to delegate JAR-79. Ask for it again with `/jardinero-ticket ticket:JAR-79`.',
+      wantReply: `Opened [JAR-79](https://linear.app/acme/issue/JAR-79), but it could not be started: linear refused to delegate JAR-79. Ask for it again with \`/jardinero-ticket ticket:JAR-79\`.`,
     },
     {
       name: 'When the ticket cannot be opened then should answer with the reason',
@@ -133,7 +134,7 @@ describe('handleDiscordCommand', () => {
       },
       wantOutcome: { handled: true, reason: 'thread_not_opened' },
       wantReply:
-        'Opened JAR-79 and started on it. I cannot open a thread in this channel; an operator has to give Jardinero access to it.',
+        'Opened [JAR-79](https://linear.app/acme/issue/JAR-79) and started on it. I cannot open a thread in this channel; an operator has to give Jardinero access to it.',
     },
     {
       name: 'When the status names a ticket then should answer it outside its thread',
@@ -299,7 +300,8 @@ describe('handleDiscordCommand', () => {
         delegationError = new Error('linear refused to assign JAR-58');
       },
       wantOutcome: { handled: false, reason: 'linear refused to assign JAR-58' },
-      wantReply: 'JAR-58 could not be started: linear refused to assign JAR-58.',
+      wantReply:
+        '[JAR-58](https://linear.app/acme/issue/JAR-58) could not be started: linear refused to assign JAR-58.',
     },
     {
       // Discord refuses what the bot cannot reach, and the acknowledgement is the only
@@ -315,7 +317,8 @@ describe('handleDiscordCommand', () => {
     {
       name: 'When the ticket is one we work on then should answer where it is followed',
       wantOutcome: { handled: true },
-      wantReply: 'Received JAR-58. Follow it in <#thread-1>.',
+      wantReply:
+        'Received [JAR-58](https://linear.app/acme/issue/JAR-58). Follow it in <#thread-1>.',
     },
   ];
 
@@ -423,7 +426,10 @@ describe('Discord commands that open work', () => {
     const outcome = await handleDiscordCommand(deps(), invocation({}));
 
     assert.deepEqual(outcome, { handled: true });
-    assert.equal(lastReply(), 'Received JAR-58. Follow it in <#thread-1>.');
+    assert.equal(
+      lastReply(),
+      'Received [JAR-58](https://linear.app/acme/issue/JAR-58). Follow it in <#thread-1>.',
+    );
     assert.equal(
       discordCalls.some((call) => call.url.endsWith('/threads')),
       false,
@@ -441,23 +447,6 @@ describe('Discord commands that open work', () => {
     assert.deepEqual(store.listUnconsumedRequests('linear_issue', 'JAR-58'), []);
   });
 
-  test('When the thread is opened then should hang it off a message naming who asked', async () => {
-    await handleDiscordCommand(deps(), invocation({}));
-
-    assert.deepEqual(discordCalls[0], {
-      url: 'https://discord.com/api/v10/channels/channel-1/messages',
-      body: {
-        content: '<@1001> asked Jardinero to implement JAR-58',
-        allowed_mentions: { parse: [], users: [] },
-        flags: 4,
-      },
-    });
-    assert.equal(
-      discordCalls[1]?.url,
-      'https://discord.com/api/v10/channels/channel-1/messages/message-1/threads',
-    );
-  });
-
   test('When a command is refused then should open no thread and no request', async () => {
     await handleDiscordCommand(
       deps(),
@@ -467,6 +456,75 @@ describe('Discord commands that open work', () => {
     assert.equal(store.listRequests({}, { limit: 10 }).rows.length, 0);
     assert.equal(discordCalls.length, 1);
   });
+});
+
+describe('The message that opens a thread', () => {
+  const cases: Array<{
+    name: string;
+    commandName?: string;
+    options?: Array<{ name: string; value: string }>;
+    wantContent: string;
+  }> = [
+    {
+      name: 'When a ticket is asked for then should name who asked and link the ticket',
+      wantContent:
+        '<@1001> asked Jardinero to implement [JAR-58](https://linear.app/acme/issue/JAR-58)',
+    },
+    {
+      name: 'When work is asked for in words then should quote those words',
+      commandName: 'jardinero-code',
+      options: [{ name: 'request', value: ' fix the typo\nin the miners tab ' }],
+      wantContent:
+        '<@1001> asked Jardinero to implement [JAR-79](https://linear.app/acme/issue/JAR-79)\n>>> fix the typo\nin the miners tab',
+    },
+    {
+      name: 'When the words carry markup then should quote them as written',
+      commandName: 'jardinero-code',
+      options: [{ name: 'request', value: '# fix [this](https://elsewhere.example) for <@2002>' }],
+      wantContent:
+        '<@1001> asked Jardinero to implement [JAR-79](https://linear.app/acme/issue/JAR-79)\n>>> \\# fix \\[this\\](https://elsewhere.example) for \\<@2002>',
+    },
+    {
+      name: 'When the words do not fit in one message then should cut them short',
+      commandName: 'jardinero-code',
+      options: [{ name: 'request', value: 'a'.repeat(2_100) }],
+      wantContent: `<@1001> asked Jardinero to implement [JAR-79](https://linear.app/acme/issue/JAR-79)\n>>> ${'a'.repeat(1_911)}…`,
+    },
+    {
+      name: 'When the cut falls inside an emoji then should cut before it',
+      commandName: 'jardinero-code',
+      options: [{ name: 'request', value: `${'a'.repeat(1_910)}🙂${'a'.repeat(200)}` }],
+      wantContent: `<@1001> asked Jardinero to implement [JAR-79](https://linear.app/acme/issue/JAR-79)\n>>> ${'a'.repeat(1_910)}…`,
+    },
+    {
+      name: 'When the cut falls inside an escape then should cut before it',
+      commandName: 'jardinero-code',
+      options: [{ name: 'request', value: `${'a'.repeat(1_910)}*${'a'.repeat(200)}` }],
+      wantContent: `<@1001> asked Jardinero to implement [JAR-79](https://linear.app/acme/issue/JAR-79)\n>>> ${'a'.repeat(1_910)}…`,
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, async () => {
+      await handleDiscordCommand(
+        deps(),
+        invocation({ commandName: testCase.commandName, options: testCase.options }),
+      );
+
+      assert.deepEqual(discordCalls[0], {
+        url: 'https://discord.com/api/v10/channels/channel-1/messages',
+        body: {
+          content: testCase.wantContent,
+          allowed_mentions: { parse: [], users: [] },
+          flags: 4,
+        },
+      });
+      assert.equal(
+        discordCalls[1]?.url,
+        'https://discord.com/api/v10/channels/channel-1/messages/message-1/threads',
+      );
+    });
+  }
 });
 
 describe('Discord answers that never land', () => {

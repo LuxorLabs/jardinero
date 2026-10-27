@@ -11,6 +11,7 @@ import {
   MAX_PROMPT_LENGTH,
 } from '../../workflows/agents.js';
 import { type AppConfig, configuredRepositoryNames, workflowConcurrencies } from '../../config.js';
+import { formatGitHubPullRequestUrl } from '../../platform/github-url.js';
 import { nowMs } from '../../platform/time.js';
 import { REPLY_CAP_REACHED_NOTE } from '../../orchestrator/state-machines/execution.js';
 import {
@@ -57,16 +58,15 @@ import { headerValue } from '../request.js';
 import { sendHtml, sendJson } from '../respond.js';
 import { resolveAppVersion } from '../../platform/version.js';
 
-// OPERATED_WORKFLOW_TYPES leaves the router out: it is the door every ask comes
-// through, and an ask is read in Requests, which shows what became of it.
+// OPERATED_WORKFLOW_TYPES leaves the router out, because Requests already shows every ask.
 const OPERATED_WORKFLOW_TYPES: WorkflowType[] = [
   'linear_implementer',
   'fix_implementer',
   'log_reviewer',
   'pr_maintainer',
 ];
-// WORKFLOW_TYPE_ORDER is the order the workflows are shown in, which follows the life of a
-// request: routed, implemented, fixed, scanned, maintained.
+// WORKFLOW_TYPE_ORDER follows a request's life: routed, implemented, fixed, scanned,
+// maintained.
 const WORKFLOW_TYPE_ORDER: WorkflowType[] = [
   'request_router',
   'linear_implementer',
@@ -74,7 +74,7 @@ const WORKFLOW_TYPE_ORDER: WorkflowType[] = [
   'log_reviewer',
   'pr_maintainer',
 ];
-// METRIC_ARRIVAL_STATES says what the two metrics counted off transitions count.
+// METRIC_ARRIVAL_STATES lists the states whose arrivals each metric counts.
 const METRIC_ARRIVAL_STATES: Record<'items_triaged' | 'incidents_handled', readonly string[]> = {
   items_triaged: ['lr_done'],
   incidents_handled: ['fi_done'],
@@ -150,8 +150,6 @@ const OVERVIEW_WINDOWS = {
   '7d': { durationMs: 7 * 24 * 60 * 60 * 1000, bucketMs: 24 * 60 * 60 * 1000, buckets: 7 },
   '30d': { durationMs: 30 * 24 * 60 * 60 * 1000, bucketMs: 24 * 60 * 60 * 1000, buckets: 30 },
 } as const;
-// Double Linear's ~60s HMAC replay tolerance so a delivery id stays remembered
-// past any window in which Linear would retry the same delivery.
 
 export async function handleDashboard(
   context: ApiContext,
@@ -161,8 +159,7 @@ export async function handleDashboard(
 ): Promise<void> {
   const method = request.method ?? 'GET';
 
-  // The SPA's hashed JS/CSS bundles. These carry no sensitive data, so they can use
-  // immutable caching.
+  // Serve the SPA's hashed bundles with immutable caching; they hold no sensitive data.
   if (method === 'GET' && url.pathname.startsWith('/dashboard/assets/')) {
     serveDashboardAsset(response, url.pathname);
     return;
@@ -347,8 +344,7 @@ function dashboardAgentsPayload(context: ApiContext): PromptsResponse {
   const stored = context.store.listPrompts();
   return {
     agents: AGENT_KINDS.map((agent) => {
-      // The verifier is dispatched by the workflow of the implementer it judges, which is
-      // what puts the two Linear seats under one heading in the Prompts tab.
+      // Group the verifier under the Linear implementer, the workflow that dispatches it.
       const workflowType: WorkflowType = agent === 'linear_verifier' ? 'linear_implementer' : agent;
       return {
         agent,
@@ -423,9 +419,8 @@ function parsePromptScope(
   return { repo, agent };
 }
 
-// promptRevisionConflict is the optimistic concurrency check: editing an
-// existing row requires its current revision, and a mismatch means somebody saved in
-// between.
+// promptRevisionConflict refuses an edit that names a stale revision, meaning somebody
+// saved in between.
 function promptRevisionConflict(
   context: ApiContext,
   response: ServerResponse,
@@ -574,14 +569,12 @@ function isGitHubRepoSlug(value: string): boolean {
   return true;
 }
 
-// One page size for every list: the pages are read newest-first by an operator, and a
-// smaller default only moved the cut closer without making a window mean anything.
+// DASHBOARD_PAGE_LIMIT is the page size of every list, read newest first.
 const DASHBOARD_PAGE_LIMIT = 500;
 
 const OVERVIEW_RECENT_LIMIT = DASHBOARD_PAGE_LIMIT;
 
-// The Overview queues are capped well under a page: they are read at a glance, and
-// what does not fit is reached from Operation.
+// OVERVIEW_QUEUE_LIMIT caps the Overview queues, read at a glance; the rest is in Operation.
 const OVERVIEW_QUEUE_LIMIT = 100;
 
 function dashboardLimit(value: string | null): number {
@@ -639,16 +632,14 @@ function dashboardOverview(context: ApiContext, params: URLSearchParams): Overvi
         })),
     })),
     metrics: buildOverviewMetrics(context, nowMs()),
-    // No window on the queue: an instance parked a month ago still needs a person, and
-    // hiding it behind the window the metrics use would lose it.
+    // Read the queue with no time window: an instance parked a month ago still needs a person.
     attention: context.store
       .listWorkflowInstances(
         { workflowTypes: OPERATED_WORKFLOW_TYPES, awaitingAPerson: true },
         { limit: OVERVIEW_QUEUE_LIMIT },
       )
       .rows.map((instance) => workflowInstanceWire(context, instance)),
-    // What a person owns is the queue above, so this one is the rest of what is alive:
-    // the instances the machines still move on their own.
+    // List the open instances that need no person, the ones the machines still move.
     in_progress: context.store
       .listWorkflowInstances(
         { workflowTypes: OPERATED_WORKFLOW_TYPES, open: true, awaitingAPerson: false },
@@ -891,7 +882,7 @@ function pullRequestWire(pullRequest: OurPullRequest): PullRequestRow {
   return {
     repository_full_name: pullRequest.repositoryFullName,
     pull_request_number: pullRequest.pullRequestNumber,
-    url: `https://github.com/${pullRequest.repositoryFullName}/pull/${pullRequest.pullRequestNumber}`,
+    url: formatGitHubPullRequestUrl(pullRequest.repositoryFullName, pullRequest.pullRequestNumber),
     workflow_type: pullRequest.workflowType,
     workflow_instance_id: pullRequest.workflowInstanceId,
     workflow_state: pullRequest.workflowState,
@@ -909,16 +900,16 @@ function pullRequestWire(pullRequest: OurPullRequest): PullRequestRow {
   };
 }
 
-// summaryOf reads what the agent reported when its run ended, which the pool records
-// on the closing event and nothing else keeps.
+// summaryOf reads the agent's final report from the run's closing event, the only place
+// it is kept.
 function summaryOf(events: EventRow[]): string | null {
   const finished = events.find((event) => event.event_type === 'sandbox.finished');
   const summary = finished?.metadata?.summary;
   return typeof summary === 'string' && summary.length > 0 ? summary : null;
 }
 
-// attemptsOf reads as what the machine counts: pull request passes against the cap it
-// was given, or the corrective iteration a ticket is on.
+// attemptsOf answers the pull request passes against their cap, or the iteration a ticket
+// is on.
 function attemptsOf(context: ApiContext, instance: WorkflowInstanceSummary): string | null {
   if (instance.attemptCount !== null) {
     return `${instance.attemptCount} / ${context.config.workflows.prMaintainer.maxPushAttempts}`;
@@ -929,8 +920,8 @@ function attemptsOf(context: ApiContext, instance: WorkflowInstanceSummary): str
   return null;
 }
 
-// instanceFields drops the columns every machine has, so what is left is what this one
-// keeps and nothing the row above already shows.
+// instanceFields answers the columns specific to this machine, without the shared ones the
+// row already shows.
 function instanceFields(
   context: ApiContext,
   workflowType: WorkflowType,
@@ -958,13 +949,12 @@ function requestOutcome(request: RequestSummary): RequestOutcome {
   return 'waiting';
 }
 
-// requestOutcomeLabel says what became of an ask in the words an operator needs: which
-// machine holds it, or why nobody will answer.
+// requestOutcomeLabel answers what became of an ask: which machine took it, or why nobody
+// will.
 function requestOutcomeLabel(request: RequestSummary, outcome: RequestOutcome): string {
   switch (outcome) {
     case 'taken':
-      // The column is nullable, though the write that consumes an ask always names the
-      // workflow that took it.
+      // Handle null: the column is nullable, though consuming an ask always sets it.
       return request.workflowType === null
         ? 'Delivered to a workflow'
         : `Delivered to ${workflowTypeLabel(request.workflowType)}`;
@@ -1082,8 +1072,8 @@ function overviewWindowKey(value: string | null): OverviewWindowKey {
   return value === '7d' || value === '30d' ? value : '24h';
 }
 
-// The label is the name the engine dispatches that machine's agent by, so a run card and
-// the workflow it belongs to read the same.
+// workflowTypeLabel uses the agent name the engine dispatches, so a run card and its
+// workflow read the same.
 function workflowTypeLabel(workflowType: WorkflowType): string {
   switch (workflowType) {
     case 'request_router':
@@ -1116,8 +1106,8 @@ function workflowTypeEnabled(config: AppConfig, workflowType: WorkflowType): boo
 
 // ------------------------------------------------------------------- wording
 
-// stateLabel says what a state means in a few words. A state with no entry reads as its
-// own name without the machine prefix, so adding one to a machine never breaks a surface.
+// stateLabel answers a short label for a state; one with no entry shows its name without
+// the machine prefix.
 function stateLabel(workflowState: string): string {
   return (
     WORKFLOW_STATE_LABELS[workflowState] ??
@@ -1155,7 +1145,7 @@ function eventMetadataObject(metadata: string | null): Record<string, unknown> |
 
 function subjectUrl(instance: WorkflowInstanceSummary): string | null {
   if (instance.repositoryFullName === null || instance.pullRequestNumber === null) return null;
-  return `https://github.com/${instance.repositoryFullName}/pull/${instance.pullRequestNumber}`;
+  return formatGitHubPullRequestUrl(instance.repositoryFullName, instance.pullRequestNumber);
 }
 
 // -------------------------------------------------------------------- params
@@ -1322,11 +1312,8 @@ function auditDashboardMutation(
   });
 }
 
-// Jardinero has no login: whoever proxies it authenticates the browser and says who it
-// was on the request. Each proxy spells that differently, so this reads the ones we know
-// and records which answered. Only headers a proxy owns and overwrites belong here;
-// conventional ones like `x-forwarded-email` are left out on purpose, because any client
-// can send those and forge the audit trail.
+// IDENTITY_HEADERS are the proxy-owned headers that name the signed-in user. Conventional
+// ones like `x-forwarded-email` are left out because any client can forge them.
 const IDENTITY_HEADERS: Array<{ provider: string; email: string[]; subject: string[] }> = [
   {
     provider: 'pomerium',
@@ -1391,11 +1378,8 @@ function dashboardTabFromPath(pathname: string): DashboardTab | undefined {
   return undefined;
 }
 
-// The dashboard SPA (web/) is built by Vite into dist/public and served from
-// here. renderSpaShell emits the bootstrap document; the hashed JS/CSS bundles
-// are served by serveDashboardAsset. When no build is present (e.g. the test
-// run, which only compiles the server), the shell still renders valid HTML with
-// the root mount point so page routes stay 200.
+// Vite builds the SPA into dist/public. Without a build, as in the test run, the shell still
+// renders the root mount point so page routes stay 200.
 
 let dashboardPublicDir: string | null | undefined;
 let dashboardManifest: { entry: string; css: string[] } | null | undefined;
@@ -1411,8 +1395,7 @@ const DASHBOARD_THEME_BOOTSTRAP = `  <script>
     })();
   </script>`;
 
-// The SPA lives under /dashboard/, so these icon URLs carry that prefix, unlike the
-// ones in the package's root manifest.
+// DASHBOARD_FAVICON_LINKS carry the /dashboard/ prefix the SPA is served under.
 const DASHBOARD_FAVICON_LINKS = `  <link rel="icon" href="/dashboard/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" href="/dashboard/favicon-32x32.png" sizes="32x32">
   <link rel="icon" type="image/png" href="/dashboard/favicon-16x16.png" sizes="16x16">
@@ -1525,9 +1508,8 @@ function serveDashboardAsset(response: ServerResponse, pathname: string): void {
   response.end(content);
 }
 
-// Favicon and manifest files copied verbatim from web/public into dist/public. Their
-// names are stable, unlike the hashed bundles, so they are served without immutable
-// caching.
+// DASHBOARD_PUBLIC_FILES come from web/public; their names are not hashed, so they skip
+// immutable caching.
 const DASHBOARD_PUBLIC_FILES = new Set([
   'favicon.ico',
   'favicon-16x16.png',

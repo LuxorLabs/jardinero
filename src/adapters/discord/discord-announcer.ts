@@ -9,6 +9,7 @@ import { logger } from '../../platform/logger.js';
 import type { WorkAnnouncer, WorkConversation } from '../../orchestrator/work-announcer.js';
 import type { Store } from '../../store/store.js';
 import { postDiscordMessage, startDiscordThreadFromMessage } from './discord-api.js';
+import { discordPlainText, linearIssueMention, pullRequestMention } from './discord-markdown.js';
 
 export interface DiscordAnnouncerDeps {
   config: AppConfig;
@@ -19,12 +20,11 @@ export interface DiscordAnnouncerDeps {
 
 const log = logger.child('discord-announce');
 
-// The conversations being opened right now, so two moments about one piece of work do not
-// each open a thread.
+// DiscordAnnouncer.opening holds the threads being opened, so concurrent moments share one.
 type DiscordAnnouncer = DiscordAnnouncerDeps & { opening: Map<string, Promise<string>> };
 
-// createDiscordWorkAnnouncer builds the port the machines announce through. A failure is
-// recorded and dropped, because the moment it reports already happened.
+// createDiscordWorkAnnouncer builds the WorkAnnouncer port. A failed post is recorded and
+// dropped.
 export function createDiscordWorkAnnouncer(deps: DiscordAnnouncerDeps): WorkAnnouncer {
   const announcer: DiscordAnnouncer = { ...deps, opening: new Map() };
   const say = (
@@ -41,27 +41,30 @@ export function createDiscordWorkAnnouncer(deps: DiscordAnnouncerDeps): WorkAnno
       });
     });
   };
+  const ticketOf = (identifier: string): string => linearIssueMention(deps.config, identifier);
+  const pullOf = (work: WorkConversation, number: number): string =>
+    pullRequestMention(deps.store.getRepositoryById(work.repositoryId)?.fullName, number);
 
   return {
     ticketImplementationStarted: (work, ticket) =>
-      say('ticketImplementationStarted', work, `Writing ${ticket.identifier}.`),
+      say('ticketImplementationStarted', work, `Writing ${ticketOf(ticket.identifier)}.`),
     ticketVerificationStarted: (work, ticket) =>
       say(
         'ticketVerificationStarted',
         work,
-        `Verifying what was written for ${ticket.identifier}.`,
+        `Verifying what was written for ${ticketOf(ticket.identifier)}.`,
       ),
     ticketRejectedByVerifier: (work, ticket) =>
       say(
         'ticketRejectedByVerifier',
         work,
-        `Verification turned that pass down, writing ${ticket.identifier} again (attempt ${ticket.attempt}).`,
+        `Verification turned that pass down, writing ${ticketOf(ticket.identifier)} again (attempt ${ticket.attempt}).`,
       ),
     ticketParked: (work, ticket) =>
       say(
         'ticketParked',
         work,
-        `${ticket.identifier} needs a person: ${reasonOf(ticket.reason)}.`,
+        `${ticketOf(ticket.identifier)} needs a person: ${reasonOf(ticket.reason)}.`,
         true,
       ),
 
@@ -69,18 +72,18 @@ export function createDiscordWorkAnnouncer(deps: DiscordAnnouncerDeps): WorkAnno
       say('fixParked', work, `A fix needs a person: ${reasonOf(fix.reason)}.`, true),
 
     pullRequestAdopted: (work, pull) =>
-      say('pullRequestAdopted', work, `#${pull.number} is ready for review.`),
+      say('pullRequestAdopted', work, `${pullOf(work, pull.number)} is ready for review.`),
     pullRequestMaintenanceParked: (work, pull) =>
       say(
         'pullRequestMaintenanceParked',
         work,
-        `#${pull.number} needs a person: ${reasonOf(pull.reason)}.`,
+        `${pullOf(work, pull.number)} needs a person: ${reasonOf(pull.reason)}.`,
         true,
       ),
     pullRequestMerged: (work, pull) =>
-      say('pullRequestMerged', work, `#${pull.number} was merged.`),
+      say('pullRequestMerged', work, `${pullOf(work, pull.number)} was merged.`),
     pullRequestClosed: (work, pull) =>
-      say('pullRequestClosed', work, `#${pull.number} was closed without merging.`),
+      say('pullRequestClosed', work, `${pullOf(work, pull.number)} was closed without merging.`),
 
     requestUnresolvable: (work, request) =>
       say(
@@ -91,8 +94,8 @@ export function createDiscordWorkAnnouncer(deps: DiscordAnnouncerDeps): WorkAnno
   };
 }
 
-// The two destinations are independent: a moment that cannot reach the work's thread still
-// has to reach the operator, which is the whole point of saying it twice.
+// post sends to the work's thread and to alerts independently, so one failing does not stop
+// the other.
 async function post(
   deps: DiscordAnnouncer,
   work: WorkConversation,
@@ -122,9 +125,7 @@ async function post(
   if (failed?.status === 'rejected') throw failed.reason;
 }
 
-// sayInTheConversation posts in the work's conversation, opening it on the first thing
-// there is to say so the repository channel keeps one line per piece of work instead of a
-// running commentary.
+// sayInTheConversation posts in the work's thread, opening it on the first post.
 async function sayInTheConversation(
   deps: DiscordAnnouncer,
   work: WorkConversation,
@@ -142,8 +143,7 @@ async function sayInTheConversation(
     return;
   }
 
-  // Opening one takes two calls to Discord, and a moment arriving in between would open a
-  // second thread nothing is ever announced in, so it waits for this one instead.
+  // Wait for a thread already being opened, or this post would open a second one.
   const opening = deps.opening.get(work.key);
   if (opening) {
     await postDiscordMessage({
@@ -170,8 +170,8 @@ async function sayInTheConversation(
   }
 }
 
-// openConversation posts the line that opens the conversation in the repository's channel
-// and hangs the thread off it, which is what makes that channel one line per piece of work.
+// openConversation posts the first message in the repository channel and opens the thread
+// off it.
 async function openConversation(
   deps: DiscordAnnouncer,
   work: WorkConversation,
@@ -194,12 +194,10 @@ async function openConversation(
   });
   deps.store.saveDiscordConversation({ conversationKey: work.key, threadId });
 
-  // Discord draws the way into a thread as a preview of its last post, so a thread nothing
-  // has been said in is invisible in the channel.
+  // Post inside the thread too: Discord does not show a thread with no posts in the channel.
   const watching = watchLink(deps, work);
   if (watching) {
-    // The moment itself already landed and another may be waiting on this thread, so a link
-    // that cannot be posted is dropped rather than failing either of them.
+    // Log and drop a failed link: the moment already landed and others may wait on this thread.
     try {
       await postDiscordMessage({
         botToken,
@@ -218,8 +216,8 @@ async function openConversation(
   return threadId;
 }
 
-// mentionOf names whoever asked, in the identity Discord can ping, so the opening message
-// reaches them. A person the config does not know is not named rather than not told.
+// mentionOf answers the Discord user to ping for whoever asked, or nobody when the config
+// does not know them.
 function mentionOf(
   deps: DiscordAnnouncer,
   work: WorkConversation,
@@ -237,15 +235,13 @@ function mentionOf(
   return discordUserId ? { mentionUserIds: [discordUserId] } : {};
 }
 
-// watchLink is where the pass can be watched, empty when the deployment has no public url
-// and there is nowhere to send anybody.
+// watchLink answers the dashboard link for the work, empty when there is no public url.
 function watchLink(deps: DiscordAnnouncerDeps, work: WorkConversation): string {
   const url = operationUrl(deps.config.server.publicUrl, work.workflowInstanceId);
   return url ? `Follow it [here](${url}).` : '';
 }
 
-// A reason is text, not markup: Discord renders what we post, so `no_pull_request` would
-// come out half italic and a note could carry a link nobody wrote.
+// reasonOf answers the recorded reason as plain text, or says none was recorded.
 function reasonOf(recorded: string | null | undefined): string {
-  return (recorded ?? 'no reason was recorded').replace(/[\\`*_~|[\]]/g, '\\$&');
+  return discordPlainText(recorded ?? 'no reason was recorded');
 }

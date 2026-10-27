@@ -15,31 +15,26 @@ import {
   startDiscordThreadFromMessage,
 } from './discord-api.js';
 import type { DiscordCommandInvocation } from './discord-interaction.js';
+import { discordPlainText, linearIssueMention } from './discord-markdown.js';
 
 export interface DiscordDeliveryDeps {
   config: AppConfig;
   store: Store;
-  // Hands the ticket to Jardinero where tickets live, which is what starts the work: the
-  // delivery that comes back is what opens the workflow.
   delegateTicket(
     ticket: { identifier: string; linearIssueId?: string },
     ownerLinearUserId?: string,
   ): Promise<Error | undefined>;
-  // Writes the ticket for work asked for in words, and hands that one over the same way.
   openTicketForRequest(request: {
     teamKey: string;
     text: string;
     repositoryFullName: string;
   }): Promise<{ identifier: string; linearIssueId: string } | Error>;
-  // What one conversation is about, so a command asked inside a thread answers about the
-  // work that thread follows and nothing else.
   listWorkInConversation(conversationKey: string): OpenWork[];
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }
 
-// DiscordCommandRefusal is every way a command can fail to name work, and each one is a
-// sentence the person reads back.
+// DiscordCommandRefusal is every reason a command names no work; refusalMessage words each.
 export type DiscordCommandRefusal =
   | 'no_repository'
   | 'unknown_repository'
@@ -47,8 +42,7 @@ export type DiscordCommandRefusal =
   | 'ticket_needs_team'
   | 'unreadable_ticket';
 
-// DiscordCommandReading is what the command turned out to ask for: either the work it
-// names, whole, or the reason it names none.
+// DiscordCommandReading is the work a command names, or the reason it names none.
 export type DiscordCommandReading =
   | { refused: DiscordCommandRefusal; repositoryFullName?: string; repositoryId?: string }
   | { repositoryFullName: string; repositoryId: string; linearIssueIdentifier: string };
@@ -61,17 +55,16 @@ export interface DiscordCommandOutcome {
 const NAME_THE_WORK =
   'Name a ticket, or ask me inside the thread of the work you want the status of.';
 
-// Discord refuses what the bot has no access to, and the person is left watching the
-// acknowledgement forever unless we answer it.
 const CANNOT_OPEN_THREAD =
   'I cannot open a thread in this channel; an operator has to give Jardinero access to it.';
 
-// A Linear identifier as a person writes it, on its own or at the end of an issue url.
+const DISCORD_MESSAGE_MAX_LENGTH = 2_000;
+
+// LINEAR_ISSUE_IDENTIFIER matches a Linear identifier alone or at the end of an issue url.
 const LINEAR_ISSUE_IDENTIFIER = /(?:^|\/)([a-z][a-z0-9]*-\d+)(?:$|[/?#])/i;
 
-// handleDiscordCommand opens the work a command asks for and answers where the person can
-// follow it. What each command is about is its action: work to write, a ticket that already
-// exists, or what is going on with the work of the thread it was asked in.
+// handleDiscordCommand runs a command and replaces its deferred reply with where to follow
+// the work.
 export async function handleDiscordCommand(
   deps: DiscordDeliveryDeps,
   invocation: DiscordCommandInvocation,
@@ -91,9 +84,7 @@ export async function handleDiscordCommand(
     });
   }
 
-  // The thread is the ticket's conversation from here on, whichever door the work comes
-  // back through, so it is written down before the ticket is handed over. A ticket already
-  // talked about keeps its thread: a second one is where nothing would be announced.
+  // Open the thread before delegating, so the work announces in it however it comes back.
   const threadId = await conversationThread(deps, invocation, reading.linearIssueIdentifier);
   if (!threadId) {
     return answerCommand(deps, invocation, CANNOT_OPEN_THREAD, {
@@ -101,8 +92,7 @@ export async function handleDiscordCommand(
       reason: 'thread_not_opened',
     });
   }
-  // The request carries its subject, so it is born resolved: the router has nothing to
-  // decide, and the delivery Linear sends back is what puts the ticket to work.
+  // Create the request already resolved: it names its ticket, so the router has nothing to do.
   const ask = deps.store.createRequest({
     requestSource: 'discord',
     requestText: invocation.options.ticket,
@@ -119,15 +109,14 @@ export async function handleDiscordCommand(
     ownerOf(deps, invocation).ownerLinearUserId,
   );
   if (delegationError) {
-    // The ticket never started, so the ask is given up on rather than left for whoever
-    // delegates that ticket next to answer by accident.
+    // Give up on the ask, or the next delegation of this ticket would answer it.
     deps.store.setRequestState(ask.id, 'rr_unresolvable', {
       resolutionNote: delegationError.message,
     });
     return answerCommand(
       deps,
       invocation,
-      `${reading.linearIssueIdentifier} could not be started: ${delegationError.message}.`,
+      `${linearIssueMention(deps.config, reading.linearIssueIdentifier)} could not be started: ${delegationError.message}.`,
       {
         handled: false,
         reason: delegationError.message,
@@ -138,14 +127,13 @@ export async function handleDiscordCommand(
   return answerCommand(
     deps,
     invocation,
-    `Received ${reading.linearIssueIdentifier}. Follow it in <#${threadId}>.`,
+    `Received ${linearIssueMention(deps.config, reading.linearIssueIdentifier)}. Follow it in <#${threadId}>.`,
     { handled: true },
   );
 }
 
-// handleCodeCommand turns words into a ticket and hands it over, which is the one way work
-// starts. The thread is opened first and filed under the ticket the moment it has one, so
-// everything said about it lands where it was asked for.
+// handleCodeCommand opens a Linear ticket for the request and a thread for it, then
+// delegates the ticket.
 async function handleCodeCommand(
   deps: DiscordDeliveryDeps,
   invocation: DiscordCommandInvocation,
@@ -157,7 +145,7 @@ async function handleCodeCommand(
       reason: repository.refused,
     });
   }
-  // A ticket is written in a team, and the repository is what says which one numbers it.
+  // Refuse unless exactly one Linear team is routed to the repository to open the ticket in.
   const teamKeys = linearTeamKeysForRepository(deps.config, repository.repositoryFullName);
   if (teamKeys.length !== 1) {
     return answerCommand(deps, invocation, refusalMessage('ticket_needs_team', invocation), {
@@ -179,8 +167,7 @@ async function handleCodeCommand(
     });
   }
 
-  // The ticket exists from here on, so everything after says what it is called: asking again
-  // for the same thing would write a second one.
+  // Name the ticket in every answer from here on, so nobody asks again and opens a second one.
   const threadId = await conversationThread(deps, invocation, opened.identifier);
   const ask = deps.store.createRequest({
     requestSource: 'discord',
@@ -203,12 +190,12 @@ async function handleCodeCommand(
     return answerCommand(
       deps,
       invocation,
-      `Opened ${opened.identifier}, but it could not be started: ${delegationError.message}. Ask for it again with \`/jardinero-ticket ticket:${opened.identifier}\`.`,
+      `Opened ${linearIssueMention(deps.config, opened.identifier)}, but it could not be started: ${delegationError.message}. Ask for it again with \`/jardinero-ticket ticket:${opened.identifier}\`.`,
       { handled: false, reason: delegationError.message },
     );
   }
   if (!threadId) {
-    return answerCommand(deps, invocation, threadlessAnswer(opened.identifier), {
+    return answerCommand(deps, invocation, threadlessAnswer(deps, opened.identifier), {
       handled: true,
       reason: 'thread_not_opened',
     });
@@ -216,15 +203,14 @@ async function handleCodeCommand(
   return answerCommand(
     deps,
     invocation,
-    `Opened ${opened.identifier} and started on it. Follow it in <#${threadId}>.`,
+    `Opened ${linearIssueMention(deps.config, opened.identifier)} and started on it. Follow it in <#${threadId}>.`,
     { handled: true },
   );
 }
 
-// The ticket exists and is being worked on, so the thread that could not be opened is worth
-// less than the identifier the person now has.
-function threadlessAnswer(identifier: string): string {
-  return `Opened ${identifier} and started on it. ${CANNOT_OPEN_THREAD}`;
+// threadlessAnswer still names the ticket, because the work started without a thread.
+function threadlessAnswer(deps: DiscordDeliveryDeps, identifier: string): string {
+  return `Opened ${linearIssueMention(deps.config, identifier)} and started on it. ${CANNOT_OPEN_THREAD}`;
 }
 
 function ownerOf(
@@ -235,8 +221,8 @@ function ownerOf(
   return linearUserId ? { ownerLinearUserId: linearUserId } : {};
 }
 
-// statusMessage answers about the ticket the command names, or the work the thread it was
-// asked in follows. Asked with neither, saying so is better than reporting on everything.
+// statusMessage answers about the ticket the command names, or the work of the thread it
+// was asked in.
 function statusMessage(deps: DiscordDeliveryDeps, invocation: DiscordCommandInvocation): string {
   if (invocation.options.ticket) {
     const identifier = linearIssueIdentifierOf(invocation.options.ticket);
@@ -250,7 +236,7 @@ function statusMessage(deps: DiscordDeliveryDeps, invocation: DiscordCommandInvo
   return work.length === 0 ? NAME_THE_WORK : workLines(deps, work);
 }
 
-// One line per piece of work, each saying where it can be watched.
+// workLines answers one line per open work, with its dashboard link when there is one.
 function workLines(deps: DiscordDeliveryDeps, work: OpenWork[]): string {
   return work
     .map((one) => {
@@ -261,9 +247,8 @@ function workLines(deps: DiscordDeliveryDeps, work: OpenWork[]): string {
     .join('\n');
 }
 
-// conversationThread answers the thread the ticket is talked about in, opening one when it
-// has none. Nothing when Discord refuses, which is recorded and answered rather than thrown:
-// the person is waiting on an acknowledgement that only this call can replace.
+// conversationThread answers the ticket's thread, opening one if needed. A Discord refusal
+// is recorded and answers undefined, so the caller can still reply.
 async function conversationThread(
   deps: DiscordDeliveryDeps,
   invocation: DiscordCommandInvocation,
@@ -289,8 +274,7 @@ async function conversationThread(
   }
 }
 
-// readDiscordCommand resolves the repository the command works on and the subject it
-// names, both from the interaction alone.
+// readDiscordCommand resolves the repository and the ticket a command names.
 export function readDiscordCommand(
   deps: DiscordDeliveryDeps,
   invocation: DiscordCommandInvocation,
@@ -306,7 +290,6 @@ export function readDiscordCommand(
   );
 }
 
-// readRepository resolves which repository a command works on, whatever it asks for.
 function readRepository(
   deps: DiscordDeliveryDeps,
   invocation: DiscordCommandInvocation,
@@ -314,8 +297,7 @@ function readRepository(
   const named = inferRepository(deps, invocation);
   if (!named) return { refused: 'no_repository' };
 
-  // Written without an owner, the name is resolved against the repositories we work in
-  // rather than prefixed with a guess.
+  // Resolve a name without an owner against the known repositories instead of guessing one.
   const repositories = named.includes('/')
     ? [deps.store.findRepositoryByFullName(named)].filter((found) => found !== undefined)
     : deps.store.findRepositoriesNamed(named);
@@ -327,9 +309,8 @@ function readRepository(
   return { repositoryFullName: repository.fullName, repositoryId: repository.id };
 }
 
-// inferRepository answers which repository a command is about: the one it names, the one
-// the ticket's team works in, or the channel's own. A ticket says what the work is, while
-// the channel is only where it was typed, so the channel is the last word.
+// inferRepository answers the repository a command is about: the one it names, then the
+// ticket's team's, then the channel's.
 export function inferRepository(
   deps: DiscordDeliveryDeps,
   invocation: DiscordCommandInvocation,
@@ -338,13 +319,13 @@ export function inferRepository(
   return (
     invocation.options.repo ??
     (teamKey ? repositoryForLinearTeamKey(deps.config, teamKey) : undefined) ??
-    // The channel's first repository is its default, which is what the config's order says.
+    // Use the channel's first configured repository as its default.
     repositoriesForDiscordChannel(deps.config, invocation.channelId).at(0)
   );
 }
 
-// readTicket resolves the Linear identifier a command named. A bare number is the ticket as
-// a person says it out loud, and the repository is what says which team numbers it.
+// readTicket resolves the Linear identifier a command names; a bare number takes the team
+// routed to the repository.
 function readTicket(
   deps: DiscordDeliveryDeps,
   repositoryFullName: string,
@@ -369,8 +350,7 @@ function readTicket(
   };
 }
 
-// openDiscordThread opens the thread the work is followed in, hanging it off a message
-// rather than off the command so the channel keeps a line saying who asked for what.
+// openDiscordThread posts a message in the channel and opens the work's thread off it.
 async function openDiscordThread(
   deps: DiscordDeliveryDeps,
   invocation: DiscordCommandInvocation,
@@ -381,10 +361,8 @@ async function openDiscordThread(
     botToken,
     fetchImpl: deps.fetchImpl,
     channelId: invocation.channelId,
-    // Named and not pinged: the person who ran the command is reading their own answer.
-    message: {
-      content: `<@${invocation.discordUserId}> asked Jardinero to implement ${linearIssueIdentifier}`,
-    },
+    // Name the person without pinging them: they are already reading the reply.
+    message: { content: threadStarter(deps, invocation, linearIssueIdentifier) },
   });
   return startDiscordThreadFromMessage({
     botToken,
@@ -395,8 +373,36 @@ async function openDiscordThread(
   });
 }
 
-// answerCommand replaces the placeholder Discord left when the command was acknowledged.
-// Best effort: an answer that never lands is recorded and does not change what was opened.
+// threadStarter names who asked for the ticket and quotes the `/jardinero-code` request, cut
+// to fit in one Discord message.
+function threadStarter(
+  deps: DiscordDeliveryDeps,
+  invocation: DiscordCommandInvocation,
+  linearIssueIdentifier: string,
+): string {
+  const asked = `<@${invocation.discordUserId}> asked Jardinero to implement ${linearIssueMention(deps.config, linearIssueIdentifier)}`;
+  const request = invocation.options.request?.trim();
+  if (!request) return asked;
+  const quoting = `${asked}\n>>> `;
+  return quoting + quotedRequest(request, DISCORD_MESSAGE_MAX_LENGTH - quoting.length);
+}
+
+// quotedRequest escapes the request and cuts it to fit in room by whole characters, so the
+// cut splits neither an emoji nor an escape.
+function quotedRequest(request: string, room: number): string {
+  const escaped = discordPlainText(request);
+  if (escaped.length <= room) return escaped;
+  let cut = '';
+  for (const character of request) {
+    const piece = discordPlainText(character);
+    if (cut.length + piece.length > room - 1) break;
+    cut += piece;
+  }
+  return `${cut}…`;
+}
+
+// answerCommand replaces the deferred reply's placeholder. A failed reply is recorded and the
+// outcome kept.
 async function answerCommand(
   deps: DiscordDeliveryDeps,
   invocation: DiscordCommandInvocation,

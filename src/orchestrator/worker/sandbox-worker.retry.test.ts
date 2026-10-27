@@ -14,6 +14,10 @@ import {
   isCodexCapacityError,
   type SandboxWorkerRunnerDeps,
 } from './sandbox-worker.js';
+import {
+  type CommitSigningOutcome,
+  CommitSigningRefusal,
+} from '../../adapters/github/github-pull-requests.js';
 import { FIX_RESULT_JSON_MARKER } from '../../workflows/pr/fix-result.js';
 import { HANDOFF_JSON_MARKER } from '../../workflows/pr/implementation-handoff.js';
 
@@ -29,6 +33,13 @@ const CAPACITY_STDOUT = JSON.stringify({
   type: 'agent.turn.failed',
   error: { message: 'Selected model is at capacity. Please try a different model.' },
 });
+
+const NO_PR_DECLARATION = `${FIX_RESULT_JSON_MARKER} ${JSON.stringify({
+  outcome: 'no_pr',
+  reason: 'too_large',
+  evidence: ['the change spans three services'],
+  recommended_followup: 'Split into three issues.',
+})}`;
 
 const LOG_REVIEW_REPORTING_EVENTS = new Set([
   'agent.implementation_reported',
@@ -770,12 +781,6 @@ describe('SandboxWorkerRunner', () => {
 });
 
 describe('a pass that declares no pull request', () => {
-  const noPrDeclaration = `${FIX_RESULT_JSON_MARKER} ${JSON.stringify({
-    outcome: 'no_pr',
-    reason: 'too_large',
-    evidence: ['the change spans three services'],
-    recommended_followup: 'Split into three issues.',
-  })}`;
   const cases: Array<{
     name: string;
     task: SandboxTask;
@@ -786,28 +791,28 @@ describe('a pass that declares no pull request', () => {
     {
       name: 'When a linear implementation declares `no_pr` then should skip with its reason',
       task: linearTask({}),
-      finalMessage: noPrDeclaration,
+      finalMessage: NO_PR_DECLARATION,
       codexExitCode: 0,
       want: { status: 'skipped', error: undefined, noPrReason: 'too_large' },
     },
     {
       name: 'When a fix implementation declares `no_pr` then should skip with its reason',
       task: { workflow: 'fix_implement', payload: { repo: 'acme/webapp' }, promptOverrides: {} },
-      finalMessage: noPrDeclaration,
+      finalMessage: NO_PR_DECLARATION,
       codexExitCode: 0,
       want: { status: 'skipped', error: undefined, noPrReason: 'too_large' },
     },
     {
       name: 'When a linear verification prints a `no_pr` declaration then should not read it',
       task: linearTask({ role: 'verify' }),
-      finalMessage: noPrDeclaration,
+      finalMessage: NO_PR_DECLARATION,
       codexExitCode: 0,
       want: { status: 'succeeded', error: undefined, noPrReason: undefined },
     },
     {
       name: 'When codex exits failing after a `no_pr` declaration then should fail',
       task: linearTask({}),
-      finalMessage: noPrDeclaration,
+      finalMessage: NO_PR_DECLARATION,
       codexExitCode: 1,
       want: { status: 'failed', error: 'codex_exec_failed', noPrReason: undefined },
     },
@@ -1463,6 +1468,183 @@ describe('checking out the pull request a pass continues', () => {
   }
 });
 
+describe('signing the commits a run pushed', () => {
+  const cases: Array<{
+    name: string;
+    task: SandboxTask;
+    finalMessage?: string;
+    gitAuthorName?: string;
+    gitAuthorEmail?: string;
+    signing?: Array<CommitSigningOutcome | Error>;
+    want: {
+      status: string;
+      signed: Array<{ repo: string; pullRequestNumber: number; authorEmail: string }>;
+      events: string[];
+    };
+  }> = [
+    {
+      name: 'When maintenance names a pull request then should sign it',
+      task: maintenanceTask({ repo: 'acme/webapp', pr_number: 4166 }),
+      want: {
+        status: 'succeeded',
+        signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
+        events: [],
+      },
+    },
+    {
+      name: 'When maintenance names no pull request then should sign nothing',
+      task: maintenanceTask({ repo: 'acme/webapp' }),
+      want: { status: 'succeeded', signed: [], events: [] },
+    },
+    {
+      name: 'When a linear verification names a pull request then should sign nothing',
+      task: linearTask({ role: 'verify', pr_number: 4166 }),
+      want: { status: 'succeeded', signed: [], events: [] },
+    },
+    {
+      name: 'When an implementation fails verification then should sign nothing',
+      task: linearTask({}),
+      finalMessage: 'done',
+      want: { status: 'failed', signed: [], events: [] },
+    },
+    {
+      name: 'When an implementation declares `no_pr` then should sign nothing',
+      task: linearTask({}),
+      finalMessage: NO_PR_DECLARATION,
+      want: { status: 'skipped', signed: [], events: [] },
+    },
+    {
+      name: 'When an implementation continues a pull request then should sign it',
+      task: linearTask({ pr_number: 4166 }),
+      want: {
+        status: 'succeeded',
+        signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
+        events: [],
+      },
+    },
+    {
+      name: 'When the task names no repository then should sign nothing',
+      task: maintenanceTask({ pr_number: 4166 }),
+      want: { status: 'succeeded', signed: [], events: [] },
+    },
+    {
+      name: 'When `worker.git_author_name` is unset then should skip signing',
+      task: linearTask({ pr_number: 4166 }),
+      gitAuthorName: '  ',
+      want: { status: 'succeeded', signed: [], events: ['github.commits_signing_skipped'] },
+    },
+    {
+      name: 'When `worker.git_author_email` is unset then should skip signing',
+      task: linearTask({ pr_number: 4166 }),
+      gitAuthorEmail: '  ',
+      want: { status: 'succeeded', signed: [], events: ['github.commits_signing_skipped'] },
+    },
+    {
+      name: 'When signing fails once then should try again and report the commits signed',
+      task: linearTask({ pr_number: 4166 }),
+      signing: [new Error('HTTP 502'), { status: 'signed', recreated: 2, headSha: 'new-2' }],
+      want: {
+        status: 'succeeded',
+        signed: [
+          { repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' },
+          { repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' },
+        ],
+        events: ['github.commits_signed'],
+      },
+    },
+    {
+      name: 'When signing fails every attempt then should report it and still succeed the run',
+      task: linearTask({ pr_number: 4166 }),
+      signing: [new Error('HTTP 502'), new Error('HTTP 502'), new Error('HTTP 502')],
+      want: {
+        status: 'succeeded',
+        signed: [
+          { repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' },
+          { repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' },
+          { repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' },
+        ],
+        events: ['github.commits_signing_failed'],
+      },
+    },
+    {
+      name: 'When signing is refused then should report it without trying again',
+      task: linearTask({ pr_number: 4166 }),
+      signing: [
+        new CommitSigningRefusal('GitHub did not sign the commit re-created for acme/webapp#4166'),
+      ],
+      want: {
+        status: 'succeeded',
+        signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
+        events: ['github.commits_signing_failed'],
+      },
+    },
+    {
+      name: 'When the commits get re-created then should report them signed',
+      task: linearTask({ pr_number: 4166 }),
+      signing: [{ status: 'signed', recreated: 2, headSha: 'new-2' }],
+      want: {
+        status: 'succeeded',
+        signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
+        events: ['github.commits_signed'],
+      },
+    },
+    {
+      name: 'When the pull request carries a commit by someone else then should skip signing',
+      task: linearTask({ pr_number: 4166 }),
+      signing: [{ status: 'foreign_commit', sha: 'c2' }],
+      want: {
+        status: 'succeeded',
+        signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
+        events: ['github.commits_signing_skipped'],
+      },
+    },
+    {
+      name: 'When the base branch requires no signatures then should report nothing',
+      task: linearTask({ pr_number: 4166 }),
+      signing: [{ status: 'not_required' }],
+      want: {
+        status: 'succeeded',
+        signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
+        events: [],
+      },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const events: Array<{ type: string; data?: Record<string, unknown>; message?: string }> = [];
+      const signed: Array<{ repo: string; pullRequestNumber: number; authorEmail: string }> = [];
+      const session = fakeSession('only', operations, { readFileContent: c.finalMessage });
+      const runner = fakeRunner([session], operations, {
+        config: (config) => {
+          config.mcp.grafana.enabled = false;
+          if (c.gitAuthorName !== undefined) config.worker.gitAuthorName = c.gitAuthorName;
+          if (c.gitAuthorEmail !== undefined) config.worker.gitAuthorEmail = c.gitAuthorEmail;
+        },
+        getPullRequestHead: async () => ({ nodeId: 'node-1', draft: true, headRef: 'agent/x' }),
+        signPullRequestCommits: async ({ repo, pullRequestNumber, authorEmail }) => {
+          signed.push({ repo, pullRequestNumber, authorEmail });
+          const answer = c.signing?.[signed.length - 1] ?? { status: 'already_signed' };
+          if (answer instanceof Error) throw answer;
+          return answer;
+        },
+      });
+
+      const result = await runner.run(fakeContext(events, new AbortController(), c.task));
+
+      assert.deepEqual(
+        {
+          status: result.status,
+          signed,
+          events: events.map((event) => event.type).filter((type) => type.startsWith('github.')),
+        },
+        c.want,
+      );
+    });
+  }
+});
+
 describe('isCodexCapacityError', () => {
   const cases: Array<{ name: string; result: Record<string, string>; want: boolean }> = [
     {
@@ -1548,6 +1730,7 @@ function fakeRunner(
     env?: (env: NodeJS.ProcessEnv) => void;
     captureCreates?: Array<Record<string, unknown>>;
     getPullRequestHead?: SandboxWorkerRunnerDeps['getPullRequestHead'];
+    signPullRequestCommits?: SandboxWorkerRunnerDeps['signPullRequestCommits'];
     attach?: (sessionId: string) => Promise<FakeSession | undefined>;
   } = {},
 ): SandboxWorkerRunner {
@@ -1586,8 +1769,11 @@ function fakeRunner(
 
   return new SandboxWorkerRunner(config, env, provider, {
     sandboxReadyRetryDelayMs: () => 0,
+    signingRetryDelayMs: 0,
     codexPollIntervalMs: 0,
     ...(options.getPullRequestHead ? { getPullRequestHead: options.getPullRequestHead } : {}),
+    signPullRequestCommits:
+      options.signPullRequestCommits ?? (async () => ({ status: 'already_signed' as const })),
   });
 }
 
@@ -1668,6 +1854,8 @@ function fakeSession(
 function fakeConfig(): AppConfig {
   const config = loadConfig();
   config.worker.codexAuthMode = 'api_key';
+  config.worker.gitAuthorName = 'agent';
+  config.worker.gitAuthorEmail = 'agent@acme.test';
   return config;
 }
 
@@ -1722,6 +1910,10 @@ function fakeTask(): SandboxTask {
     payload: { repo: 'acme/web.app', pr_number: 1 },
     promptOverrides: {},
   };
+}
+
+function maintenanceTask(payload: Record<string, unknown>): SandboxTask {
+  return { workflow: 'pr_maintain', payload, promptOverrides: {} };
 }
 
 function linearTask(payload: Record<string, unknown>): SandboxTask {

@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import {
+  type CommitSigningOutcome,
+  CommitSigningRefusal,
   getPullRequestHead,
   getPullRequestState,
   type OpenPullRequest,
   listOpenPullRequests,
   markPullRequestReadyForReview,
+  signPullRequestCommits,
 } from './github-pull-requests.js';
 
 const REPO = 'acme/webapp';
@@ -433,6 +436,493 @@ describe('listOpenPullRequests', () => {
   });
 });
 
+describe('signPullRequestCommits', () => {
+  const cases: SigningCase[] = [
+    {
+      name: 'When the repository name has no owner then should refuse',
+      repo: 'webapp',
+      head: signingHead({ headRefOid: 'c1' }),
+      want: { error: 'Invalid GitHub repository name: webapp', refused: true, writes: [] },
+    },
+    {
+      name: 'When the head query answers no repository id then should return error',
+      head: { repository: { pullRequest: { headRefName: 'agent/branch', headRefOid: 'c1' } } },
+      want: {
+        error: 'GitHub PR head query for acme/webapp#42 returned no head branch',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When the head query answers no pull request then should return error',
+      head: { repository: { id: 'R_1', pullRequest: null } },
+      want: {
+        error: 'GitHub PR head query for acme/webapp#42 returned no head branch',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When the head branch is empty then should return error',
+      head: { repository: { id: 'R_1', pullRequest: { headRefName: '', headRefOid: 'c1' } } },
+      want: {
+        error: 'GitHub PR head query for acme/webapp#42 returned no head branch',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When the head query answers no head sha then should return error',
+      head: { repository: { id: 'R_1', pullRequest: { headRefName: 'agent/branch' } } },
+      want: {
+        error: 'GitHub PR head query for acme/webapp#42 returned no head branch',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When the head branch lives in a fork then should refuse',
+      head: signingHead({ headRefOid: 'c1', isCrossRepository: true }),
+      want: {
+        error: 'The head branch of acme/webapp#42 lives in a fork',
+        refused: true,
+        writes: [],
+      },
+    },
+    {
+      name: 'When the base branch requires no signatures then should leave the branch alone',
+      head: signingHead({ headRefOid: 'c1', requires: 'nothing' }),
+      want: { outcome: { status: 'not_required' }, writes: [] },
+    },
+    {
+      name: 'When a classic protection rule requires signatures then should sign',
+      head: signingHead({ headRefOid: 'c1', requires: 'classic rule' }),
+      pages: [[listedCommit('c1')]],
+      want: {
+        outcome: { status: 'signed', recreated: 1, headSha: 'new-1' },
+        writes: [
+          { create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } },
+          {
+            move: {
+              repositoryId: 'R_1',
+              name: 'refs/heads/agent/branch',
+              before: 'c1',
+              after: 'new-1',
+            },
+          },
+        ],
+      },
+    },
+    {
+      name: 'When github refuses the commits listing then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      listing: () => new Response('nope', { status: 403 }),
+      want: {
+        error:
+          'GitHub GET /repos/acme/webapp/pulls/42/commits?per_page=100&page=1 failed with HTTP 403: nope',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When the commits listing is not json then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      listing: () => new Response('{not json', { status: 200 }),
+      want: {
+        error:
+          'GitHub GET /repos/acme/webapp/pulls/42/commits?per_page=100&page=1 returned invalid JSON',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When the commits listing is not an array then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      listing: () => jsonResponse({}),
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 returned a non-array response',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When a listed commit is not an object then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [['c1']],
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 listed a commit we could not read',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When a listed commit has no sha then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [
+        [
+          {
+            parents: [],
+            commit: { message: 'm', tree: { sha: 't' }, author: { email: 'agent@acme.test' } },
+          },
+        ],
+      ],
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 listed a commit we could not read',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When a listed commit has no commit then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [[{ sha: 'c1', parents: [] }]],
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 listed a commit we could not read',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When a listed commit has no message then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [
+        [
+          {
+            sha: 'c1',
+            parents: [],
+            commit: { tree: { sha: 't' }, author: { email: 'agent@acme.test' } },
+          },
+        ],
+      ],
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 listed a commit we could not read',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When a listed commit has no tree then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [
+        [
+          {
+            sha: 'c1',
+            parents: [],
+            commit: { message: 'm', author: { email: 'agent@acme.test' } },
+          },
+        ],
+      ],
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 listed a commit we could not read',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When a listed commit has no author email then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [
+        [{ sha: 'c1', parents: [], commit: { message: 'm', tree: { sha: 't' }, author: {} } }],
+      ],
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 listed a commit we could not read',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When a listed commit has no parents then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [
+        [
+          {
+            sha: 'c1',
+            commit: { message: 'm', tree: { sha: 't' }, author: { email: 'agent@acme.test' } },
+          },
+        ],
+      ],
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 listed a commit we could not read',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When a listed parent has no sha then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [
+        [
+          {
+            sha: 'c1',
+            parents: [{}],
+            commit: { message: 'm', tree: { sha: 't' }, author: { email: 'agent@acme.test' } },
+          },
+        ],
+      ],
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 listed a commit we could not read',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When a listed commit carries no verification then should sign it',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [
+        [
+          {
+            sha: 'c1',
+            parents: [{ sha: 'base' }],
+            commit: { message: 'm', tree: { sha: 't' }, author: { email: 'agent@acme.test' } },
+          },
+        ],
+      ],
+      want: {
+        outcome: { status: 'signed', recreated: 1, headSha: 'new-1' },
+        writes: [
+          { create: { message: 'm', tree: 't', parents: ['base'] } },
+          {
+            move: {
+              repositoryId: 'R_1',
+              name: 'refs/heads/agent/branch',
+              before: 'c1',
+              after: 'new-1',
+            },
+          },
+        ],
+      },
+    },
+    {
+      name: 'When the first page is full then should read the next one',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [signedCommits(100, 'a'), [listedCommit('c1', { parents: ['a99'] })]],
+      want: {
+        outcome: { status: 'signed', recreated: 1, headSha: 'new-1' },
+        writes: [
+          { create: { message: 'msg c1', tree: 'tree-c1', parents: ['a99'] } },
+          {
+            move: {
+              repositoryId: 'R_1',
+              name: 'refs/heads/agent/branch',
+              before: 'c1',
+              after: 'new-1',
+            },
+          },
+        ],
+      },
+    },
+    {
+      name: 'When the pull request lists `250` commits then should refuse',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [signedCommits(100, 'a'), signedCommits(100, 'b'), signedCommits(50, 'c')],
+      want: {
+        error: 'acme/webapp#42 has too many commits to read them all',
+        refused: true,
+        writes: [],
+      },
+    },
+    {
+      name: 'When the listing does not hold the head then should return error',
+      head: signingHead({ headRefOid: 'c9' }),
+      pages: [[listedCommit('c1')]],
+      want: {
+        error: 'GitHub PR commits for acme/webapp#42 did not list its head',
+        refused: false,
+        writes: [],
+      },
+    },
+    {
+      name: 'When an unsigned commit is not reached from the head then should leave it alone',
+      head: signingHead({ headRefOid: 'c2' }),
+      pages: [[listedCommit('c1'), listedCommit('c2', { verified: true })]],
+      want: { outcome: { status: 'already_signed' }, writes: [] },
+    },
+    {
+      name: 'When every commit is signed then should leave the branch alone',
+      head: signingHead({ headRefOid: 'c2' }),
+      pages: [
+        [
+          listedCommit('c1', { verified: true }),
+          listedCommit('c2', { parents: ['c1'], verified: true }),
+        ],
+      ],
+      want: { outcome: { status: 'already_signed' }, writes: [] },
+    },
+    {
+      name: 'When a signed commit is built on an unsigned one then should re-create both',
+      head: signingHead({ headRefOid: 'c2' }),
+      pages: [[listedCommit('c1'), listedCommit('c2', { parents: ['c1'], verified: true })]],
+      want: {
+        outcome: { status: 'signed', recreated: 2, headSha: 'new-2' },
+        writes: [
+          { create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } },
+          { create: { message: 'msg c2', tree: 'tree-c2', parents: ['new-1'] } },
+          {
+            move: {
+              repositoryId: 'R_1',
+              name: 'refs/heads/agent/branch',
+              before: 'c2',
+              after: 'new-2',
+            },
+          },
+        ],
+      },
+    },
+    {
+      name: 'When the listing puts a child before its parent then should re-create the parent first',
+      head: signingHead({ headRefOid: 'c2' }),
+      pages: [[listedCommit('c2', { parents: ['c1'] }), listedCommit('c1')]],
+      want: {
+        outcome: { status: 'signed', recreated: 2, headSha: 'new-2' },
+        writes: [
+          { create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } },
+          { create: { message: 'msg c2', tree: 'tree-c2', parents: ['new-1'] } },
+          {
+            move: {
+              repositoryId: 'R_1',
+              name: 'refs/heads/agent/branch',
+              before: 'c2',
+              after: 'new-2',
+            },
+          },
+        ],
+      },
+    },
+    {
+      name: 'When unsigned commits follow a signed one then should keep the signed one and outside parents',
+      head: signingHead({ headRefOid: 'c3' }),
+      pages: [
+        [
+          listedCommit('c1', { verified: true }),
+          listedCommit('c2', { parents: ['c1'] }),
+          listedCommit('c3', { parents: ['c2', 'main-tip'] }),
+        ],
+      ],
+      want: {
+        outcome: { status: 'signed', recreated: 2, headSha: 'new-2' },
+        writes: [
+          { create: { message: 'msg c2', tree: 'tree-c2', parents: ['c1'] } },
+          { create: { message: 'msg c3', tree: 'tree-c3', parents: ['new-1', 'main-tip'] } },
+          {
+            move: {
+              repositoryId: 'R_1',
+              name: 'refs/heads/agent/branch',
+              before: 'c3',
+              after: 'new-2',
+            },
+          },
+        ],
+      },
+    },
+    {
+      name: 'When the commits to re-create hold one by someone else then should leave the branch alone',
+      head: signingHead({ headRefOid: 'c2' }),
+      pages: [
+        [
+          listedCommit('c1'),
+          listedCommit('c2', { parents: ['c1'], email: 'dev@acme.test', verified: true }),
+        ],
+      ],
+      want: { outcome: { status: 'foreign_commit', sha: 'c2' }, writes: [] },
+    },
+    {
+      name: 'When the agent author differs only in case then should sign its commit',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [[listedCommit('c1', { email: 'AGENT@ACME.TEST' })]],
+      want: {
+        outcome: { status: 'signed', recreated: 1, headSha: 'new-1' },
+        writes: [
+          { create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } },
+          {
+            move: {
+              repositoryId: 'R_1',
+              name: 'refs/heads/agent/branch',
+              before: 'c1',
+              after: 'new-1',
+            },
+          },
+        ],
+      },
+    },
+    {
+      name: 'When github refuses to create a commit then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [[listedCommit('c1')]],
+      created: () => new Response('nope', { status: 422 }),
+      want: {
+        error: 'GitHub POST /repos/acme/webapp/git/commits failed with HTTP 422: nope',
+        refused: false,
+        writes: [{ create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } }],
+      },
+    },
+    {
+      name: 'When github answers a created commit without a sha then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [[listedCommit('c1')]],
+      created: () => jsonResponse({ verification: { verified: true } }),
+      want: {
+        error: 'GitHub commit creation for acme/webapp#42 returned no sha',
+        refused: false,
+        writes: [{ create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } }],
+      },
+    },
+    {
+      name: 'When github does not sign a created commit then should refuse before moving the branch',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [[listedCommit('c1')]],
+      created: () => jsonResponse({ sha: 'new-1', verification: { verified: false } }),
+      want: {
+        error: 'GitHub did not sign the commit re-created for acme/webapp#42',
+        refused: true,
+        writes: [{ create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } }],
+      },
+    },
+    {
+      name: 'When github refuses to move the branch then should return error',
+      head: signingHead({ headRefOid: 'c1' }),
+      pages: [[listedCommit('c1')]],
+      moved: () => jsonResponse({ errors: [{ message: 'stale beforeOid' }] }),
+      want: {
+        error: 'GitHub GraphQL errors: [{"message":"stale beforeOid"}]',
+        refused: false,
+        writes: [
+          { create: { message: 'msg c1', tree: 'tree-c1', parents: ['base'] } },
+          {
+            move: {
+              repositoryId: 'R_1',
+              name: 'refs/heads/agent/branch',
+              before: 'c1',
+              after: 'new-1',
+            },
+          },
+        ],
+      },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const writes: SigningWrite[] = [];
+
+      const result = await signPullRequestCommits({
+        repo: c.repo ?? REPO,
+        pullRequestNumber: PR_NUMBER,
+        token: 'gh_token',
+        authorEmail: 'agent@acme.test',
+        fetchImpl: signingFetch(c, writes),
+      }).then(
+        (outcome) => ({ outcome }),
+        (error: Error) => ({
+          error: error.message,
+          refused: error instanceof CommitSigningRefusal,
+        }),
+      );
+
+      assert.deepEqual({ ...result, writes }, c.want);
+    });
+  }
+});
+
 function prBody(options: { draft: boolean }): Record<string, unknown> {
   return { node_id: 'PR_node', draft: options.draft, head: { ref: 'agent/branch' } };
 }
@@ -527,4 +1017,90 @@ interface ListCase {
   name: string;
   items: Array<Record<string, unknown>>;
   want: OpenPullRequest[];
+}
+
+interface SigningCase {
+  name: string;
+  repo?: string;
+  head: unknown;
+  pages?: unknown[][];
+  listing?: () => Response;
+  created?: () => Response;
+  moved?: () => Response;
+  want: {
+    outcome?: CommitSigningOutcome;
+    error?: string;
+    refused?: boolean;
+    writes: SigningWrite[];
+  };
+}
+
+type SigningWrite = { create: unknown } | { move: unknown };
+
+function signingFetch(c: SigningCase, writes: SigningWrite[]): typeof fetch {
+  return (async (input: unknown, init?: { body?: string }) => {
+    const url = String(input);
+    if (url.endsWith('/graphql')) {
+      const request = JSON.parse(init?.body ?? '{}') as { query: string; variables: unknown };
+      if (!request.query.includes('updateRefs')) {
+        return jsonResponse({ data: c.head });
+      }
+      writes.push({ move: request.variables });
+      return c.moved?.() ?? jsonResponse({ data: { updateRefs: { clientMutationId: null } } });
+    }
+    if (url.endsWith('/git/commits')) {
+      writes.push({ create: JSON.parse(init?.body ?? '{}') });
+      return (
+        c.created?.() ??
+        jsonResponse({ sha: `new-${writes.length}`, verification: { verified: true } })
+      );
+    }
+    if (c.listing) return c.listing();
+    const page = Number(new URL(url).searchParams.get('page'));
+    return jsonResponse(c.pages?.[page - 1] ?? []);
+  }) as unknown as typeof fetch;
+}
+
+function signingHead(options: {
+  headRefOid: string;
+  isCrossRepository?: boolean;
+  requires?: 'ruleset' | 'classic rule' | 'nothing';
+}): unknown {
+  const requires = options.requires ?? 'ruleset';
+  return {
+    repository: {
+      id: 'R_1',
+      pullRequest: {
+        headRefName: 'agent/branch',
+        headRefOid: options.headRefOid,
+        isCrossRepository: options.isCrossRepository ?? false,
+        baseRef: {
+          refUpdateRule: { requiresSignatures: requires === 'classic rule' },
+          rules: { nodes: requires === 'ruleset' ? [{ type: 'REQUIRED_SIGNATURES' }] : [] },
+        },
+      },
+    },
+  };
+}
+
+function listedCommit(
+  sha: string,
+  options: { parents?: string[]; email?: string; verified?: boolean } = {},
+): unknown {
+  return {
+    sha,
+    parents: (options.parents ?? ['base']).map((parent) => ({ sha: parent })),
+    commit: {
+      message: `msg ${sha}`,
+      tree: { sha: `tree-${sha}` },
+      author: { email: options.email ?? 'agent@acme.test' },
+      verification: { verified: options.verified ?? false },
+    },
+  };
+}
+
+function signedCommits(count: number, prefix: string): unknown[] {
+  return Array.from({ length: count }, (_, index) =>
+    listedCommit(`${prefix}${index}`, { verified: true }),
+  );
 }

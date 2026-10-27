@@ -1,5 +1,5 @@
 // The GitHub pull request calls Jardinero makes on its own behalf: read one, flip
-// a verified draft to ready-for-review, and list the open ones.
+// a verified draft to ready-for-review, list the open ones, and sign the agent's commits.
 // Hand-rolled fetch in the post-#102 house style: callers treat failures as
 // best-effort and audit them, so every parse problem throws with enough detail
 // for the audit row to be actionable.
@@ -250,6 +250,268 @@ export async function listOpenPullRequests(options: {
     if (body.length < pageSize) break;
   }
   return found;
+}
+
+// CommitSigningOutcome is what signing a pull request did: nothing it had to do, the commits it
+// re-created, or the commit it stopped at because it is not the agent's.
+export type CommitSigningOutcome =
+  | { status: 'not_required' }
+  | { status: 'already_signed' }
+  | { status: 'signed'; recreated: number; headSha: string }
+  | { status: 'foreign_commit'; sha: string };
+
+// CommitSigningRefusal is a failure to sign that trying again cannot change.
+export class CommitSigningRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CommitSigningRefusal';
+  }
+}
+
+// MAX_LISTED_COMMITS is where GitHub stops listing the commits of a pull request.
+const MAX_LISTED_COMMITS = 250;
+
+// SIGNING_HEAD_QUERY asks what moving the head needs and whether the base branch requires
+// signed commits, either by a ruleset or by a classic branch protection rule.
+const SIGNING_HEAD_QUERY = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    id
+    pullRequest(number: $number) {
+      headRefName
+      headRefOid
+      isCrossRepository
+      baseRef {
+        refUpdateRule { requiresSignatures }
+        rules(first: 100) { nodes { type } }
+      }
+    }
+  }
+}`;
+
+// MOVE_HEAD_MUTATION moves the head branch only if it still points where the commits were
+// read, so a push that lands meanwhile is never overwritten.
+const MOVE_HEAD_MUTATION = `
+mutation($repositoryId: ID!, $name: GitRefname!, $before: GitObjectID!, $after: GitObjectID!) {
+  updateRefs(input: { repositoryId: $repositoryId, refUpdates: [{ name: $name, beforeOid: $before, afterOid: $after, force: true }] }) {
+    clientMutationId
+  }
+}`;
+
+// PullRequestCommit is what re-creating a listed commit needs from it.
+interface PullRequestCommit {
+  sha: string;
+  parents: string[];
+  message: string;
+  tree: string;
+  authorEmail: string;
+  verified: boolean;
+}
+
+// signPullRequestCommits re-creates the unsigned commits of a pull request through the API, which
+// GitHub signs for an App, and moves the head onto them, when the base branch requires signatures.
+export async function signPullRequestCommits(options: {
+  repo: string;
+  pullRequestNumber: number;
+  token: string;
+  authorEmail: string;
+  fetchImpl?: typeof fetch;
+}): Promise<CommitSigningOutcome> {
+  const [owner, name] = options.repo.split('/');
+  const ref = `${options.repo}#${options.pullRequestNumber}`;
+  if (!owner || !name)
+    throw new CommitSigningRefusal(`Invalid GitHub repository name: ${options.repo}`);
+
+  const data = await githubGraphql(options, SIGNING_HEAD_QUERY, {
+    owner,
+    name,
+    number: options.pullRequestNumber,
+  });
+  const repositoryId = pathOf(data, ['repository'])?.id;
+  const pullRequest = pathOf(data, ['repository', 'pullRequest']);
+  const headRefName = pullRequest?.headRefName;
+  const headRefOid = pullRequest?.headRefOid;
+  if (
+    typeof repositoryId !== 'string' ||
+    typeof headRefName !== 'string' ||
+    !headRefName ||
+    typeof headRefOid !== 'string' ||
+    !headRefOid
+  ) {
+    throw new Error(`GitHub PR head query for ${ref} returned no head branch`);
+  }
+  if (pullRequest?.isCrossRepository === true) {
+    throw new CommitSigningRefusal(`The head branch of ${ref} lives in a fork`);
+  }
+  const requiresSignatures =
+    pathOf(pullRequest, ['baseRef', 'refUpdateRule'])?.requiresSignatures === true ||
+    nodesAt(pullRequest, ['baseRef', 'rules', 'nodes']).some(
+      (rule) => rule.type === 'REQUIRED_SIGNATURES',
+    );
+  if (!requiresSignatures) return { status: 'not_required' };
+
+  const commits = await listPullRequestCommits(options, ref);
+  const ordered = ancestryOrder(commits, headRefOid);
+  if (ordered.length === 0) throw new Error(`GitHub PR commits for ${ref} did not list its head`);
+  // A commit whose parent is re-created must be re-created too, to point at the new parent, even
+  // when it is already signed.
+  const stale = new Set<string>();
+  for (const commit of ordered) {
+    if (!commit.verified || commit.parents.some((parent) => stale.has(parent))) {
+      stale.add(commit.sha);
+    }
+  }
+  if (stale.size === 0) return { status: 'already_signed' };
+  const range = ordered.filter((commit) => stale.has(commit.sha));
+  // Stop at anyone else's commit: re-creating it would make the App its author.
+  const foreign = range.find(
+    (commit) => commit.authorEmail.toLowerCase() !== options.authorEmail.toLowerCase(),
+  );
+  if (foreign) return { status: 'foreign_commit', sha: foreign.sha };
+
+  const recreatedShas = new Map<string, string>();
+  let headSha = '';
+  for (const commit of range) {
+    headSha = await createSignedCommit(options, ref, {
+      message: commit.message,
+      tree: commit.tree,
+      parents: commit.parents.map((parent) => recreatedShas.get(parent) ?? parent),
+    });
+    recreatedShas.set(commit.sha, headSha);
+  }
+
+  await githubGraphql(options, MOVE_HEAD_MUTATION, {
+    repositoryId,
+    name: `refs/heads/${headRefName}`,
+    before: headRefOid,
+    after: headSha,
+  });
+  return { status: 'signed', recreated: range.length, headSha };
+}
+
+// ancestryOrder answers the listed commits the head reaches, every parent before its children;
+// nothing when the head is not listed.
+function ancestryOrder(commits: PullRequestCommit[], headSha: string): PullRequestCommit[] {
+  const bySha = new Map(commits.map((commit) => [commit.sha, commit]));
+  const ordered: PullRequestCommit[] = [];
+  const visited = new Set<string>();
+  const visit = (sha: string): void => {
+    const commit = bySha.get(sha);
+    if (!commit || visited.has(sha)) return;
+    visited.add(sha);
+    for (const parent of commit.parents) visit(parent);
+    ordered.push(commit);
+  };
+  visit(headSha);
+  return ordered;
+}
+
+async function listPullRequestCommits(
+  options: { repo: string; pullRequestNumber: number; token: string; fetchImpl?: typeof fetch },
+  ref: string,
+): Promise<PullRequestCommit[]> {
+  const pageSize = 100;
+  const commits: PullRequestCommit[] = [];
+  for (let page = 1; page <= Math.ceil(MAX_LISTED_COMMITS / pageSize); page += 1) {
+    const body = await githubRest(
+      options,
+      'GET',
+      `/repos/${options.repo}/pulls/${options.pullRequestNumber}/commits?per_page=${pageSize}&page=${page}`,
+    );
+    if (!Array.isArray(body)) {
+      throw new Error(`GitHub PR commits for ${ref} returned a non-array response`);
+    }
+    for (const item of body) commits.push(pullRequestCommit(item, ref));
+    if (body.length < pageSize) break;
+  }
+  // Refuse at the cap: GitHub stops listing there, so the head may be missing from the read.
+  if (commits.length >= MAX_LISTED_COMMITS) {
+    throw new CommitSigningRefusal(`${ref} has too many commits to read them all`);
+  }
+  return commits;
+}
+
+function pullRequestCommit(item: unknown, ref: string): PullRequestCommit {
+  const sha = isPlainObject(item) ? item.sha : undefined;
+  const commit = isPlainObject(item) ? item.commit : undefined;
+  const parents = isPlainObject(item) && Array.isArray(item.parents) ? item.parents : undefined;
+  const tree = pathOf(commit, ['tree'])?.sha;
+  const authorEmail = pathOf(commit, ['author'])?.email;
+  if (
+    typeof sha !== 'string' ||
+    !isPlainObject(commit) ||
+    typeof commit.message !== 'string' ||
+    typeof tree !== 'string' ||
+    typeof authorEmail !== 'string' ||
+    !parents?.every((parent) => isPlainObject(parent) && typeof parent.sha === 'string')
+  ) {
+    throw new Error(`GitHub PR commits for ${ref} listed a commit we could not read`);
+  }
+  return {
+    sha,
+    parents: parents.map((parent) => (parent as { sha: string }).sha),
+    message: commit.message,
+    tree,
+    authorEmail,
+    verified: pathOf(commit, ['verification'])?.verified === true,
+  };
+}
+
+// createSignedCommit creates a commit and refuses it unless GitHub signed it as the agent, so the
+// branch never moves onto an unsigned commit or one a later pass would take for someone else's.
+async function createSignedCommit(
+  options: { repo: string; token: string; authorEmail: string; fetchImpl?: typeof fetch },
+  ref: string,
+  commit: { message: string; tree: string; parents: string[] },
+): Promise<string> {
+  const body = await githubRest(options, 'POST', `/repos/${options.repo}/git/commits`, commit);
+  const sha = isPlainObject(body) ? body.sha : undefined;
+  if (typeof sha !== 'string' || !sha) {
+    throw new Error(`GitHub commit creation for ${ref} returned no sha`);
+  }
+  if (pathOf(body, ['verification'])?.verified !== true) {
+    throw new CommitSigningRefusal(`GitHub did not sign the commit re-created for ${ref}`);
+  }
+  const authorEmail = pathOf(body, ['author'])?.email;
+  if (
+    typeof authorEmail !== 'string' ||
+    authorEmail.toLowerCase() !== options.authorEmail.toLowerCase()
+  ) {
+    throw new CommitSigningRefusal(
+      `GitHub authored the commit re-created for ${ref} as ${String(authorEmail)}, not as worker.git_author_email ${options.authorEmail}`,
+    );
+  }
+  return sha;
+}
+
+async function githubRest(
+  options: { token: string; fetchImpl?: typeof fetch },
+  method: 'GET' | 'POST',
+  path: string,
+  body?: Record<string, unknown>,
+): Promise<unknown> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const response = await fetchImpl(`${GITHUB_API_BASE}${path}`, {
+    method,
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${options.token}`,
+      'x-github-api-version': '2022-11-28',
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `GitHub ${method} ${path} failed with HTTP ${response.status}: ${truncate(text)}`,
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`GitHub ${method} ${path} returned invalid JSON`);
+  }
 }
 
 async function githubGraphql(

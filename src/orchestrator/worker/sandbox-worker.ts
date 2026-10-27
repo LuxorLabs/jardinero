@@ -35,13 +35,19 @@ import {
 } from '../../workflows/log-review/log-review-result.js';
 import { CallContextError, withCallContext } from '../../platform/call-context.js';
 import { forwardHostCodexAuthToSandbox } from '../../adapters/codex/codex-auth.js';
-import { getPullRequestHead } from '../../adapters/github/github-pull-requests.js';
+import {
+  type CommitSigningOutcome,
+  CommitSigningRefusal,
+  getPullRequestHead,
+  signPullRequestCommits,
+} from '../../adapters/github/github-pull-requests.js';
 import { buildCodexConfigToml } from '../../adapters/codex/codex-config.js';
 import {
   buildGrafanaMcpCredentialsJson,
   grafanaMcpRequiredEnvNames,
 } from '../../adapters/grafana/grafana-mcp-auth.js';
 import { buildWorkerPrompt } from '../../workflows/prompts.js';
+import { numberPayload } from '../task-payload.js';
 import { OutputTail } from './output-tail.js';
 import {
   type RepoDocsAccess,
@@ -50,8 +56,10 @@ import {
   renderRepoDocsPromptBlock,
 } from './repo-docs.js';
 import {
+  type SideEffectVerification,
   extractOpenedPullRequestUrl,
   isImplementationRun,
+  parseGitHubPullRequestUrl,
   verifySideEffects,
 } from '../../workflows/side-effects.js';
 import { JARDINERO_SANDBOX_APP, SANDBOX_METADATA } from '../../adapters/tenki/tenki-scope.js';
@@ -94,12 +102,19 @@ const PRE_CODEX_STAGE_MESSAGES: Record<PreCodexRetryStage, string> = {
 export interface SandboxWorkerRunnerDeps {
   sandboxReadyRetryDelayMs?: (attempt: number) => number;
   getPullRequestHead?: typeof getPullRequestHead;
+  signPullRequestCommits?: typeof signPullRequestCommits;
+  signingRetryDelayMs?: number;
   codexPollIntervalMs?: number;
 }
 
 // CODEX_POLL_INTERVAL_MS is how long a detached Codex run goes unread, and so how late its
 // progress reaches the log.
 const CODEX_POLL_INTERVAL_MS = 2_000;
+
+// SIGNING_ATTEMPTS is how many times signing the commits of a run is tried, waiting
+// SIGNING_RETRY_DELAY_MS longer before each new one.
+const SIGNING_ATTEMPTS = 3;
+const SIGNING_RETRY_DELAY_MS = 2_000;
 
 // CODEX_FILES are what a detached Codex run keeps in the context directory, which is all a
 // process needs to follow it, whether it started it or not.
@@ -134,6 +149,8 @@ function sandboxReadyRetryDelayMs(config: AppConfig, attempt: number): number {
 export class SandboxWorkerRunner implements SandboxRunner {
   private readonly sandboxReadyRetryDelayMs: (attempt: number) => number;
   private readonly getPullRequestHead: typeof getPullRequestHead;
+  private readonly signPullRequestCommits: typeof signPullRequestCommits;
+  private readonly signingRetryDelayMs: number;
   private readonly codexPollIntervalMs: number;
   private readonly log: Logger = logger.child('worker');
 
@@ -144,6 +161,8 @@ export class SandboxWorkerRunner implements SandboxRunner {
     deps: SandboxWorkerRunnerDeps = {},
   ) {
     this.getPullRequestHead = deps.getPullRequestHead ?? getPullRequestHead;
+    this.signPullRequestCommits = deps.signPullRequestCommits ?? signPullRequestCommits;
+    this.signingRetryDelayMs = deps.signingRetryDelayMs ?? SIGNING_RETRY_DELAY_MS;
     this.codexPollIntervalMs = deps.codexPollIntervalMs ?? CODEX_POLL_INTERVAL_MS;
     this.sandboxReadyRetryDelayMs =
       deps.sandboxReadyRetryDelayMs === undefined
@@ -382,6 +401,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
         JSON.stringify(verification, null, 2),
       );
       await terminate();
+      await this.signPushedCommits(context, pushedPullRequest(context.task, verification));
       const openedPrUrl = verification.status === 'failed' ? undefined : verification.openedPrUrl;
       const noPrSkipped =
         isImplementationRun(context.task) &&
@@ -746,6 +766,68 @@ export class SandboxWorkerRunner implements SandboxRunner {
         buildAuthenticatedFetchPrCommand({ repoDir, prNumber, headRef }),
       );
       assertExecSucceeded(fetchResult, `fetch PR ${prNumber}`);
+    }
+  }
+
+  // signPushedCommits signs the commits of the pull request a run pushed to; a failure is reported,
+  // not raised, and leaves them for the next pass on it.
+  private async signPushedCommits(
+    context: SandboxRunContext,
+    pullRequestNumber: number | undefined,
+  ): Promise<void> {
+    const repo = this.repoFor(context);
+    const token = repo ? this.env[resolveGitHubTokenEnv(this.config, repo)] : undefined;
+    if (!repo || !token || pullRequestNumber === undefined) return;
+    // Skip without the agent's identity: it tells the agent's commits apart, and git only gets it
+    // when both name and email are set.
+    const authorName = this.config.worker.gitAuthorName.trim();
+    const authorEmail = this.config.worker.gitAuthorEmail.trim();
+    if (!authorName || !authorEmail) {
+      await context.publishEvent({
+        type: 'github.commits_signing_skipped',
+        message: `worker.git_author_name or worker.git_author_email is unset, so the commits on PR ${pullRequestNumber} were left unsigned`,
+      });
+      return;
+    }
+    let outcome: CommitSigningOutcome;
+    try {
+      outcome = await this.signWithRetries({ repo, pullRequestNumber, token, authorEmail });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.log.warn('signing the pull request commits failed', {
+        repo,
+        pr_number: pullRequestNumber,
+        error: message,
+      });
+      await context.publishEvent({ type: 'github.commits_signing_failed', message });
+      return;
+    }
+    if (outcome.status === 'signed') {
+      await context.publishEvent({
+        type: 'github.commits_signed',
+        message: `Re-created ${outcome.recreated} commit(s) on PR ${pullRequestNumber} signed by GitHub`,
+        data: { head_sha: outcome.headSha },
+      });
+    } else if (outcome.status === 'foreign_commit') {
+      await context.publishEvent({
+        type: 'github.commits_signing_skipped',
+        message: `Commit ${outcome.sha} on PR ${pullRequestNumber} is not the agent's, so the unsigned ones were left as they are`,
+      });
+    }
+  }
+
+  // signWithRetries tries again after any failure but a refusal, since a GitHub outage or a
+  // push landing meanwhile clears on its own.
+  private async signWithRetries(
+    options: Parameters<typeof signPullRequestCommits>[0],
+  ): Promise<CommitSigningOutcome> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await this.signPullRequestCommits(options);
+      } catch (error) {
+        if (attempt >= SIGNING_ATTEMPTS || error instanceof CommitSigningRefusal) throw error;
+        await delay(this.signingRetryDelayMs * attempt);
+      }
     }
   }
 
@@ -1409,6 +1491,19 @@ export class SandboxWorkerRunner implements SandboxRunner {
   private repoFor(context: SandboxRunContext): string | undefined {
     return typeof context.task.payload.repo === 'string' ? context.task.payload.repo : undefined;
   }
+}
+
+// pushedPullRequest answers the pull request a run may have pushed to: the one a maintenance
+// pass was given, or the one an implementation pass was verified to have opened.
+function pushedPullRequest(
+  task: SandboxRunContext['task'],
+  verification: SideEffectVerification,
+): number | undefined {
+  if (task.workflow === 'pr_maintain') return numberPayload(task, 'pr_number');
+  if (!isImplementationRun(task) || verification.status === 'failed' || !verification.openedPrUrl) {
+    return undefined;
+  }
+  return parseGitHubPullRequestUrl(verification.openedPrUrl)?.number;
 }
 
 function isCodexEffort(value: unknown): value is CodexEffort {

@@ -139,7 +139,12 @@ export function linearSignature(secret: string, body: string): string {
 
 export function linearSessionBody(
   action: string,
-  issue: { identifier?: string; teamKey?: string; project?: { id: string; name: string } } = {},
+  issue: {
+    identifier?: string;
+    teamKey?: string;
+    project?: { id: string; name: string };
+    description?: string;
+  } = {},
 ): string {
   const identifier = issue.identifier ?? 'JAR-7';
   return JSON.stringify({
@@ -155,6 +160,7 @@ export function linearSessionBody(
         url: `https://linear.app/acme/issue/${identifier}/test-issue`,
         team: { key: issue.teamKey ?? 'JAR' },
         ...(issue.project ? { project: issue.project } : {}),
+        ...(issue.description ? { description: issue.description } : {}),
       },
     },
     promptContext: 'Do the thing.',

@@ -98,6 +98,13 @@ describe('readLinearDelivery', () => {
       },
       want: 'acme/orchestrator',
     },
+    {
+      name: 'When github refs are ambiguous and there is no project then should route to the last one named',
+      issue: {
+        description: 'Fix what acme/webapp#2 broke.\n\nRepository: https://github.com/acme/cloud',
+      },
+      want: 'acme/cloud',
+    },
   ];
 
   for (const c of routingCases) {

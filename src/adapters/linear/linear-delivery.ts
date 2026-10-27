@@ -308,6 +308,7 @@ function repoForTeamConfig(
   return (
     repoFromGithubRefs(repoConfig, text) ??
     repoFromProject(repoConfig, project) ??
+    lastGithubRef(repoConfig, text) ??
     defaultRepo(repoConfig)
   );
 }
@@ -332,14 +333,21 @@ function repoFromProject(
 }
 
 function repoFromGithubRefs(repoConfig: LinearTeamRepoConfig, text: string): string | undefined {
-  const configuredRepos = configuredTeamRepos(repoConfig);
-  const configuredByKey = new Map(configuredRepos.map((repo) => [repo.toLowerCase(), repo]));
-  const matches = new Map<string, string>();
-  for (const repo of githubRepoCandidates(text)) {
-    const configuredRepo = configuredByKey.get(repo.toLowerCase());
-    if (configuredRepo) matches.set(configuredRepo.toLowerCase(), configuredRepo);
-  }
-  return matches.size === 1 ? [...matches.values()][0] : undefined;
+  const matches = new Set(configuredGithubRefs(repoConfig, text));
+  return matches.size === 1 ? [...matches][0] : undefined;
+}
+
+function lastGithubRef(repoConfig: LinearTeamRepoConfig, text: string): string | undefined {
+  return configuredGithubRefs(repoConfig, text).at(-1);
+}
+
+function configuredGithubRefs(repoConfig: LinearTeamRepoConfig, text: string): string[] {
+  const configuredByKey = new Map(
+    configuredTeamRepos(repoConfig).map((repo) => [repo.toLowerCase(), repo]),
+  );
+  return githubRepoCandidates(text).flatMap(
+    (repo) => configuredByKey.get(repo.toLowerCase()) ?? [],
+  );
 }
 
 function configuredTeamRepos(repoConfig: LinearTeamRepoConfig): string[] {
@@ -378,12 +386,11 @@ function githubReferenceText(parsed: ParsedLinearDelivery): string {
 function githubRepoCandidates(text: string): string[] {
   const repos: string[] = [];
   for (const match of text.matchAll(
-    /https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)/gi,
+    /https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)|(?:^|[^\w.-])([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#\d+\b/gi,
   )) {
-    repos.push(normalizeGithubRepo(`${match[1]}/${match[2]}`));
-  }
-  for (const match of text.matchAll(/(^|[^\w.-])([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#\d+\b/g)) {
-    repos.push(normalizeGithubRepo(`${match[2]}/${match[3]}`));
+    repos.push(
+      normalizeGithubRepo(match[1] ? `${match[1]}/${match[2]}` : `${match[3]}/${match[4]}`),
+    );
   }
   return repos.filter((repo) => repo.includes('/'));
 }

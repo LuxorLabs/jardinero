@@ -26,6 +26,7 @@ import {
 // | energy | SYS-1195 | #orchestrator |         | energy        | SYS-1195 | fleet     |
 // |        | 60       | unmapped      |         | refused       |          |           |
 const CHANNELS = { orchestrator: 'channel-orchestrator', fleet: 'channel-fleet' };
+const CREATED_TICKET = 'SYS-1196';
 
 let fixture: HttpFixture;
 let signer: ReturnType<typeof createDiscordSigner>;
@@ -70,7 +71,7 @@ after(async () => {
   await fixture.cleanup();
 });
 
-describe('Which repository and ticket a command resolves to', () => {
+describe('Routing of a ticket given to `/jardinero-ticket`', () => {
   const cases: Array<{
     name: string;
     ticket: string;
@@ -150,7 +151,7 @@ describe('Which repository and ticket a command resolves to', () => {
 
   for (const [index, testCase] of cases.entries()) {
     test(testCase.name, async () => {
-      await runCommand(testCase, index);
+      await runCommand(ticketCommand(testCase), index);
 
       const ask = requestFor(testCase.want.identifier);
       assert.equal(ask?.subjectExternalId, testCase.want.identifier);
@@ -173,26 +174,51 @@ describe('Which repository and ticket a command resolves to', () => {
   }
 
   test('When nothing says which repository then should refuse it and ask for one', async () => {
-    await runCommand({ ticket: '60', channelId: 'channel-nobody' }, cases.length);
+    await runCommand(ticketCommand({ ticket: '60', channelId: 'channel-nobody' }), cases.length);
 
     assert.equal(requestFor('60'), undefined);
     assert.deepEqual(fixture.store.listRequests({}, { limit: 50 }).rows.length, cases.length);
   });
 });
 
-async function runCommand(
-  invocation: { ticket: string; repo?: string; channelId: string },
-  index: number,
-): Promise<void> {
+describe('Routing of a ticket opened by `/jardinero-code`', () => {
+  test('When the named repository is not the team default then should run it in the named repository', async () => {
+    await runCommand(
+      {
+        name: 'jardinero-code',
+        options: [
+          { name: 'request', value: 'update the energy README' },
+          { name: 'repo', value: 'energy' },
+        ],
+        channelId: CHANNELS.orchestrator,
+      },
+      'code',
+    );
+    let description = '';
+    await eventually(() => {
+      const written = discordCalls.find((call) => call.mutation?.includes('CreateIssue'));
+      description = String((written?.body?.input as { description?: string })?.description ?? '');
+      assert.ok(description);
+    });
+
+    await deliverDelegation(CREATED_TICKET, undefined, description);
+
+    await eventually(() => {
+      const instance = fixture.store
+        .listOpenLinearImplementers()
+        .find((open) => open.linearIssueIdentifier === CREATED_TICKET);
+      assert.equal(repositoryName(instance?.repositoryId), 'acme/energy');
+    });
+  });
+});
+
+async function runCommand(command: DiscordCommand, interactionKey: number | string): Promise<void> {
   const signed = signer.sign(
     discordCommandPayload({
-      commandName: 'jardinero-ticket',
-      interactionId: `interaction-${index}`,
-      channelId: invocation.channelId,
-      options: [
-        { name: 'ticket', value: invocation.ticket },
-        ...(invocation.repo ? [{ name: 'repo', value: invocation.repo }] : []),
-      ],
+      commandName: command.name,
+      interactionId: `interaction-${interactionKey}`,
+      channelId: command.channelId,
+      options: command.options,
     }),
   );
   const response = await fetch(`${fixture.baseUrl}/webhooks/discord`, {
@@ -206,15 +232,32 @@ async function runCommand(
   );
 }
 
+function ticketCommand(invocation: {
+  ticket: string;
+  repo?: string;
+  channelId: string;
+}): DiscordCommand {
+  return {
+    name: 'jardinero-ticket',
+    channelId: invocation.channelId,
+    options: [
+      { name: 'ticket', value: invocation.ticket },
+      ...(invocation.repo ? [{ name: 'repo', value: invocation.repo }] : []),
+    ],
+  };
+}
+
 // The delegation Linear answers with, which is what opens the work.
 async function deliverDelegation(
   identifier: string,
   project?: { id: string; name: string },
+  description?: string,
 ): Promise<void> {
   const body = linearSessionBody('created', {
     identifier,
     teamKey: identifier.slice(0, identifier.indexOf('-')),
     ...(project ? { project } : {}),
+    ...(description ? { description } : {}),
   });
   const response = await fetch(`${fixture.baseUrl}/webhooks/linear`, {
     method: 'POST',
@@ -254,6 +297,8 @@ function stubbedDiscordAndLinear(): typeof fetch {
         issues: { nodes: [{ id: 'issue-uuid', title: 'A ticket' }] },
         viewer: { id: 'app-user-1' },
         issueUpdate: { success: true },
+        teams: { nodes: [{ id: 'team-sys' }] },
+        issueCreate: { success: true, issue: { id: 'issue-created', identifier: CREATED_TICKET } },
         agentActivityCreate: { success: true },
         agentSessionUpdate: { success: true },
       },
@@ -266,4 +311,10 @@ function jsonBody(body: unknown): Response {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+interface DiscordCommand {
+  name: string;
+  options: Array<{ name: string; value: string }>;
+  channelId: string;
 }

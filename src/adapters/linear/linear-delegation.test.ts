@@ -147,14 +147,13 @@ describe('openLinearIssueForRequest', () => {
     wantWritten?: Record<string, unknown>;
   }> = [
     {
-      // A ticket needs a title and a person wrote prose, so the first line is the title and
-      // the whole text stays as the description.
       name: 'When the words become a ticket then should answer what it is called',
       want: { identifier: 'JAR-79' },
       wantWritten: {
         teamId: 'team-uuid',
         title: 'fix the typo in the miners tab',
-        description: 'fix the typo in the miners tab\n\nit says commmander with three m',
+        description:
+          'fix the typo in the miners tab\n\nit says commmander with three m\n\nRepository: https://github.com/acme/energy',
       },
     },
     {
@@ -174,7 +173,8 @@ describe('openLinearIssueForRequest', () => {
       wantWritten: {
         teamId: 'team-uuid',
         title: 'fix the typo in the miners tab',
-        description: 'fix the typo in the miners tab\n\nit says commmander with three m',
+        description:
+          'fix the typo in the miners tab\n\nit says commmander with three m\n\nRepository: https://github.com/acme/energy',
       },
     },
   ];
@@ -195,6 +195,7 @@ describe('openLinearIssueForRequest', () => {
         {
           teamKey: 'JAR',
           text: 'fix the typo in the miners tab\n\nit says commmander with three m',
+          repositoryFullName: 'acme/energy',
         },
       );
 

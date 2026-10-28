@@ -69,7 +69,7 @@ Only when `worker.runner` is `daytona`.
 
 Capsule mode needs something to rotate that `auth.json`, and it is not optional: left alone it stops working, in a way that is hard to read from the symptoms.
 
-The file is forwarded into every worker sandbox, and OpenAI revokes the old `refresh_token` the moment a new one is issued. Codex only rotates once the `access_token` has expired, so the first sandbox to reach that expiry rotates, takes the new bundle to its grave when it is destroyed, and leaves the stored one revoked. Every run after that fails until someone runs `codex login` again by hand.
+Sandboxes cannot refresh the login, so once the `access_token` expires every run fails until someone runs `codex login` again by hand.
 
 Rotating on a schedule avoids it entirely: refresh well inside the token's lifetime and no sandbox ever reaches the expiry.
 

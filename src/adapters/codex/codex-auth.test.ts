@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, test } from 'node:test';
+import { afterEach, beforeEach, describe, mock, test } from 'node:test';
 
 // The host paths are derived from homedir() when the module loads, and on POSIX
 // homedir() reads HOME. Pointing HOME at a temp dir before the import is the only
@@ -13,7 +13,6 @@ const CODEX_DIR = path.join(HOME, '.codex');
 const AUTH_PATH = path.join(CODEX_DIR, 'auth.json');
 const CREDENTIALS_PATH = path.join(CODEX_DIR, '.credentials.json');
 const REMOTE_AUTH = '/home/tenki/.codex/auth.json';
-const REMOTE_CREDENTIALS = '/home/tenki/.codex/.credentials.json';
 
 const {
   forwardHostCodexAuthToSandbox,
@@ -26,9 +25,11 @@ beforeEach(() => {
   rmSync(CODEX_DIR, { recursive: true, force: true });
   mkdirSync(CODEX_DIR, { recursive: true });
   resetCodexAuthCacheForTest();
+  mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-28T12:00:00.000Z') });
 });
 
 afterEach(() => {
+  mock.timers.reset();
   rmSync(CODEX_DIR, { recursive: true, force: true });
 });
 
@@ -90,6 +91,16 @@ describe('forwardHostCodexAuthToSandbox', () => {
       wantError: /auth\.json is unexpectedly large \(65537 bytes\); refusing to forward it/,
     },
     {
+      name: 'When the auth file is not JSON then should return error refusing to forward it',
+      arrange: () => writeFileSync(AUTH_PATH, '{"tokens":'),
+      wantError: /auth\.json is not valid JSON; refusing to forward it to the sandbox\./,
+    },
+    {
+      name: 'When the auth file is not a JSON object then should return error refusing to forward it',
+      arrange: () => writeFileSync(AUTH_PATH, '["tokens"]'),
+      wantError: /auth\.json is not a JSON object; refusing to forward it to the sandbox\./,
+    },
+    {
       name: 'When the remote directory cannot be created then should return error',
       arrange: writeAuth,
       session: { mkdirError: new Error('permission denied') },
@@ -121,55 +132,70 @@ describe('forwardHostCodexAuthToSandbox', () => {
     });
   }
 
-  // Without credentials the remote file has to be removed, or a sandbox reused
-  // across logins keeps serving the credentials of the previous one.
   const writeCases: Array<{
     name: string;
-    withCredentials: boolean;
-    wantPaths: string[];
-    wantCommand: RegExp[];
-    wantNotInCommand?: RegExp;
+    auth: string;
+    hostCredentials?: boolean;
+    wantAuth: string;
   }> = [
     {
-      name: 'When only auth is present then should write it and remove the remote credentials',
-      withCredentials: false,
-      wantPaths: [REMOTE_AUTH],
-      wantCommand: [
-        /sudo rm -f '\/home\/tenki\/\.codex\/\.credentials\.json' && /,
-        /chown tenki:tenki '\/home\/tenki\/\.codex'/,
-        /chmod 600 '\/home\/tenki\/\.codex\/auth\.json'/,
-      ],
+      name: 'When the auth carries a refresh token then should empty it and date the refresh now',
+      auth: '{"tokens":{"id_token":"id-a","access_token":"access-a","refresh_token":"refresh-a","account_id":"account-a"},"last_refresh":"2026-10-01T00:00:00Z"}',
+      wantAuth: `${JSON.stringify(
+        {
+          tokens: {
+            id_token: 'id-a',
+            access_token: 'access-a',
+            refresh_token: '',
+            account_id: 'account-a',
+          },
+          last_refresh: '2026-10-28T12:00:00.000Z',
+        },
+        null,
+        2,
+      )}\n`,
     },
     {
-      name: 'When credentials are present then should write both and chmod them',
-      withCredentials: true,
-      wantPaths: [REMOTE_AUTH, REMOTE_CREDENTIALS],
-      wantCommand: [/chmod 600 .*auth\.json.* .*\.credentials\.json'/],
-      wantNotInCommand: /rm -f/,
+      name: 'When the tokens carry no refresh token then should forward the file unchanged',
+      auth: '{"tokens":{"access_token":"access-a"}}',
+      wantAuth: '{"tokens":{"access_token":"access-a"}}',
+    },
+    {
+      name: 'When the tokens are null then should forward the file unchanged',
+      auth: '{"tokens":null}',
+      wantAuth: '{"tokens":null}',
+    },
+    {
+      name: 'When the auth carries no tokens then should forward the file unchanged',
+      auth: '{"OPENAI_API_KEY":"sk-test"}',
+      wantAuth: '{"OPENAI_API_KEY":"sk-test"}',
+    },
+    {
+      name: 'When the host has MCP credentials then should forward only the auth',
+      auth: '{"OPENAI_API_KEY":"sk-test"}',
+      hostCredentials: true,
+      wantAuth: '{"OPENAI_API_KEY":"sk-test"}',
     },
   ];
 
   for (const testCase of writeCases) {
     test(testCase.name, async () => {
-      writeAuth();
-      if (testCase.withCredentials) writeFileSync(CREDENTIALS_PATH, '{"refresh":"r"}');
+      writeFileSync(AUTH_PATH, testCase.auth);
+      if (testCase.hostCredentials) writeFileSync(CREDENTIALS_PATH, '{"refresh":"r"}');
       const fake = fakeSession();
 
       await forwardHostCodexAuthToSandbox(fake.session);
 
-      assert.deepEqual(fake.mkdirs, ['/home/tenki/.codex']);
       assert.deepEqual(
-        fake.writes.map((write) => write.path),
-        testCase.wantPaths,
+        { mkdirs: fake.mkdirs, writes: fake.writes, commands: fake.commands },
+        {
+          mkdirs: ['/home/tenki/.codex'],
+          writes: [{ path: REMOTE_AUTH, contents: testCase.wantAuth, mode: 0o600 }],
+          commands: [
+            "sudo rm -f '/home/tenki/.codex/.credentials.json' && sudo chown tenki:tenki '/home/tenki/.codex' '/home/tenki/.codex/auth.json' && sudo chmod 700 '/home/tenki/.codex' && sudo chmod 600 '/home/tenki/.codex/auth.json'",
+          ],
+        },
       );
-      assert.deepEqual(
-        fake.writes.map((write) => write.mode),
-        testCase.wantPaths.map(() => 0o600),
-      );
-      for (const pattern of testCase.wantCommand) assert.match(fake.commands[0], pattern);
-      if (testCase.wantNotInCommand) {
-        assert.doesNotMatch(fake.commands[0], testCase.wantNotInCommand);
-      }
     });
   }
 
@@ -209,8 +235,8 @@ describe('forwardHostCodexAuthToSandbox', () => {
       wantWrites: 2,
       check: (fake) =>
         assert.deepEqual(
-          fake.writes.map((write) => write.contents),
-          [authContents('a'), authContents('b')],
+          fake.writes.map((write) => JSON.parse(write.contents)),
+          [sandboxAuth('a'), sandboxAuth('b')],
         ),
     },
     {
@@ -257,7 +283,11 @@ describe('forwardHostCodexAuthToSandbox', () => {
 });
 
 function authContents(id: string): string {
-  return `{"tokens":{"id":"${id}"}}`;
+  return `{"tokens":{"id":"${id}","refresh_token":"refresh-${id}"}}`;
+}
+
+function sandboxAuth(id: string): unknown {
+  return { tokens: { id, refresh_token: '' }, last_refresh: '2026-10-28T12:00:00.000Z' };
 }
 
 function writeAuth(id = 'a'): void {

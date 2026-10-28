@@ -864,6 +864,35 @@ describe('the output tail of a codex run', () => {
       wantTail: 'error: repository checkout failed\n',
     },
     {
+      name: 'When the output holds an installation token then should redact its dotted parts too',
+      codexExecResults: [
+        {
+          exitCode: 1,
+          stdout:
+            'fatal: https://x-access-token:ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl@github.com/acme/repo not found',
+        },
+      ],
+      wantTail:
+        'fatal: https://x-access-token:[redacted-github-token]@github.com/acme/repo not found\n',
+    },
+    {
+      name: 'When the output holds a `ghp_` token then should redact it',
+      codexExecResults: [
+        { exitCode: 1, stdout: 'GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 rejected' },
+      ],
+      wantTail: 'GH_TOKEN=[redacted-github-token] rejected\n',
+    },
+    {
+      name: 'When the output holds a `github_pat_` token then should redact it',
+      codexExecResults: [
+        {
+          exitCode: 1,
+          stdout: 'GH_TOKEN=github_pat_11ABCDEFG0123456789abc_0123456789abcdefABCDEF rejected',
+        },
+      ],
+      wantTail: 'GH_TOKEN=[redacted-github-token] rejected\n',
+    },
+    {
       name: 'When the run succeeded then should keep nothing',
       codexExecResults: [{ exitCode: 0, stdout: 'thinking out loud' }],
     },

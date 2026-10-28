@@ -1156,7 +1156,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
     const stderr = new LineBuffer();
     return (output) => {
       const buffer = output.isStderr ? stderr : stdout;
-      for (const line of buffer.push(output.data, output.isFinal)) {
+      for (const line of buffer.push(output.data, output.isFinal).map(redactSensitiveText)) {
         tail.push(line);
         if (!logged) continue;
         if (output.isStderr) {
@@ -1620,10 +1620,12 @@ function redactUnknown(value: unknown, depth = 0): unknown {
   return output;
 }
 
+// redactSensitiveText replaces each GitHub token in full, including the `.<payload>.<signature>`
+// tail of an installation token: its `ghs_<id>_<header>` prefix is predictable.
 function redactSensitiveText(value: string): string {
   return value
     .replace(/github_pat_[A-Za-z0-9_]{20,}/g, '[redacted-github-token]')
-    .replace(/\bgh[opsru]_[A-Za-z0-9_]+\b/g, '[redacted-github-token]');
+    .replace(/\bgh[opsru]_[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/g, '[redacted-github-token]');
 }
 
 function safeEventData(value: Record<string, unknown>): Record<string, unknown> {
@@ -1892,8 +1894,12 @@ export function codexEventDetail(event: unknown): Record<string, unknown> {
     const itemType = source.item_type ?? source.type;
     if (typeof itemType === 'string' && itemType.length > 0) detail.item = itemType;
   }
-  if (typeof source.command === 'string') detail.command = truncate(source.command, 500);
-  if (typeof source.text === 'string') detail.text = truncate(source.text, 500);
+  if (typeof source.command === 'string') {
+    detail.command = truncate(redactSensitiveText(source.command), 500);
+  }
+  if (typeof source.text === 'string') {
+    detail.text = truncate(redactSensitiveText(source.text), 500);
+  }
   if (typeof source.status === 'string') detail.status = source.status;
   if (typeof source.exit_code === 'number') detail.exit_code = source.exit_code;
   return detail;

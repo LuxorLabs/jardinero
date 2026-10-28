@@ -130,12 +130,87 @@ describe('codexEventDetail', () => {
       want: { command: `${'x'.repeat(500)}…` },
     },
     {
+      name: 'When command holds an installation token then should redact its dotted parts too',
+      input: {
+        type: 'item.started',
+        item: {
+          command:
+            'git push https://x-access-token:ghs_4127511_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQifQ.c2ln-bmF0_dXJl@github.com/acme/repo',
+        },
+      },
+      want: {
+        command: 'git push https://x-access-token:[redacted-github-token]@github.com/acme/repo',
+      },
+    },
+    {
+      name: 'When command holds a `ghp_` token then should redact it',
+      input: {
+        type: 'item.started',
+        item: { command: 'export GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' },
+      },
+      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+    },
+    {
+      name: 'When command holds a `gho_` token then should redact it',
+      input: {
+        type: 'item.started',
+        item: { command: 'export GH_TOKEN=gho_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' },
+      },
+      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+    },
+    {
+      name: 'When command holds a `ghu_` token then should redact it',
+      input: {
+        type: 'item.started',
+        item: { command: 'export GH_TOKEN=ghu_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' },
+      },
+      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+    },
+    {
+      name: 'When command holds a `ghr_` token then should redact it',
+      input: {
+        type: 'item.started',
+        item: { command: 'export GH_TOKEN=ghr_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' },
+      },
+      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+    },
+    {
+      name: 'When command holds a `github_pat_` token then should redact it',
+      input: {
+        type: 'item.started',
+        item: {
+          command:
+            'export GH_TOKEN=github_pat_11ABCDEFG0123456789abc_0123456789abcdefABCDEF0123456789abcdefABCDEF0123456789',
+        },
+      },
+      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+    },
+    {
+      name: 'When a token straddles the limit then should redact it before truncating',
+      input: {
+        type: 'item.started',
+        item: { command: `${'x'.repeat(490)} ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8` },
+      },
+      want: { command: `${'x'.repeat(490)} [redacted…` },
+    },
+    {
       name: 'When item is an agent message then should surface its text',
       input: {
         type: 'item.completed',
         item: { type: 'agent_message', text: 'done fixing the query' },
       },
       want: { item: 'agent_message', text: 'done fixing the query' },
+    },
+    {
+      name: 'When the text holds an installation token then should redact it',
+      input: {
+        type: 'item.completed',
+        item: {
+          type: 'agent_message',
+          text: 'Token: ghs_4127511_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQifQ.c2ln-bmF0_dXJl',
+        },
+      },
+      want: { item: 'agent_message', text: 'Token: [redacted-github-token]' },
     },
     {
       name: 'When event is not an object then should return no detail',

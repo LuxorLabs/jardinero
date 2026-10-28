@@ -70,6 +70,7 @@ import {
   normalizeRemotePath,
   remoteJoin,
   shellQuote,
+  redactSensitiveText,
 } from './sandbox-utils.js';
 
 type PreCodexRetryStage =
@@ -325,7 +326,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       const handoffArtifact = handoffExtraction
         ? await context.writeSandboxRunArtifact(
             'implementation-handoffs.json',
-            JSON.stringify(handoffExtraction, null, 2),
+            JSON.stringify(redactUnknown(handoffExtraction), null, 2),
           )
         : undefined;
       if (handoffExtraction) {
@@ -350,7 +351,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       const linearVerificationArtifact = linearVerification
         ? await context.writeSandboxRunArtifact(
             'linear-verification.json',
-            JSON.stringify(linearVerification, null, 2),
+            JSON.stringify(redactUnknown(linearVerification), null, 2),
           )
         : undefined;
       if (linearVerifyParse) {
@@ -398,7 +399,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       });
       const verificationArtifact = await context.writeSandboxRunArtifact(
         'side-effect-verification.json',
-        JSON.stringify(verification, null, 2),
+        JSON.stringify(redactUnknown(verification), null, 2),
       );
       await terminate();
       await this.signPushedCommits(context, pushedPullRequest(context.task, verification));
@@ -1156,7 +1157,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
     const stderr = new LineBuffer();
     return (output) => {
       const buffer = output.isStderr ? stderr : stdout;
-      for (const line of buffer.push(output.data, output.isFinal)) {
+      for (const line of buffer.push(output.data, output.isFinal).map(redactSensitiveText)) {
         tail.push(line);
         if (!logged) continue;
         if (output.isStderr) {
@@ -1620,12 +1621,6 @@ function redactUnknown(value: unknown, depth = 0): unknown {
   return output;
 }
 
-function redactSensitiveText(value: string): string {
-  return value
-    .replace(/github_pat_[A-Za-z0-9_]{20,}/g, '[redacted-github-token]')
-    .replace(/\bgh[opsru]_[A-Za-z0-9_]+\b/g, '[redacted-github-token]');
-}
-
 function safeEventData(value: Record<string, unknown>): Record<string, unknown> {
   return {
     ...value,
@@ -1780,15 +1775,15 @@ function normalizeCodexResult(
   result: SandboxExecResult,
   lastMessage?: string,
 ): CodexRunResult {
-  const stdout = execStdout(result);
-  const stderr = execStderr(result);
+  const stdout = redactSensitiveText(execStdout(result));
+  const stderr = redactSensitiveText(execStderr(result));
   const events = parseJsonLines(stdout);
   return {
     command,
     exitCode: result.exitCode,
     stdout,
     stderr,
-    lastMessage,
+    lastMessage: lastMessage === undefined ? undefined : redactSensitiveText(lastMessage),
     costUsd: extractCostUsd(result, events),
     events,
     raw: result,
@@ -1892,8 +1887,12 @@ export function codexEventDetail(event: unknown): Record<string, unknown> {
     const itemType = source.item_type ?? source.type;
     if (typeof itemType === 'string' && itemType.length > 0) detail.item = itemType;
   }
-  if (typeof source.command === 'string') detail.command = truncate(source.command, 500);
-  if (typeof source.text === 'string') detail.text = truncate(source.text, 500);
+  if (typeof source.command === 'string') {
+    detail.command = truncate(redactSensitiveText(source.command), 500);
+  }
+  if (typeof source.text === 'string') {
+    detail.text = truncate(redactSensitiveText(source.text), 500);
+  }
   if (typeof source.status === 'string') detail.status = source.status;
   if (typeof source.exit_code === 'number') detail.exit_code = source.exit_code;
   return detail;

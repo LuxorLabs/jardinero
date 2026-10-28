@@ -10,6 +10,7 @@ import {
   execStdout,
   normalizeRemotePath,
   numberOption,
+  redactSensitiveText,
   remoteJoin,
   renderShellEnvironment,
   shellQuote,
@@ -45,6 +46,15 @@ describe('assertExecSucceeded', () => {
       want: /step failed with exit code 1$/,
     },
     {
+      name: 'When the detail holds a GitHub token then should redact it',
+      result: execResult(
+        1,
+        '',
+        'fatal: https://x-access-token:ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl@github.com/acme/repo not found',
+      ),
+      want: /step failed with exit code 1: fatal: https:\/\/x-access-token:\[redacted-github-token\]@github\.com\/acme\/repo not found$/,
+    },
+    {
       name: 'When the detail is longer than the cap then should truncate it',
       result: execResult(1, '', 'x'.repeat(900)),
       want: /step failed with exit code 1: x{500}$/,
@@ -58,6 +68,37 @@ describe('assertExecSucceeded', () => {
         return;
       }
       assert.throws(() => assertExecSucceeded(testCase.result, 'step'), testCase.want);
+    });
+  }
+});
+
+describe('redactSensitiveText', () => {
+  const cases: Array<{ name: string; input: string; want: string }> = [
+    {
+      name: 'When the text holds a `github_pat_` token then should redact it',
+      input: 'GH_TOKEN=github_pat_11ABCDEFG0123456789abc_0123456789abcdefABCDEF rejected',
+      want: 'GH_TOKEN=[redacted-github-token] rejected',
+    },
+    {
+      name: 'When the text holds an installation token then should redact its dotted parts too',
+      input: 'token ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl rejected',
+      want: 'token [redacted-github-token] rejected',
+    },
+    {
+      name: 'When the text holds a `ghp_` token then should redact it',
+      input: 'GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 rejected',
+      want: 'GH_TOKEN=[redacted-github-token] rejected',
+    },
+    {
+      name: 'When the text holds no token then should return it unchanged',
+      input: 'git push origin agent/fix',
+      want: 'git push origin agent/fix',
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.equal(redactSensitiveText(testCase.input), testCase.want);
     });
   }
 });

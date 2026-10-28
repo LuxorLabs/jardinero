@@ -18,6 +18,7 @@ import {
   type CommitSigningOutcome,
   CommitSigningRefusal,
 } from '../../adapters/github/github-pull-requests.js';
+import { captureLogs } from '../../testing/logger.js';
 import { FIX_RESULT_JSON_MARKER } from '../../workflows/pr/fix-result.js';
 import { HANDOFF_JSON_MARKER } from '../../workflows/pr/implementation-handoff.js';
 
@@ -855,13 +856,16 @@ describe('a pass that declares no pull request', () => {
 describe('the output tail of a codex run', () => {
   const cases: Array<{
     name: string;
-    codexExecResults: Array<{ exitCode: number; stdout?: string }>;
-    wantTail?: string;
+    codexExecResults: FakeCodexRun[];
+    want: { tail: string | undefined; logged: string[] };
   }> = [
     {
       name: 'When the run exited failing then should keep what it printed',
       codexExecResults: [{ exitCode: 1, stdout: 'error: repository checkout failed' }],
-      wantTail: 'error: repository checkout failed\n',
+      want: {
+        tail: 'error: repository checkout failed\n',
+        logged: ['error: repository checkout failed'],
+      },
     },
     {
       name: 'When the output holds an installation token then should redact its dotted parts too',
@@ -872,15 +876,36 @@ describe('the output tail of a codex run', () => {
             'fatal: https://x-access-token:ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl@github.com/acme/repo not found',
         },
       ],
-      wantTail:
-        'fatal: https://x-access-token:[redacted-github-token]@github.com/acme/repo not found\n',
+      want: {
+        tail: 'fatal: https://x-access-token:[redacted-github-token]@github.com/acme/repo not found\n',
+        logged: [
+          'fatal: https://x-access-token:[redacted-github-token]@github.com/acme/repo not found',
+        ],
+      },
+    },
+    {
+      name: 'When stderr holds an installation token then should redact it in the tail and the log',
+      codexExecResults: [
+        {
+          exitCode: 1,
+          stderr:
+            'remote: Invalid username or token ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl',
+        },
+      ],
+      want: {
+        tail: 'remote: Invalid username or token [redacted-github-token]\n',
+        logged: ['remote: Invalid username or token [redacted-github-token]'],
+      },
     },
     {
       name: 'When the output holds a `ghp_` token then should redact it',
       codexExecResults: [
         { exitCode: 1, stdout: 'GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 rejected' },
       ],
-      wantTail: 'GH_TOKEN=[redacted-github-token] rejected\n',
+      want: {
+        tail: 'GH_TOKEN=[redacted-github-token] rejected\n',
+        logged: ['GH_TOKEN=[redacted-github-token] rejected'],
+      },
     },
     {
       name: 'When the output holds a `github_pat_` token then should redact it',
@@ -890,15 +915,20 @@ describe('the output tail of a codex run', () => {
           stdout: 'GH_TOKEN=github_pat_11ABCDEFG0123456789abc_0123456789abcdefABCDEF rejected',
         },
       ],
-      wantTail: 'GH_TOKEN=[redacted-github-token] rejected\n',
+      want: {
+        tail: 'GH_TOKEN=[redacted-github-token] rejected\n',
+        logged: ['GH_TOKEN=[redacted-github-token] rejected'],
+      },
     },
     {
       name: 'When the run succeeded then should keep nothing',
       codexExecResults: [{ exitCode: 0, stdout: 'thinking out loud' }],
+      want: { tail: undefined, logged: ['thinking out loud'] },
     },
     {
       name: 'When the run printed nothing then should keep nothing',
       codexExecResults: [{ exitCode: 1 }],
+      want: { tail: undefined, logged: [] },
     },
   ];
 
@@ -909,14 +939,20 @@ describe('the output tail of a codex run', () => {
       const artifacts: Array<{ name: string; content: string }> = [];
       const session = fakeSession('only', operations, { codexExecResults: c.codexExecResults });
       const runner = fakeRunner([session], operations);
+      const logs = captureLogs(runner);
 
       await runner.run(
         fakeContext(events, new AbortController(), fakeTask(), fakeSandboxRun(), artifacts),
       );
 
-      assert.equal(
-        artifacts.find((artifact) => artifact.name === 'codex-output-tail.txt')?.content,
-        c.wantTail,
+      assert.deepEqual(
+        {
+          tail: artifacts.find((artifact) => artifact.name === 'codex-output-tail.txt')?.content,
+          logged: logs
+            .filter((log) => log.message === 'codex.stdout' || log.message === 'codex.stderr')
+            .map((log) => log.fields?.line),
+        },
+        c.want,
       );
     });
   }
@@ -1738,7 +1774,7 @@ type FakeSessionOptions = {
   commands?: string[];
 };
 
-type FakeCodexRun = { exitCode: number; stdout?: string };
+type FakeCodexRun = { exitCode: number; stdout?: string; stderr?: string };
 
 type RunOutcome = { status: string } | { rejected: string };
 
@@ -1845,7 +1881,8 @@ function fakeSession(
         const running = exitReads <= (options.codexReadsBeforeExit ?? 0);
         return execResult(0, codex && !running ? `${codex.exitCode}\n` : '');
       }
-      const printed = file === 'codex-stdout.log' && codex?.stdout ? `${codex.stdout}\n` : '';
+      const output = file === 'codex-stdout.log' ? codex?.stdout : codex?.stderr;
+      const printed = output ? `${output}\n` : '';
       const fromLine = Number(/tail -n \+(\d+)/.exec(script)?.[1] ?? 1);
       return execResult(
         0,

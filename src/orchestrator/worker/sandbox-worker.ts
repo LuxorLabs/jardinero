@@ -70,6 +70,7 @@ import {
   normalizeRemotePath,
   remoteJoin,
   shellQuote,
+  redactSensitiveText,
 } from './sandbox-utils.js';
 
 type PreCodexRetryStage =
@@ -325,7 +326,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       const handoffArtifact = handoffExtraction
         ? await context.writeSandboxRunArtifact(
             'implementation-handoffs.json',
-            JSON.stringify(handoffExtraction, null, 2),
+            JSON.stringify(redactUnknown(handoffExtraction), null, 2),
           )
         : undefined;
       if (handoffExtraction) {
@@ -350,7 +351,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       const linearVerificationArtifact = linearVerification
         ? await context.writeSandboxRunArtifact(
             'linear-verification.json',
-            JSON.stringify(linearVerification, null, 2),
+            JSON.stringify(redactUnknown(linearVerification), null, 2),
           )
         : undefined;
       if (linearVerifyParse) {
@@ -398,7 +399,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       });
       const verificationArtifact = await context.writeSandboxRunArtifact(
         'side-effect-verification.json',
-        JSON.stringify(verification, null, 2),
+        JSON.stringify(redactUnknown(verification), null, 2),
       );
       await terminate();
       await this.signPushedCommits(context, pushedPullRequest(context.task, verification));
@@ -1620,14 +1621,6 @@ function redactUnknown(value: unknown, depth = 0): unknown {
   return output;
 }
 
-// redactSensitiveText replaces each GitHub token in full, including the `.<payload>.<signature>`
-// tail of an installation token: its `ghs_<id>_<header>` prefix is predictable.
-function redactSensitiveText(value: string): string {
-  return value
-    .replace(/github_pat_[A-Za-z0-9_]{20,}/g, '[redacted-github-token]')
-    .replace(/\bgh[opsru]_[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/g, '[redacted-github-token]');
-}
-
 function safeEventData(value: Record<string, unknown>): Record<string, unknown> {
   return {
     ...value,
@@ -1782,15 +1775,15 @@ function normalizeCodexResult(
   result: SandboxExecResult,
   lastMessage?: string,
 ): CodexRunResult {
-  const stdout = execStdout(result);
-  const stderr = execStderr(result);
+  const stdout = redactSensitiveText(execStdout(result));
+  const stderr = redactSensitiveText(execStderr(result));
   const events = parseJsonLines(stdout);
   return {
     command,
     exitCode: result.exitCode,
     stdout,
     stderr,
-    lastMessage,
+    lastMessage: lastMessage === undefined ? undefined : redactSensitiveText(lastMessage),
     costUsd: extractCostUsd(result, events),
     events,
     raw: result,

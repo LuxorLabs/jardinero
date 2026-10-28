@@ -3,9 +3,17 @@ import type { SandboxExecResult } from '../../types.js';
 export function assertExecSucceeded(result: SandboxExecResult, label: string): void {
   if (result.exitCode === 0) return;
 
-  const detail = execStderr(result) || execStdout(result);
+  const detail = redactSensitiveText(execStderr(result) || execStdout(result));
   const suffix = detail.trim() ? `: ${detail.trim().slice(0, 500)}` : '';
   throw new Error(`${label} failed with exit code ${result.exitCode}${suffix}`);
+}
+
+// redactSensitiveText replaces each GitHub token in full, including the `.<payload>.<signature>`
+// tail of an installation token: its `ghs_<id>_<header>` prefix is predictable.
+export function redactSensitiveText(value: string): string {
+  return value
+    .replace(/github_pat_[A-Za-z0-9_]{20,}/g, '[redacted-github-token]')
+    .replace(/\bgh[opsru]_[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/g, '[redacted-github-token]');
 }
 
 export function execStdout(result: SandboxExecResult): string {

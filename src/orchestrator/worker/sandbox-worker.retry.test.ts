@@ -977,6 +977,47 @@ describe('the output tail of a codex run', () => {
   });
 });
 
+describe('the summary of a codex run', () => {
+  const cases: Array<{
+    name: string;
+    lastMessage: string;
+    codexExecResults: FakeCodexRun[];
+    want: string;
+  }> = [
+    {
+      name: 'When the last message holds a GitHub token then should redact it',
+      lastMessage:
+        'Pushed with https://x-access-token:ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl@github.com/acme/repo',
+      codexExecResults: [{ exitCode: 0 }],
+      want: 'Pushed with https://x-access-token:[redacted-github-token]@github.com/acme/repo',
+    },
+    {
+      name: 'When the run left no last message and stderr holds a GitHub token then should redact it',
+      lastMessage: '',
+      codexExecResults: [
+        { exitCode: 0, stderr: 'GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 rejected' },
+      ],
+      want: 'GH_TOKEN=[redacted-github-token] rejected',
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const events: Array<{ type: string; data?: Record<string, unknown>; message?: string }> = [];
+      const session = fakeSession('only', operations, {
+        codexExecResults: c.codexExecResults,
+        readFileContent: c.lastMessage,
+      });
+      const runner = fakeRunner([session], operations);
+
+      const result = await runner.run(fakeContext(events));
+
+      assert.equal(result.summary, c.want);
+    });
+  }
+});
+
 describe('following a detached codex run', () => {
   const streamClosed = new Error('sandbox run stream closed before exit');
   const cases: Array<{

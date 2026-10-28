@@ -49,6 +49,23 @@ describe('InstanceSandboxTaskFactory.buildTask', () => {
       },
     },
     {
+      name: 'When prompt overrides are off then should leave the stored guidance out',
+      agentName: 'RequestRouter',
+      workflowType: 'request_router',
+      openInstance: () =>
+        store.createRequest({ requestSource: 'discord', requestText: 'look at the checks' }).id,
+      promptOverrides: false,
+      overrideGuidance: {
+        repo: PROMPT_GLOBAL_REPO,
+        agent: 'request_router',
+        instructions: 'ask one question at a time',
+      },
+      want: {
+        workflow: 'request_router',
+        payload: { request_source: 'discord', request_text: 'look at the checks' },
+      },
+    },
+    {
       name: 'When an operator overrode the router guidance then should carry it without a repo',
       agentName: 'RequestRouter',
       workflowType: 'request_router',
@@ -338,6 +355,11 @@ describe('InstanceSandboxTaskFactory.buildTask', () => {
 
   for (const c of cases) {
     test(c.name, async () => {
+      factory = new InstanceSandboxTaskFactory(
+        store,
+        { ...CONFIG, worker: { ...CONFIG.worker, promptOverrides: c.promptOverrides ?? true } },
+        github,
+      );
       if (c.overrideGuidance) {
         const { repo = REPOSITORY.toLowerCase(), ...guidance } = c.overrideGuidance;
         store.upsertPrompt({ repo, ...guidance });
@@ -404,6 +426,7 @@ interface TaskCase {
   agentName: string;
   workflowType: WorkflowType;
   openInstance: () => string;
+  promptOverrides?: boolean;
   overrideGuidance?: { repo?: string; agent: AgentKind; instructions: string };
   pullRequest?: { state: 'open' | 'merged' | 'closed'; failure?: Error };
   want: { workflow: Workflow; payload: Record<string, unknown> };

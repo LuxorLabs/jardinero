@@ -205,6 +205,8 @@ export interface AppConfig {
     // sandboxReaperIntervalMin is how often the reaper sweeps the Tenki workspace for leaked
     // sandboxes; < 1 disables it.
     sandboxReaperIntervalMin: number;
+    // promptOverrides lets the guidance saved from the dashboard reach runs.
+    promptOverrides: boolean;
   };
   githubApp: {
     appIdEnv: string;
@@ -557,6 +559,7 @@ export function loadConfig(
         ['worker', 'sandbox_reaper_interval_min'],
         5,
       ),
+      promptOverrides: strictBooleanAt(raw, ['worker', 'prompt_overrides'], true),
     },
     githubApp: {
       appIdEnv: stringAt(raw, ['github_app', 'app_id_env'], 'JARDINERO_AGENT_APP_ID'),
@@ -845,6 +848,15 @@ function numberAt(raw: RawConfig, keys: string[], fallback: number): number {
 function booleanAt(raw: RawConfig, keys: string[], fallback: boolean): boolean {
   const value = valueAt(raw, keys);
   return typeof value === 'boolean' ? value : fallback;
+}
+
+// strictBooleanAt refuses a value it cannot read, so a switch meant to turn something off
+// never falls back to on.
+function strictBooleanAt(raw: RawConfig, keys: string[], fallback: boolean): boolean {
+  const value = valueAt(raw, keys);
+  if (value === undefined) return fallback;
+  if (typeof value !== 'boolean') throw new Error(`${keys.join('.')} must be true or false`);
+  return value;
 }
 
 // stringListAt refuses a malformed list instead of reading it as empty: the lists it reads

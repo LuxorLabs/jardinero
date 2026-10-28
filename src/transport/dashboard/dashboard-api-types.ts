@@ -307,6 +307,7 @@ export interface PromptsResponse {
   known_repos: string[];
   instructions: PromptWire[];
   max_instructions_length: number;
+  prompt_overrides_enabled: boolean;
 }
 
 /** POST `/dashboard/api/agents/instructions` and `/dashboard/api/agents/instructions/delete`. */

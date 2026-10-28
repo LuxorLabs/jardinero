@@ -53,6 +53,7 @@ describe('GET /dashboard/api/agents', () => {
       assert.equal(body.max_instructions_length, MAX_PROMPT_LENGTH);
       assert.deepEqual(body.known_repos, ['acme/widgets']);
       assert.deepEqual(body.instructions, []);
+      assert.equal(body.prompt_overrides_enabled, true);
       // Both agents of the ticket loop are grouped under the one workflow that runs them.
       const linear = body.agents.filter((entry) => entry.workflow_type === 'linear_implementer');
       assert.deepEqual(
@@ -62,6 +63,28 @@ describe('GET /dashboard/api/agents', () => {
       assert.deepEqual(
         [...new Set(linear.map((entry) => entry.workflow_label))],
         ['LinearImplementer'],
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test('When prompt overrides are off then should show the stored guidance as off', async () => {
+    const fixture = await createAgentsHttpFixture((config) => {
+      config.worker.promptOverrides = false;
+    });
+    try {
+      fixture.store.upsertPrompt({ repo: '*', agent: 'log_reviewer', instructions: 'First.' });
+
+      const response = await fetch(`${fixture.baseUrl}/dashboard/api/agents`);
+
+      const catalog = (await response.json()) as PromptsResponse;
+      assert.deepEqual(
+        {
+          enabled: catalog.prompt_overrides_enabled,
+          instructions: catalog.instructions.map((entry) => entry.instructions),
+        },
+        { enabled: false, instructions: ['First.'] },
       );
     } finally {
       await fixture.cleanup();
@@ -246,6 +269,38 @@ describe('POST /dashboard/api/agents/instructions', () => {
       await fixture.cleanup();
     }
   });
+
+  test('When prompt overrides are off then should answer as an unknown route', async () => {
+    const fixture = await createAgentsHttpFixture((config) => {
+      config.worker.promptOverrides = false;
+    });
+    try {
+      const existing = fixture.store.upsertPrompt({
+        repo: '*',
+        agent: 'log_reviewer',
+        instructions: 'First.',
+      });
+
+      const response = await postJson(`${fixture.baseUrl}/dashboard/api/agents/instructions`, {
+        repo: '*',
+        agent: 'log_reviewer',
+        instructions: 'Second.',
+        confirmed: true,
+        revision: String(existing.updatedAt),
+      });
+
+      assert.deepEqual(
+        {
+          status: response.status,
+          body: await response.json(),
+          stored: fixture.store.listPrompts().map((entry) => entry.instructions),
+        },
+        { status: 404, body: { error: 'dashboard_route_not_found' }, stored: ['First.'] },
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 });
 
 describe('POST /dashboard/api/agents/instructions/delete', () => {
@@ -312,6 +367,40 @@ describe('POST /dashboard/api/agents/instructions/delete', () => {
       assert.equal(fixture.store.listPrompts().length, 0);
       const deletions = readEvents(fixture.store, 'operator.prompt_deleted');
       assert.equal(deletions.length, 1);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test('When prompt overrides are off then should answer as an unknown route', async () => {
+    const fixture = await createAgentsHttpFixture((config) => {
+      config.worker.promptOverrides = false;
+    });
+    try {
+      const existing = fixture.store.upsertPrompt({
+        repo: '*',
+        agent: 'log_reviewer',
+        instructions: 'First.',
+      });
+
+      const response = await postJson(
+        `${fixture.baseUrl}/dashboard/api/agents/instructions/delete`,
+        {
+          repo: '*',
+          agent: 'log_reviewer',
+          confirmed: true,
+          revision: String(existing.updatedAt),
+        },
+      );
+
+      assert.deepEqual(
+        {
+          status: response.status,
+          body: await response.json(),
+          stored: fixture.store.listPrompts().map((entry) => entry.instructions),
+        },
+        { status: 404, body: { error: 'dashboard_route_not_found' }, stored: ['First.'] },
+      );
     } finally {
       await fixture.cleanup();
     }

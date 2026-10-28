@@ -1,12 +1,6 @@
-// Rotates the ChatGPT/Codex auth.json before Codex itself does.
-//
-// Capsule mode forwards the auth.json into every worker sandbox, and OpenAI revokes
-// the old refresh_token as soon as a new one is issued. Codex rotates only once the
-// access_token has expired, so the first sandbox to reach that expiry rotates, takes
-// the new bundle to its grave when it is destroyed, and leaves the stored one
-// revoked. Refreshing well inside the token's lifetime means no sandbox ever gets
-// there. Rotation revokes the refresh_token, never the access_token, so a run
-// already holding the old one keeps working.
+// Rotates the ChatGPT/Codex auth.json on the host before its access_token expires. It is
+// the only rotation, since the copy each sandbox gets carries no refresh_token. Rotation
+// revokes the refresh_token, never the access_token, so a run holding the old one keeps working.
 
 export const CODEX_TOKEN_ENDPOINT = 'https://auth.openai.com/api/accounts/oauth/token';
 

@@ -3,15 +3,14 @@ import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { assertExecSucceeded, shellQuote } from '../../orchestrator/worker/sandbox-utils.js';
+import { iso, nowMs } from '../../platform/time.js';
 import type { SandboxExecResult, SandboxSession } from '../../types.js';
 
 const HOST_CODEX_AUTH_PATH = path.join(homedir(), '.codex', 'auth.json');
-const HOST_CODEX_CREDENTIALS_PATH = path.join(homedir(), '.codex', '.credentials.json');
 const REMOTE_CODEX_AUTH_DIR = '/home/tenki/.codex';
 const REMOTE_CODEX_AUTH_PATH = `${REMOTE_CODEX_AUTH_DIR}/auth.json`;
 const REMOTE_CODEX_CREDENTIALS_PATH = `${REMOTE_CODEX_AUTH_DIR}/.credentials.json`;
 const MAX_AUTH_JSON_BYTES = 65_536;
-const MAX_CREDENTIALS_JSON_BYTES = 262_144;
 
 interface HostCodexFileSnapshot {
   contents: string;
@@ -21,7 +20,6 @@ interface HostCodexFileSnapshot {
 }
 
 let hostCodexAuthCache: HostCodexFileSnapshot | null = null;
-let hostCodexCredentialsCache: HostCodexFileSnapshot | null = null;
 const pushedRemoteAuthHashes = new Map<string, string>();
 
 export function hostCodexAuthPath(): string {
@@ -39,7 +37,6 @@ export function hostCodexAuthExists(): boolean {
 
 export function resetCodexAuthCacheForTest(): void {
   hostCodexAuthCache = null;
-  hostCodexCredentialsCache = null;
   pushedRemoteAuthHashes.clear();
 }
 
@@ -53,52 +50,55 @@ export async function forwardHostCodexAuthToSandbox(
       `Codex capsule auth requires ${HOST_CODEX_AUTH_PATH}. Run "codex login" on the orchestrator host first.`,
     );
   }
-  const credentialsSnapshot = readHostCodexCredentials();
-  const snapshotHash = combinedSnapshotHash(authSnapshot, credentialsSnapshot);
-
-  if (!force && pushedRemoteAuthHashes.get(session.id) === snapshotHash) return;
+  if (!force && pushedRemoteAuthHashes.get(session.id) === authSnapshot.hash) return;
+  const sandboxAuth = sandboxCodexAuth(authSnapshot.contents);
 
   await ensureRemoteDirectory(session, REMOTE_CODEX_AUTH_DIR);
-  await session.fs.writeStream(
-    REMOTE_CODEX_AUTH_PATH,
-    stringToReadableStream(authSnapshot.contents),
-    {
-      mode: 0o600,
-      truncate: true,
-      sync: true,
-    },
-  );
-  if (credentialsSnapshot) {
-    await session.fs.writeStream(
-      REMOTE_CODEX_CREDENTIALS_PATH,
-      stringToReadableStream(credentialsSnapshot.contents),
-      {
-        mode: 0o600,
-        truncate: true,
-        sync: true,
-      },
-    );
-  }
+  await session.fs.writeStream(REMOTE_CODEX_AUTH_PATH, stringToReadableStream(sandboxAuth), {
+    mode: 0o600,
+    truncate: true,
+    sync: true,
+  });
 
-  const chownTargets = [REMOTE_CODEX_AUTH_DIR, REMOTE_CODEX_AUTH_PATH];
-  const chmodTargets = [REMOTE_CODEX_AUTH_PATH];
-  if (credentialsSnapshot) {
-    chownTargets.push(REMOTE_CODEX_CREDENTIALS_PATH);
-    chmodTargets.push(REMOTE_CODEX_CREDENTIALS_PATH);
-  }
-
+  // The host's MCP logins never reach a run, and a reused sandbox may still hold them.
   const result = await execShell(
     session,
-    `${credentialsSnapshot ? '' : `sudo rm -f ${shellQuote(REMOTE_CODEX_CREDENTIALS_PATH)} && `}sudo chown tenki:tenki ${chownTargets
-      .map(shellQuote)
-      .join(
-        ' ',
-      )} && sudo chmod 700 ${shellQuote(REMOTE_CODEX_AUTH_DIR)} && sudo chmod 600 ${chmodTargets
-      .map(shellQuote)
-      .join(' ')}`,
+    `sudo rm -f ${shellQuote(REMOTE_CODEX_CREDENTIALS_PATH)} && sudo chown tenki:tenki ${shellQuote(
+      REMOTE_CODEX_AUTH_DIR,
+    )} ${shellQuote(REMOTE_CODEX_AUTH_PATH)} && sudo chmod 700 ${shellQuote(
+      REMOTE_CODEX_AUTH_DIR,
+    )} && sudo chmod 600 ${shellQuote(REMOTE_CODEX_AUTH_PATH)}`,
   );
   assertExecSucceeded(result, 'install Codex auth');
-  pushedRemoteAuthHashes.set(session.id, snapshotHash);
+  pushedRemoteAuthHashes.set(session.id, authSnapshot.hash);
+}
+
+// sandboxCodexAuth keeps the refresh_token field, which Codex requires, but empty, so a run cannot
+// refresh or revoke the orchestrator's login, and dates last_refresh now to stop refreshes on age.
+function sandboxCodexAuth(contents: string): string {
+  let auth: unknown;
+  try {
+    auth = JSON.parse(contents);
+  } catch {
+    throw new Error(
+      `${HOST_CODEX_AUTH_PATH} is not valid JSON; refusing to forward it to the sandbox.`,
+    );
+  }
+  if (typeof auth !== 'object' || auth === null || Array.isArray(auth)) {
+    throw new Error(
+      `${HOST_CODEX_AUTH_PATH} is not a JSON object; refusing to forward it to the sandbox.`,
+    );
+  }
+  const { tokens } = auth as { tokens?: unknown };
+  if (typeof tokens !== 'object' || tokens === null || !('refresh_token' in tokens)) {
+    return contents;
+  }
+  const sandboxAuth = {
+    ...auth,
+    tokens: { ...tokens, refresh_token: '' },
+    last_refresh: iso(nowMs()),
+  };
+  return `${JSON.stringify(sandboxAuth, null, 2)}\n`;
 }
 
 function readHostCodexAuth(): HostCodexFileSnapshot | null {
@@ -108,15 +108,6 @@ function readHostCodexAuth(): HostCodexFileSnapshot | null {
     hostCodexAuthCache,
   );
   return hostCodexAuthCache;
-}
-
-function readHostCodexCredentials(): HostCodexFileSnapshot | null {
-  hostCodexCredentialsCache = readHostCodexFile(
-    HOST_CODEX_CREDENTIALS_PATH,
-    MAX_CREDENTIALS_JSON_BYTES,
-    hostCodexCredentialsCache,
-  );
-  return hostCodexCredentialsCache;
 }
 
 function readHostCodexFile(
@@ -147,18 +138,6 @@ function readHostCodexFile(
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
-}
-
-function combinedSnapshotHash(
-  authSnapshot: HostCodexFileSnapshot,
-  credentialsSnapshot: HostCodexFileSnapshot | null,
-): string {
-  return createHash('sha256')
-    .update('auth:')
-    .update(authSnapshot.hash)
-    .update('\ncredentials:')
-    .update(credentialsSnapshot?.hash ?? 'missing')
-    .digest('hex');
 }
 
 async function ensureRemoteDirectory(session: SandboxSession, remotePath: string): Promise<void> {

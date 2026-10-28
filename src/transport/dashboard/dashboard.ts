@@ -313,12 +313,20 @@ async function handleDashboardApi(
     return;
   }
 
-  if (request.method === 'POST' && url.pathname === '/dashboard/api/agents/instructions') {
+  if (
+    context.config.worker.promptOverrides &&
+    request.method === 'POST' &&
+    url.pathname === '/dashboard/api/agents/instructions'
+  ) {
     await handleDashboardPromptUpsert(context, request, response);
     return;
   }
 
-  if (request.method === 'POST' && url.pathname === '/dashboard/api/agents/instructions/delete') {
+  if (
+    context.config.worker.promptOverrides &&
+    request.method === 'POST' &&
+    url.pathname === '/dashboard/api/agents/instructions/delete'
+  ) {
     await handleDashboardPromptDelete(context, request, response);
     return;
   }
@@ -357,6 +365,7 @@ function dashboardAgentsPayload(context: ApiContext): PromptsResponse {
     known_repos: configuredRepositoryNames(context.config).map((repo) => repo.toLowerCase()),
     instructions: stored.map(promptWire),
     max_instructions_length: MAX_PROMPT_LENGTH,
+    prompt_overrides_enabled: context.config.worker.promptOverrides,
   };
 }
 

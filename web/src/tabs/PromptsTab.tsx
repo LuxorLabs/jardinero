@@ -123,6 +123,14 @@ export function PromptsTab() {
         title="Agents"
         description="Rewrite an agent's guidance prose per repository. The machine-readable output contract stays locked and is shown read-only, so a customization can never break the control plane. Changes apply from the next run."
       />
+      {data && !data.prompt_overrides_enabled && (
+        <p
+          className="mb-[18px] rounded-md border border-warning-border bg-warning-bg px-3 py-2.5 text-[13px] text-warning-fg"
+          data-prompt-overrides-off
+        >
+          Prompt overrides are off. Turn them on with <code>worker.prompt_overrides</code>.
+        </p>
+      )}
       <div className="grid grid-cols-[280px_1fr] items-start gap-[18px] max-[900px]:grid-cols-1">
         <section
           ref={scopeReveal.ref}
@@ -183,6 +191,7 @@ export function PromptsTab() {
                     (entry) => entry.repo === selectedRepo && entry.agent === agent.agent,
                   )}
                   maxLength={data?.max_instructions_length ?? 0}
+                  editable={data?.prompt_overrides_enabled ?? false}
                   onDirtyChange={setDirty}
                   onSaved={patchInstruction}
                   onDeleted={removeInstruction}
@@ -235,6 +244,7 @@ function PromptsCard({
   repo,
   stored,
   maxLength,
+  editable,
   onDirtyChange,
   onSaved,
   onDeleted,
@@ -243,6 +253,7 @@ function PromptsCard({
   repo: string;
   stored: PromptWire | undefined;
   maxLength: number;
+  editable: boolean;
   onDirtyChange: (key: string, dirty: boolean) => void;
   onSaved: (stored: PromptWire) => void;
   onDeleted: (repo: string, agent: string) => void;
@@ -376,13 +387,15 @@ function PromptsCard({
             <CopyButton text={text} label="Copy guidance" />
           </div>
           <p className="text-[12px] text-muted-foreground">
-            Editable. Seeded with the built-in guidance; your edits replace it for this scope.
+            {editable
+              ? 'Editable. Seeded with the built-in guidance; your edits replace it for this scope.'
+              : 'Not applied.'}
           </p>
           <Textarea
             rows={8}
             value={text}
             maxLength={maxLength}
-            disabled={submitting}
+            disabled={submitting || !editable}
             placeholder="Guidance for this agent."
             data-agent-instructions={agent.agent}
             onChange={(e) => setText(e.target.value)}
@@ -393,7 +406,7 @@ function PromptsCard({
             <input
               type="checkbox"
               checked={enabled}
-              disabled={submitting}
+              disabled={submitting || !editable}
               data-agent-enabled={agent.agent}
               onChange={(e) => setEnabled(e.target.checked)}
             />
@@ -419,15 +432,17 @@ function PromptsCard({
               {text.length}/{maxLength}
             </span>
           </div>
-          <Button
-            type="button"
-            disabled={submitting || !dirty || text.trim().length === 0}
-            data-agent-save={agent.agent}
-            onClick={() => void save()}
-          >
-            Save
-          </Button>
-          {stored && (
+          {editable && (
+            <Button
+              type="button"
+              disabled={submitting || !dirty || text.trim().length === 0}
+              data-agent-save={agent.agent}
+              onClick={() => void save()}
+            >
+              Save
+            </Button>
+          )}
+          {editable && stored && (
             <Button
               type="button"
               variant="secondary"

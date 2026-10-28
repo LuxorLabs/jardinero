@@ -182,6 +182,7 @@ describe('loadConfig', () => {
           orchestratorId: 'jardinero',
           sandboxPauseRetentionMs: 3_600_000,
           sandboxReaperIntervalMin: 5,
+          promptOverrides: true,
         },
         githubApp: {
           appIdEnv: 'JARDINERO_AGENT_APP_ID',
@@ -1036,12 +1037,14 @@ describe('Worker config', () => {
   max_sandbox_ready_attempts: 4
   sandbox_ready_backoff_base_ms: 500
   sandbox_ready_backoff_jitter_ms: 250
+  prompt_overrides: false
 `);
 
     assert.equal(config.worker.sessionCloseTimeoutMs, 45_000);
     assert.equal(config.worker.maxSandboxReadyAttempts, 4);
     assert.equal(config.worker.sandboxReadyBackoffBaseMs, 500);
     assert.equal(config.worker.sandboxReadyBackoffJitterMs, 250);
+    assert.equal(config.worker.promptOverrides, false);
   });
 });
 
@@ -1123,6 +1126,11 @@ describe('Worker config the loader refuses', () => {
       name: 'When the effort is `ultra` then should return error',
       yaml: '  implementation_effort: "ultra"',
       wantError: /Unsupported worker\.implementation_effort "ultra"/,
+    },
+    {
+      name: 'When `prompt_overrides` is not a boolean then should return error',
+      yaml: '  prompt_overrides: "no"',
+      wantError: /worker\.prompt_overrides must be true or false/,
     },
   ];
 

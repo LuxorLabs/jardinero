@@ -45,6 +45,7 @@ export class InstanceSandboxTaskFactory implements SandboxTaskFactory {
   // rejection, which is what the contract promises.
   async buildTask(sandboxRun: SandboxRun): Promise<SandboxTask> {
     const task = { ...(await this.taskFor(sandboxRun)), promptOverrides: {} };
+    if (!this.config.worker.promptOverrides) return task;
     return {
       ...task,
       promptOverrides: this.store.resolvePromptOverrides(

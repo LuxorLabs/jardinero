@@ -18,7 +18,6 @@ Jardinero process
 │   ├── /dashboard           operator SPA shell; browser auth belongs to the proxy
 │   ├── /dashboard/api/*     JSON + SSE for the SPA
 │   ├── /admin/*             admin-token triggers and preflight
-│   ├── /capsule/*           read-only runs, event streams, SQL
 │   └── /webhooks/github|linear|discord
 │
 ├── Adapters                 src/adapters/

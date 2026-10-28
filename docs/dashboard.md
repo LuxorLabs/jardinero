@@ -13,7 +13,7 @@ Open `http://localhost:3000/dashboard`. For frontend work with hot reload, run `
 
 To look at the UI without the stack, `make preview` builds the SPA and boots only the HTTP server on `http://127.0.0.1:4178/dashboard`, against a throwaway database seeded so every tab has something to show. Point `PREVIEW_DATA_DIR` at a real data directory to browse that instead.
 
-In a Tenki orchestrator sandbox the dashboard is exposed through a preview URL at startup and the URL is logged. `DASHBOARD_EXPOSE_ON_STARTUP=false` disables it; `DASHBOARD_EXPOSE_SLUG` and `DASHBOARD_EXPOSE_TTL_MINUTES` are optional. Exposing the port also makes `/admin/*` and `/capsule/*` reachable, so they stay bearer-protected.
+In a Tenki orchestrator sandbox the dashboard is exposed through a preview URL at startup and the URL is logged. `DASHBOARD_EXPOSE_ON_STARTUP=false` disables it; `DASHBOARD_EXPOSE_SLUG` and `DASHBOARD_EXPOSE_TTL_MINUTES` are optional. Exposing the port also makes `/admin/*` reachable, so it stays bearer-protected.
 
 ## Pages
 
@@ -46,7 +46,7 @@ Writes, all of them audited as `operator.dashboard_write_requested` with the pro
 - `POST /dashboard/api/workflow-instances/{workflowType}/{id}/retry` — hand an instance waiting for a person back to its workflow.
 - `POST /dashboard/api/agents/instructions` and `.../instructions/delete` — save or drop guidance. Both need `confirmed: true` and, on an entry that already exists, its current `revision` (`409` on mismatch).
 
-Raw SQL is not reachable from a dashboard route. `/admin/*` and `/capsule/*` still require `Authorization: Bearer <token>`.
+Raw SQL is not reachable from any route. `/admin/*` requires `Authorization: Bearer <token>`.
 
 ## Live updates
 

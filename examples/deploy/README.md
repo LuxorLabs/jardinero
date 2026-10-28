@@ -16,7 +16,7 @@ Two worked examples. Neither is a drop-in: both name a host, an image tag and a 
 
 **The volume is the product.** It holds the database, the hourly backups written beside it, and the artifacts of every sandbox run. Those backups protect you from a corrupted file, not from losing the disk, so back the volume up somewhere else too.
 
-**Authentication is in front, not inside.** Jardinero has no login: it reads the identity an authenticating proxy sets on the request. Whoever reaches an unprotected deployment can operate it. `/admin/*` and `/capsule/*` are separately guarded by `ORCHESTRATOR_ADMIN_TOKEN`, and `/capsule/sql` runs read-only SQL over the whole database, so that token is not optional either.
+**Authentication is in front, not inside.** Jardinero has no login: it reads the identity an authenticating proxy sets on the request. Whoever reaches an unprotected deployment can operate it. `/admin/*` is separately guarded by `ORCHESTRATOR_ADMIN_TOKEN`, so that token is not optional either.
 
 **The host has to be reachable.** GitHub, Linear and Discord deliver over webhooks. An install nothing can reach is an install where nothing ever happens.
 

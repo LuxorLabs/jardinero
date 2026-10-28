@@ -11,8 +11,7 @@ export interface AdminContext {
 }
 
 // adminResponse is the operator control plane behind the admin token. Every route is a
-// verb, never a read of domain state: the reads live on the capsule and dashboard
-// surfaces.
+// verb, never a read of domain state: the reads live on the dashboard.
 export async function adminResponse(
   context: AdminContext,
   request: { method: string; url: URL },

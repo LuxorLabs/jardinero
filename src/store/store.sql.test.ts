@@ -23,8 +23,6 @@ afterEach(() => {
 });
 
 describe('Store.queryReadOnly', () => {
-  // The capsule exposes this behind the admin token, so anything that could write
-  // has to be refused rather than sanitized.
   const cases: Array<{ name: string; sql: string; wantError?: RegExp }> = [
     { name: 'When the query is a `SELECT` then should return its rows', sql: 'SELECT 1 AS one' },
     {

@@ -126,7 +126,8 @@ telemetry stack.
 ## Operator API
 
 Two routes carry no auth, because both answer about the instance rather than about
-its data, and both are useful before anything is configured:
+its data. `/setup` only answers while something required is still missing; once nothing is,
+it answers 404 and the same report is at `/admin/preflight`:
 
 ```bash
 curl http://localhost:3000/health
@@ -137,17 +138,15 @@ curl http://localhost:3000/setup
 and whether it is there. It says whether something is configured and never what it
 is, so it carries no hostname, path or credential value.
 
-Everything under `/admin/*` and `/capsule/*` requires
+Everything under `/admin/*` requires
 `Authorization: Bearer $ORCHESTRATOR_ADMIN_TOKEN`, and fails closed when the token
-is unset. `/capsule/sql` runs read-only SQL over the whole database, which is why.
+is unset.
 
 ```bash
 curl -H "Authorization: Bearer $ORCHESTRATOR_ADMIN_TOKEN" \
   http://localhost:3000/admin/preflight
 curl -H "Authorization: Bearer $ORCHESTRATOR_ADMIN_TOKEN" \
   -X POST http://localhost:3000/admin/trigger/log-review
-curl -H "Authorization: Bearer $ORCHESTRATOR_ADMIN_TOKEN" \
-  http://localhost:3000/capsule/runs
 ```
 
 ## Logging

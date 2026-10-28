@@ -2,17 +2,19 @@
 
 Every credential Jardinero needs, what it is for, and where to get it. None of them belong in the repository: the config names the environment variables, never their values. Copy [`.env.example`](../.env.example) to `.env` for local development, and inject the same names however your deployment injects secrets.
 
-Ask what is still missing at any time:
+Ask what is still missing:
 
 ```bash
 curl -s localhost:3000/setup | jq
 ```
 
+Once nothing required is missing it answers 404, and the same report is at `/admin/preflight` with the admin token.
+
 ## Always required
 
 | Variable | What it is |
 |---|---|
-| `ORCHESTRATOR_ADMIN_TOKEN` | Bearer token for `/admin/*` and `/capsule/*`. Any random string you generate. Those routes fail closed when it is unset. |
+| `ORCHESTRATOR_ADMIN_TOKEN` | Bearer token for `/admin/*`. Any random string you generate. Those routes fail closed when it is unset. |
 
 ## GitHub
 

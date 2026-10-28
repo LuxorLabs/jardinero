@@ -36,12 +36,14 @@ export async function createHttpFixture(
     fetchImpl?: typeof fetch;
     maxConcurrentSandboxes?: number;
     logReviewRepos?: AppConfig['workflows']['logReviewer']['repos'];
+    codexAuthMode?: AppConfig['worker']['codexAuthMode'];
   } = {},
 ): Promise<HttpFixture> {
   const { store, dataPath: tempDir, cleanup: closeStore } = createTestStore();
   const config = configWithLogReview(options.logReviewRepos);
   config.store.dataPath = tempDir;
   config.worker.runner = 'mock';
+  if (options.codexAuthMode !== undefined) config.worker.codexAuthMode = options.codexAuthMode;
   config.workflows.requestRouter.enabled = true;
   config.workflows.linearImplementer.teamRepos = { JAR: DEMO_LOG_REVIEW_TARGET.repo };
   config.sandboxes.maxConcurrentRuns = options.maxConcurrentSandboxes ?? 1;

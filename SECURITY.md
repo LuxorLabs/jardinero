@@ -23,7 +23,7 @@ Two things are out of scope because they are not ours to fix, though we would st
 Jardinero holds credentials for every service it touches and runs model-authored code in sandboxes, so the interesting failures are usually about the boundary between those:
 
 - A credential reaching somewhere it should not: a log line, an artifact, a prompt, a pull request body, a sandbox that should not have received it.
-- A way to reach `/admin/*` or `/capsule/*` without the bearer token. `/capsule/sql` runs read-only SQL over the whole database.
+- A way to reach `/admin/*` without the bearer token.
 - A webhook accepted without a valid signature, or a signature check that can be bypassed.
 - Anything that makes the agent act on a repository nobody authorized it to touch.
 

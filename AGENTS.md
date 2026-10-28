@@ -16,7 +16,7 @@ Read [`docs/architecture.md`](docs/architecture.md) first for the components, th
 |------|----------------|
 | `src/index.ts` | Bootstrap; constructs and wires every subsystem |
 | `src/config.ts` + `config/local.yaml` | Config tree, loaded and validated at boot |
-| `src/transport/*` | Every HTTP surface: `server.ts` routes to `dashboard/`, `admin/`, `capsule/`, `webhooks/` and `health/` |
+| `src/transport/*` | Every HTTP surface: `server.ts` routes to `dashboard/`, `admin/`, `webhooks/` and `health/` |
 | `src/store/*` + `db/schema.sql` | SQLite state, event log, per-run artifacts |
 | `src/orchestrator/state-machines/*` | One directory per workflow: the state machine that owns it, and the only place that decides what happens next |
 | `src/orchestrator/*` | `engine-commands.ts` (the seam transport uses), `sandbox-pool.ts` (caps, kill, run lifecycle), `scheduler.ts` (cron and polling), and the `WorkerRunner` boundary for Tenki, Freestyle, Daytona and Mock in `worker/` |

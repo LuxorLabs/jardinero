@@ -138,7 +138,7 @@ describe('GET /dashboard', () => {
     }
   });
 
-  test('When a dashboard api is called then should not expose raw capsule sql', async () => {
+  test('When a dashboard api is called then should not expose raw sql', async () => {
     const fixture = await createHttpFixture({ ORCHESTRATOR_ADMIN_TOKEN: 'admin-token' });
     try {
       const overview = await fetch(`${fixture.baseUrl}/dashboard/api/overview`, {

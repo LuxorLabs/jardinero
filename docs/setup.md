@@ -28,6 +28,8 @@ From step 1 on, this says what is still missing:
 curl -s localhost:3000/setup | jq
 ```
 
+Once nothing required is missing it answers 404, and the same report is at `/admin/preflight` with the admin token.
+
 Before any of it, look around with no accounts and nothing installed but Node 24 and pnpm:
 
 ```bash
@@ -47,7 +49,7 @@ cp .env.example .env
 
 | Variable | What to put in it |
 |---|---|
-| `ORCHESTRATOR_ADMIN_TOKEN` | Any random string, e.g. `openssl rand -hex 32`. It is the bearer token for `/admin/*` and `/capsule/*`, and those routes refuse everything until you replace the template value. |
+| `ORCHESTRATOR_ADMIN_TOKEN` | Any random string, e.g. `openssl rand -hex 32`. It is the bearer token for `/admin/*`, and those routes refuse everything until you replace the template value. |
 
 Then run it:
 
@@ -213,7 +215,7 @@ worker:
     image: "<snapshot-slug>"
 ```
 
-**Check it.** Boot a clean VM from the snapshot and run the recipe's `*.verify.sh` from a fresh clone, then delete the canary VM. With Jardinero running, `/setup` must report `freestyle_sdk`, `freestyle_auth` and `codex_auth` as `ok` before the first paid run.
+**Check it.** Boot a clean VM from the snapshot and run the recipe's `*.verify.sh` from a fresh clone, then delete the canary VM. With Jardinero running, `/admin/preflight` must report `freestyle_sdk`, `freestyle_auth` and `codex_auth` as `ok` before the first paid run.
 
 CI runs `pnpm run smoke:freestyle` from [`.github/workflows/smoke-freestyle.yml`](../.github/workflows/smoke-freestyle.yml): nightly, on demand, and on any pull request that changes the `freestyle` version or carries the `smoke:freestyle` label. It drives the provider rather than the SDK, so what it checks is how Jardinero calls Freestyle, which is where a guest-side default that moves actually bites.
 
@@ -247,7 +249,7 @@ worker:
     image: "<snapshot-name>"
 ```
 
-**Check it.** Create a sandbox from the snapshot, run the recipe's `*.verify.sh` from a fresh clone inside it, then delete it. With Jardinero running, `/setup` must report `daytona_sdk`, `daytona_auth` and `codex_auth` as `ok` before the first paid run.
+**Check it.** Create a sandbox from the snapshot, run the recipe's `*.verify.sh` from a fresh clone inside it, then delete it. With Jardinero running, `/admin/preflight` must report `daytona_sdk`, `daytona_auth` and `codex_auth` as `ok` before the first paid run.
 
 CI runs `pnpm run smoke:daytona` from [`.github/workflows/smoke-daytona.yml`](../.github/workflows/smoke-daytona.yml): nightly, on demand, and on any pull request that changes the `@daytona/sdk` version or carries the `smoke:daytona` label.
 
@@ -460,7 +462,7 @@ Three things will bite you, and none of them are configuration:
 
 - **Never run two.** State is SQLite on one volume, which tolerates one writer. A second instance against it corrupts the database rather than sharing the load.
 - **The volume holds the backups too.** The hourly backups sit beside the database, so they survive a corrupted file and not a lost disk.
-- **Put authentication in front.** Jardinero has no login; it reads the identity a proxy sets on the request. And keep `ORCHESTRATOR_ADMIN_TOKEN` set, because `/capsule/sql` runs read-only SQL over the whole database.
+- **Put authentication in front.** Jardinero has no login; it reads the identity a proxy sets on the request. And keep `ORCHESTRATOR_ADMIN_TOKEN` set, because it is the only guard on `/admin/*`.
 
 For a cluster, [`../examples/deploy/`](../examples/deploy/) has a kustomize base with the Deployment, Service, Ingress and PVC already carrying all three, plus a compose file for one box.
 
@@ -469,7 +471,7 @@ For a cluster, [`../examples/deploy/`](../examples/deploy/) has a kustomize base
 Ask preflight first. It answers for every credential in every step above:
 
 ```bash
-curl -s localhost:3000/setup | jq
+curl -s -H "Authorization: Bearer $ORCHESTRATOR_ADMIN_TOKEN" localhost:3000/admin/preflight | jq
 ```
 
 Two failures it cannot see, both from step 6: an event the App was never subscribed to, and a permission it was never granted. Both are silent. If the dashboard stays empty while GitHub says the webhook delivered, that is where to look.

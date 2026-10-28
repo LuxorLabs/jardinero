@@ -29,4 +29,36 @@ describe('GET /setup', () => {
       await fixture.cleanup();
     }
   });
+
+  test('When only optional checks warn then should answer 404', async () => {
+    const fixture = await createHttpFixture(
+      {
+        ORCHESTRATOR_ADMIN_TOKEN: 'admin-token',
+        JARDINERO_AGENT_APP_ID: '123',
+        JARDINERO_AGENT_INSTALL_ID: '456',
+        JARDINERO_AGENT_PRIVATE_KEY:
+          '-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----',
+        JARDINERO_AGENT_WEBHOOK_SECRET: 'webhook-secret',
+        OPENAI_API_KEY: 'sk-test',
+      },
+      { codexAuthMode: 'api_key', prMaintainerEnabled: false },
+    );
+    try {
+      const response = await fetch(`${fixture.baseUrl}/setup`);
+      const preflight = await fetch(`${fixture.baseUrl}/admin/preflight`, {
+        headers: { authorization: 'Bearer admin-token' },
+      });
+
+      assert.deepEqual(
+        {
+          status: response.status,
+          body: await response.json(),
+          preflight: ((await preflight.json()) as SetupReport).status,
+        },
+        { status: 404, body: { error: 'not_found' }, preflight: 'warning' },
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 });

@@ -6,7 +6,6 @@ import { nowMs } from '../platform/time.js';
 import { adminResponse } from './admin/admin.js';
 import { requireAdmin } from './auth.js';
 import { isRewrittenPath, readRawBody } from './request.js';
-import { capsuleResponse } from './capsule/capsule.js';
 import type { ApiContext, ServerContext } from './context.js';
 import {
   dashboardSafeError,
@@ -92,13 +91,12 @@ async function routeRequest(
     return;
   }
 
-  // Unauthenticated on purpose, like /health: the one thing it answers is what this
-  // deployment is still missing, and the admin token is usually part of that.
+  // Open without auth so a new deployment can be set up, and only until nothing required
+  // is missing. After that the report lives at /admin/preflight.
   if (method === 'GET' && url.pathname === '/setup') {
-    send(response, {
-      status: 200,
-      body: await runPreflight(context.config, context.env ?? process.env),
-    });
+    const report = await runPreflight(context.config, context.env ?? process.env);
+    if (report.status === 'error') send(response, { status: 200, body: report });
+    else sendJson(response, 404, { error: 'not_found' });
     return;
   }
 
@@ -110,19 +108,6 @@ async function routeRequest(
   if (url.pathname.startsWith('/admin/')) {
     if (!requireAdmin(context, request, response)) return;
     await handleAdmin(context, request, response, url);
-    return;
-  }
-
-  if (url.pathname.startsWith('/capsule/')) {
-    if (!requireAdmin(context, request, response)) return;
-    send(
-      response,
-      capsuleResponse(context, {
-        method,
-        url,
-        rawBody: (await readRawBody(request)).toString('utf8'),
-      }),
-    );
     return;
   }
 

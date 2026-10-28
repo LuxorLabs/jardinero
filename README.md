@@ -57,11 +57,13 @@ Every pass costs money: VM time from the selected provider, plus the Codex token
 
 Two ways to run it for real, both worked examples in [`examples/deploy/`](examples/deploy/): a Compose file for one box, and a kustomize base for a Kubernetes cluster.
 
-At any point, ask what is still missing:
+Ask what is still missing:
 
 ```bash
 curl -s localhost:3000/setup | jq
 ```
+
+Once nothing required is missing it answers 404, and the same report is at `/admin/preflight` with the admin token.
 
 ## How it works
 

@@ -824,19 +824,12 @@ export class SandboxWorkerRunner implements SandboxRunner {
         message: `Fetching PR ${prNumber}`,
       });
       const head = await this.pullRequestHead(repo, prNumber);
-      if (head?.fromFork) {
+      if (head.fromFork) {
         throw new Error(`PR ${prNumber} comes from a fork, which Jardinero does not work`);
-      }
-      const headRef = head?.headRef;
-      if (!headRef) {
-        await context.publishEvent({
-          type: 'sandbox.pull_request_head_unresolved',
-          message: `Could not resolve the head branch of PR ${prNumber}; a push will not reach it`,
-        });
       }
       const fetchResult = await this.execRequired(
         session,
-        buildAuthenticatedFetchPrCommand({ repoDir, prNumber, headRef }),
+        buildAuthenticatedFetchPrCommand({ repoDir, prNumber, headRef: head.headRef }),
       );
       assertExecSucceeded(fetchResult, `fetch PR ${prNumber}`);
     }
@@ -904,23 +897,12 @@ export class SandboxWorkerRunner implements SandboxRunner {
     }
   }
 
-  // pullRequestHead reads the pull request's head, or nothing when the lookup fails.
-  private async pullRequestHead(
-    repo: string,
-    prNumber: number,
-  ): Promise<PullRequestHead | undefined> {
+  // pullRequestHead reads the pull request's head; a run that cannot read it fails, since it could
+  // not tell a fork apart.
+  private async pullRequestHead(repo: string, prNumber: number): Promise<PullRequestHead> {
     const token = this.env[resolveGitHubTokenEnv(this.config, repo)];
-    if (!token) return undefined;
-    try {
-      return await this.getPullRequestHead({ repo, pullRequestNumber: prNumber, token });
-    } catch (error) {
-      this.log.warn('pull request lookup failed; pushing to it will not work', {
-        repo,
-        pr_number: prNumber,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return undefined;
-    }
+    if (!token) throw new Error(`Cannot read PR ${prNumber}: missing github token`);
+    return this.getPullRequestHead({ repo, pullRequestNumber: prNumber, token });
   }
 
   // Resolves the target repo's AGENTS.md/CLAUDE.md into concrete on-disk content

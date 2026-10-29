@@ -1795,7 +1795,6 @@ describe('checking out the pull request a pass continues', () => {
     fromFork?: boolean;
     wantFetched: boolean;
     wantCheckout?: string;
-    wantUnresolvedEvent?: boolean;
     wantRejected?: string;
   }> = [
     {
@@ -1834,13 +1833,12 @@ describe('checking out the pull request a pass continues', () => {
       wantCheckout: `checkout -B 'agent/linear-SUP-3003-abc123'`,
     },
     {
-      name: 'When the pull request head lookup fails then should check out a local name',
+      name: 'When the pull request head lookup fails then should fail the run',
       workflow: 'linear',
       payload: { repo: 'acme/webapp', pr_number: 4166 },
       headRef: new Error('HTTP 404'),
       wantFetched: true,
-      wantCheckout: `checkout -B 'pr-4166'`,
-      wantUnresolvedEvent: true,
+      wantRejected: 'Error: HTTP 404',
     },
     {
       name: 'When the pull request comes from a fork then should fail the run before checking it out',
@@ -1886,10 +1884,6 @@ describe('checking out the pull request a pass continues', () => {
       assert.equal(
         events.some((event) => event.type === 'sandbox.fetching_pull_request'),
         c.wantFetched,
-      );
-      assert.equal(
-        events.some((event) => event.type === 'sandbox.pull_request_head_unresolved'),
-        c.wantUnresolvedEvent === true,
       );
       assert.equal('rejected' in outcome ? outcome.rejected : undefined, c.wantRejected);
       if (c.wantCheckout) {
@@ -2243,7 +2237,9 @@ function fakeRunner(
     mintRestrictedToken:
       options.mintRestrictedToken ??
       (async () => ({ token: 'run-token', expiresAt: '2026-01-01T00:00:00Z' })),
-    ...(options.getPullRequestHead ? { getPullRequestHead: options.getPullRequestHead } : {}),
+    getPullRequestHead:
+      options.getPullRequestHead ??
+      (async () => ({ nodeId: 'node-1', draft: true, headRef: 'agent/x', fromFork: false })),
     ...(options.hostCodexAuthSecrets ? { hostCodexAuthSecrets: options.hostCodexAuthSecrets } : {}),
     signPullRequestCommits:
       options.signPullRequestCommits ?? (async () => ({ status: 'already_signed' as const })),

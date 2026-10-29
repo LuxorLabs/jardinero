@@ -1,5 +1,9 @@
 import { createSign } from 'node:crypto';
-import type { AppConfig, GitHubAppCredentials } from '../../config.js';
+import {
+  type AppConfig,
+  type GitHubAppCredentials,
+  githubAppCredentialsFor,
+} from '../../config.js';
 
 // GitHub App authentication for the orchestrator: signs the App JWT, exchanges it
 // for an installation token, and refreshes it on a timer.
@@ -34,6 +38,11 @@ export interface InstallationToken {
   expiresAt: string;
 }
 
+// GitHubTokenPermissions is the access a token is minted with; a permission left out is withheld.
+export type GitHubTokenPermissions = Partial<
+  Record<'contents' | 'pull_requests' | 'checks', 'read' | 'write'>
+>;
+
 export class GitHubTokenError extends Error {
   constructor(
     message: string,
@@ -63,10 +72,11 @@ export async function fetchInstallationToken(
   jwt: string,
   installationId: string,
   fetchImpl: typeof fetch,
+  permissions?: GitHubTokenPermissions,
 ): Promise<InstallationToken> {
   for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt += 1) {
     try {
-      return await requestInstallationToken(jwt, installationId, fetchImpl);
+      return await requestInstallationToken(jwt, installationId, fetchImpl, permissions);
     } catch (error) {
       if (attempt >= MAX_FETCH_ATTEMPTS || !isRetriableTokenError(error)) throw error;
       await sleep(RETRY_BACKOFF_MS * attempt);
@@ -80,6 +90,7 @@ async function requestInstallationToken(
   jwt: string,
   installationId: string,
   fetchImpl: typeof fetch,
+  permissions: GitHubTokenPermissions | undefined,
 ): Promise<InstallationToken> {
   const response = await fetchImpl(
     `${GITHUB_API}/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
@@ -89,7 +100,9 @@ async function requestInstallationToken(
         Authorization: `Bearer ${jwt}`,
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
+        ...(permissions ? { 'Content-Type': 'application/json' } : {}),
       },
+      ...(permissions ? { body: JSON.stringify({ permissions }) } : {}),
       // Node fetch has no default timeout; without this a stalled connection
       // would hang boot (or a refresh) forever.
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -135,17 +148,11 @@ export async function refreshGitHubAppToken(opts: {
   nowSeconds: () => number;
 }): Promise<InstallationToken> {
   const { config, env, fetchImpl, nowSeconds } = opts;
-  return mintInstallationToken({
-    credentials: {
-      appIdEnv: config.githubApp.appIdEnv,
-      installIdEnv: config.githubApp.installIdEnv,
-      privateKeyEnv: config.githubApp.privateKeyEnv,
-      tokenEnv: config.worker.githubTokenEnv,
-    },
-    env,
-    fetchImpl,
-    nowSeconds,
-  });
+  const credentials = defaultAppCredentials(config);
+  const token = await mintInstallationToken({ credentials, env, fetchImpl, nowSeconds });
+  // Every GitHub consumer reads this env var, so this write is what distributes the token.
+  env[credentials.tokenEnv] = token.token;
+  return token;
 }
 
 // An unreachable App is reported rather than thrown: the default App is published by
@@ -160,7 +167,8 @@ export async function refreshRepoGitHubAppTokens(opts: {
   const failures: Array<{ repo: string; error: Error }> = [];
   for (const [repo, credentials] of Object.entries(config.githubApp.repos)) {
     try {
-      await mintInstallationToken({ credentials, env, fetchImpl, nowSeconds });
+      const token = await mintInstallationToken({ credentials, env, fetchImpl, nowSeconds });
+      env[credentials.tokenEnv] = token.token;
     } catch (error) {
       failures.push({ repo, error: error instanceof Error ? error : new Error(String(error)) });
     }
@@ -180,13 +188,47 @@ function reportRepoTokenFailures(
   }
 }
 
+// mintRestrictedToken mints a token with only `permissions`, under the App that owns `repo`.
+// It is returned, never published to the environment.
+export async function mintRestrictedToken(opts: {
+  config: AppConfig;
+  env: NodeJS.ProcessEnv;
+  repo: string;
+  permissions: GitHubTokenPermissions;
+  fetchImpl?: typeof fetch;
+  nowSeconds?: () => number;
+}): Promise<InstallationToken> {
+  const { config, env, repo, permissions } = opts;
+  return mintInstallationToken({
+    credentials: githubAppCredentialsFor(config, repo) ?? defaultAppCredentials(config),
+    env,
+    fetchImpl: opts.fetchImpl ?? fetch,
+    nowSeconds: opts.nowSeconds ?? currentSeconds,
+    permissions,
+  });
+}
+
+function defaultAppCredentials(config: AppConfig): GitHubAppCredentials {
+  return {
+    appIdEnv: config.githubApp.appIdEnv,
+    installIdEnv: config.githubApp.installIdEnv,
+    privateKeyEnv: config.githubApp.privateKeyEnv,
+    tokenEnv: config.worker.githubTokenEnv,
+  };
+}
+
+function currentSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
 async function mintInstallationToken(opts: {
   credentials: GitHubAppCredentials;
   env: NodeJS.ProcessEnv;
   fetchImpl: typeof fetch;
   nowSeconds: () => number;
+  permissions?: GitHubTokenPermissions;
 }): Promise<InstallationToken> {
-  const { credentials, env, fetchImpl, nowSeconds } = opts;
+  const { credentials, env, fetchImpl, nowSeconds, permissions } = opts;
   const appId = env[credentials.appIdEnv];
   const installationId = env[credentials.installIdEnv];
   const privateKey = env[credentials.privateKeyEnv];
@@ -201,10 +243,7 @@ async function mintInstallationToken(opts: {
   // Secret stores often flatten the PEM to a single line; restore real newlines.
   const pem = (privateKey as string).replace(/\\n/g, '\n');
   const jwt = buildAppJwt(appId as string, pem, nowSeconds());
-  const token = await fetchInstallationToken(jwt, installationId as string, fetchImpl);
-  // Every GitHub consumer reads this env var, so this write is what distributes the token.
-  env[credentials.tokenEnv] = token.token;
-  return token;
+  return fetchInstallationToken(jwt, installationId as string, fetchImpl, permissions);
 }
 
 export async function startGitHubAppTokenRefresher(
@@ -212,7 +251,7 @@ export async function startGitHubAppTokenRefresher(
 ): Promise<GitHubAppTokenRefresher> {
   const env = opts.env ?? process.env;
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const nowSeconds = opts.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
+  const nowSeconds = opts.nowSeconds ?? currentSeconds;
   const { config, logger } = opts;
 
   await refreshGitHubAppToken({ config, env, fetchImpl, nowSeconds });

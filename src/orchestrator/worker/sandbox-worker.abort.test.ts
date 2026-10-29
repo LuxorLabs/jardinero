@@ -43,7 +43,9 @@ describe('SandboxWorkerRunner', () => {
       },
     };
 
-    const runner = new SandboxWorkerRunner(config, env, provider);
+    const runner = new SandboxWorkerRunner(config, env, provider, {
+      mintRestrictedToken: async () => ({ token: 'ghs_run', expiresAt: '2026-01-01T00:00:00Z' }),
+    });
 
     const controller = new AbortController();
     const context: SandboxRunContext = {

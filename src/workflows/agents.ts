@@ -1,3 +1,4 @@
+import type { GitHubTokenPermissions } from '../adapters/github/github-app-token.js';
 import type { SandboxTask } from '../orchestrator/sandbox-pool.js';
 
 export const AGENT_KINDS = [
@@ -38,6 +39,26 @@ export function agentKindForTask(task: SandboxTask): AgentKind {
       return task.payload.role === 'verify' ? 'linear_verifier' : 'linear_implementer';
     case 'request_router':
       return 'request_router';
+  }
+}
+
+// agentGitHubPermissions answers the least access an agent's sandbox token is minted with, or
+// nothing for an agent that never touches GitHub.
+export function agentGitHubPermissions(agent: AgentKind): GitHubTokenPermissions | undefined {
+  switch (agent) {
+    case 'log_reviewer':
+      // Reads the code and the open pull requests, to skip a finding one already fixes.
+      return { contents: 'read', pull_requests: 'read' };
+    case 'fix_implementer':
+    case 'pr_maintainer':
+    case 'linear_implementer':
+      // Pushes a branch, opens or updates its pull request, answers its threads and reads its CI.
+      return { contents: 'write', pull_requests: 'write', checks: 'read' };
+    case 'linear_verifier':
+      // Judges a pull request without writing to it.
+      return { contents: 'read', pull_requests: 'read', checks: 'read' };
+    case 'request_router':
+      return undefined;
   }
 }
 

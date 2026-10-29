@@ -91,6 +91,11 @@ describe('redactSensitiveText', () => {
       want: 'GH_TOKEN=[*****] rejected',
     },
     {
+      name: 'When the text holds a git extraheader then should redact its base64',
+      input: 'AUTHORIZATION: basic eC1hY2Nlc3MtdG9rZW46YW55LXRva2Vu rejected',
+      want: 'AUTHORIZATION: basic [*****] rejected',
+    },
+    {
       name: 'When the text holds no token then should return it unchanged',
       input: 'git push origin agent/fix',
       want: 'git push origin agent/fix',

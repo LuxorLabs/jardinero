@@ -38,6 +38,7 @@ import {
   forwardHostCodexAuthToSandbox,
   hostCodexAuthSecrets,
 } from '../../adapters/codex/codex-auth.js';
+import { mintRestrictedToken } from '../../adapters/github/github-app-token.js';
 import {
   type CommitSigningOutcome,
   CommitSigningRefusal,
@@ -50,6 +51,7 @@ import {
   grafanaMcpRequiredEnvNames,
 } from '../../adapters/grafana/grafana-mcp-auth.js';
 import { buildWorkerPrompt } from '../../workflows/prompts.js';
+import { agentGitHubPermissions, agentKindForTask } from '../../workflows/agents.js';
 import { numberPayload } from '../task-payload.js';
 import { OutputTail } from './output-tail.js';
 import {
@@ -106,6 +108,7 @@ const PRE_CODEX_STAGE_MESSAGES: Record<PreCodexRetryStage, string> = {
 // loop can be exercised without a live sandbox.
 export interface SandboxWorkerRunnerDeps {
   sandboxReadyRetryDelayMs?: (attempt: number) => number;
+  mintRestrictedToken?: typeof mintRestrictedToken;
   getPullRequestHead?: typeof getPullRequestHead;
   signPullRequestCommits?: typeof signPullRequestCommits;
   signingRetryDelayMs?: number;
@@ -154,6 +157,7 @@ function sandboxReadyRetryDelayMs(config: AppConfig, attempt: number): number {
 
 export class SandboxWorkerRunner implements SandboxRunner {
   private readonly sandboxReadyRetryDelayMs: (attempt: number) => number;
+  private readonly mintRestrictedToken: typeof mintRestrictedToken;
   private readonly getPullRequestHead: typeof getPullRequestHead;
   private readonly signPullRequestCommits: typeof signPullRequestCommits;
   private readonly signingRetryDelayMs: number;
@@ -167,6 +171,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
     private readonly provider: SandboxProvider,
     deps: SandboxWorkerRunnerDeps = {},
   ) {
+    this.mintRestrictedToken = deps.mintRestrictedToken ?? mintRestrictedToken;
     this.getPullRequestHead = deps.getPullRequestHead ?? getPullRequestHead;
     this.signPullRequestCommits = deps.signPullRequestCommits ?? signPullRequestCommits;
     this.signingRetryDelayMs = deps.signingRetryDelayMs ?? SIGNING_RETRY_DELAY_MS;
@@ -181,6 +186,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
   run(poolContext: SandboxRunContext): Promise<WorkerResult> {
     return this.runInSandbox(
       poolContext,
+      (context) => this.runGitHubToken(context),
       (context, createOptions, trackSession, terminate) =>
         this.createSession(context, createOptions, trackSession, terminate),
       (context, session) => this.runCodex(session, context, this.codexModels(context)),
@@ -190,6 +196,15 @@ export class SandboxWorkerRunner implements SandboxRunner {
   resume(poolContext: SandboxRunContext): Promise<WorkerResult> {
     return this.runInSandbox(
       poolContext,
+      // Follow the run without a fresh token rather than lose it when GitHub refuses one.
+      (context) =>
+        this.runGitHubToken(context).catch((error: unknown) => {
+          this.log.warn('github token for a resumed run failed; resuming without it', {
+            sandbox_run_id: context.sandboxRun.id,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          return undefined;
+        }),
       (context, createOptions, trackSession) =>
         this.attachSession(context, createOptions, trackSession),
       (context, session) => this.resumeCodex(session, context),
@@ -200,6 +215,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
   // Once Codex is running it works without us, so a shutdown leaves it to the next process.
   private async runInSandbox(
     poolContext: SandboxRunContext,
+    mintGitHubToken: (context: SandboxRunContext) => Promise<string | undefined>,
     openSession: (
       context: RunContext,
       createOptions: Record<string, unknown>,
@@ -225,8 +241,12 @@ export class SandboxWorkerRunner implements SandboxRunner {
       );
     }
 
-    const context = redactingContext(poolContext, secretRedactor(this.runSecrets(poolContext)));
-    const createOptions = this.createOptions(context);
+    const githubToken = await mintGitHubToken(poolContext);
+    const context = redactingContext(
+      poolContext,
+      secretRedactor(this.runSecrets(poolContext, githubToken)),
+    );
+    const createOptions = this.createOptions(context, githubToken);
     const provider = this.provider;
     let session: SandboxSession | undefined;
     let terminatePromise: Promise<void> | undefined;
@@ -625,9 +645,27 @@ export class SandboxWorkerRunner implements SandboxRunner {
     }
   }
 
-  private createOptions(context: SandboxRunContext): Record<string, unknown> {
+  // runGitHubToken mints the sandbox's token under the App of the run's repo, with only what its
+  // agent needs.
+  private async runGitHubToken(context: SandboxRunContext): Promise<string | undefined> {
+    const repo = this.repoFor(context);
+    const permissions = agentGitHubPermissions(agentKindForTask(context.task));
+    if (!repo || !permissions) return undefined;
+    const minted = await this.mintRestrictedToken({
+      config: this.config,
+      env: this.env,
+      repo,
+      permissions,
+    });
+    return minted.token;
+  }
+
+  private createOptions(
+    context: SandboxRunContext,
+    githubToken: string | undefined,
+  ): Record<string, unknown> {
     const env: Record<string, string> = {
-      GITHUB_TOKEN: this.env[resolveGitHubTokenEnv(this.config, this.repoFor(context))] ?? '',
+      ...(githubToken ? { GITHUB_TOKEN: githubToken } : {}),
       ORCHESTRATOR_RUN_ID: context.sandboxRun.id,
       ORCHESTRATOR_WORKFLOW: context.task.workflow,
     };
@@ -680,7 +718,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       // The reaper reclaims leaked sandboxes actively; this is the backstop for
       // any it misses (e.g. run row pruned, or the orchestrator stayed down).
       pauseRetentionMs: this.config.worker.sandboxPauseRetentionMs,
-      githubToken: this.env[resolveGitHubTokenEnv(this.config, this.repoFor(context))],
+      githubToken,
       env,
       // The reaper reads this back off each sandbox to decide ownership; the keys
       // come from SANDBOX_METADATA (tenki-scope) so producer and consumer agree.
@@ -708,13 +746,13 @@ export class SandboxWorkerRunner implements SandboxRunner {
 
   // runSecrets lists every credential the orchestrator can give a sandbox, so a run's output is
   // masked by value. Masking one this run did not get is harmless.
-  private runSecrets(context: SandboxRunContext): Array<string | undefined> {
+  private runSecrets(
+    context: SandboxRunContext,
+    githubToken: string | undefined,
+  ): Array<string | undefined> {
     const repo = this.repoFor(context);
-    const githubToken = this.env[resolveGitHubTokenEnv(this.config, repo)]!;
     return [
       githubToken,
-      // Git sends the token as the base64 of `x-access-token:<token>` in its extraheader.
-      Buffer.from(`x-access-token:${githubToken}`).toString('base64'),
       this.env[this.config.worker.codexAccessTokenEnv],
       this.env[this.config.worker.codexApiKeyEnv],
       ...(this.config.worker.codexAuthMode === 'capsule' ? this.hostCodexAuthSecrets() : []),
@@ -1370,9 +1408,10 @@ export class SandboxWorkerRunner implements SandboxRunner {
   ): Promise<SandboxSession> {
     let reopened: SandboxSession | undefined;
     try {
+      // Reopen without a GitHub token: the handle only reads Codex's files.
       reopened = await this.provider.attach(
         session.id,
-        this.createOptions(context),
+        this.createOptions(context, undefined),
         context.signal,
       );
     } catch {

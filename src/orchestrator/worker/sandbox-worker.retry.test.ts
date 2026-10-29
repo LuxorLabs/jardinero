@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { loadConfig, type AppConfig } from '../../config.js';
+import type { GitHubTokenPermissions } from '../../adapters/github/github-app-token.js';
 import type { SandboxRun } from '../../store/types.js';
 import { type SandboxRunContext, SandboxRunLostError, type SandboxTask } from '../sandbox-pool.js';
 import type {
@@ -1049,7 +1050,7 @@ describe('following a detached codex run', () => {
     },
     {
       name: 'When a read fails and the sandbox is still there then should read again',
-      session: { codexReadErrors: [new Error('stream closed reading gh-token')] },
+      session: { codexReadErrors: [new Error('stream closed reading run-token')] },
       want: {
         outcome: { status: 'succeeded' },
         reopened: 1,
@@ -1209,6 +1210,7 @@ describe('SandboxWorkerRunner.resume', () => {
     sandboxSessionId: string | null;
     attach?: (session: FakeSession, attempt: number) => Promise<FakeSession | undefined>;
     aborted?: boolean;
+    mintError?: Error;
     session: FakeSessionOptions;
     want: {
       outcome: RunOutcome;
@@ -1218,6 +1220,19 @@ describe('SandboxWorkerRunner.resume', () => {
       tail: string | undefined;
     };
   }> = [
+    {
+      name: 'When GitHub refuses a token for the resumed run then should follow Codex without it',
+      sandboxSessionId: 'only',
+      mintError: new Error('GitHub App installation token request failed: 503'),
+      session: { runningCodex: { model: 'gpt-6-sol', exitCode: 0 } },
+      want: {
+        outcome: { status: 'succeeded' },
+        resumed: true,
+        started: [],
+        terminated: true,
+        tail: undefined,
+      },
+    },
     {
       name: 'When the run never reached a sandbox then should report it lost',
       sandboxSessionId: null,
@@ -1364,6 +1379,10 @@ describe('SandboxWorkerRunner.resume', () => {
         config: (config) => {
           config.mcp.grafana.enabled = false;
         },
+        mintRestrictedToken: async () => {
+          if (c.mintError) throw c.mintError;
+          return { token: 'ghs_run', expiresAt: '2026-01-01T00:00:00Z' };
+        },
       });
       const task: SandboxTask = {
         workflow: 'log_review',
@@ -1394,6 +1413,111 @@ describe('SandboxWorkerRunner.resume', () => {
             .map((event) => event.data?.model),
           terminated: operations.includes('terminate:only'),
           tail: artifacts.find((artifact) => artifact.name === 'codex-output-tail.txt')?.content,
+        },
+        c.want,
+      );
+    });
+  }
+});
+
+describe('the GitHub token in the sandbox session', () => {
+  const cases: Array<{
+    name: string;
+    task: SandboxTask;
+    mintError?: Error;
+    want: {
+      mints: Array<{ repo: string; permissions: GitHubTokenPermissions }>;
+      creates: number;
+      githubToken: string | undefined;
+      envToken: string | undefined;
+      rejected: string | undefined;
+    };
+  }> = [
+    {
+      name: 'When the run has no repo then should mint nothing and give the sandbox no token',
+      task: { workflow: 'pr_maintain', payload: {}, promptOverrides: {} },
+      want: {
+        mints: [],
+        creates: 1,
+        githubToken: undefined,
+        envToken: undefined,
+        rejected: undefined,
+      },
+    },
+    {
+      name: 'When the agent is `request_router` then should mint nothing and give the sandbox no token',
+      task: {
+        workflow: 'request_router',
+        payload: { repo: 'acme/web.app' },
+        promptOverrides: {},
+      },
+      want: {
+        mints: [],
+        creates: 1,
+        githubToken: undefined,
+        envToken: undefined,
+        rejected: undefined,
+      },
+    },
+    {
+      name: 'When the agent works on GitHub then should give the sandbox a token minted for its repo and permissions',
+      task: fakeTask(),
+      want: {
+        mints: [
+          {
+            repo: 'acme/web.app',
+            permissions: { contents: 'write', pull_requests: 'write', checks: 'read' },
+          },
+        ],
+        creates: 1,
+        githubToken: 'ghs_run',
+        envToken: 'ghs_run',
+        rejected: undefined,
+      },
+    },
+    {
+      name: 'When the token cannot be minted then should fail the run before creating a sandbox',
+      task: fakeTask(),
+      mintError: new Error('GitHub App installation token request failed: 422'),
+      want: {
+        mints: [
+          {
+            repo: 'acme/web.app',
+            permissions: { contents: 'write', pull_requests: 'write', checks: 'read' },
+          },
+        ],
+        creates: 0,
+        githubToken: undefined,
+        envToken: undefined,
+        rejected: 'Error: GitHub App installation token request failed: 422',
+      },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const creates: Array<Record<string, unknown>> = [];
+      const mints: Array<{ repo: string; permissions: GitHubTokenPermissions }> = [];
+      const runner = fakeRunner([fakeSession('first', operations)], operations, {
+        captureCreates: creates,
+        mintRestrictedToken: async ({ repo, permissions }) => {
+          mints.push({ repo, permissions });
+          if (c.mintError) throw c.mintError;
+          return { token: 'ghs_run', expiresAt: '2026-01-01T00:00:00Z' };
+        },
+      });
+
+      const outcome = await runOutcome(runner.run(fakeContext([], new AbortController(), c.task)));
+
+      const sessionEnv = creates[0]?.env as Record<string, string> | undefined;
+      assert.deepEqual(
+        {
+          mints,
+          creates: creates.length,
+          githubToken: creates[0]?.githubToken,
+          envToken: sessionEnv?.GITHUB_TOKEN,
+          rejected: 'rejected' in outcome ? outcome.rejected : undefined,
         },
         c.want,
       );
@@ -1461,11 +1585,11 @@ describe('the secrets a run was given', () => {
   }> = [
     {
       name: 'When the run prints its GitHub token then should mask it',
-      printed: 'leaked gh-token',
+      printed: 'leaked run-token',
     },
     {
       name: 'When the run prints the git extraheader of its GitHub token then should mask it',
-      printed: 'leaked eC1hY2Nlc3MtdG9rZW46Z2gtdG9rZW4=',
+      printed: 'leaked eC1hY2Nlc3MtdG9rZW46cnVuLXRva2Vu',
     },
     {
       name: 'When the run prints the Codex access token then should mask it',
@@ -1542,7 +1666,7 @@ describe('the failure a run throws', () => {
   }> = [
     {
       name: 'When a setup step fails with the GitHub token in its message then should rethrow it masked',
-      cloneError: new Error('clone failed for gh-token'),
+      cloneError: new Error('clone failed for run-token'),
       want: {
         rejected: 'Error: clone failed for [*****]',
         failed: 'clone failed for [*****]',
@@ -1550,7 +1674,7 @@ describe('the failure a run throws', () => {
     },
     {
       name: 'When the failure is a lost run then should keep its class',
-      cloneError: new SandboxRunLostError('sandbox gone holding gh-token'),
+      cloneError: new SandboxRunLostError('sandbox gone holding run-token'),
       want: {
         rejected: 'SandboxRunLostError: sandbox gone holding [*****]',
         failed: 'sandbox gone holding [*****]',
@@ -1558,7 +1682,7 @@ describe('the failure a run throws', () => {
     },
     {
       name: 'When the failure is not an `Error` then should rethrow it as one, masked',
-      cloneError: 'refused gh-token' as unknown as Error,
+      cloneError: 'refused run-token' as unknown as Error,
       want: { rejected: 'Error: refused [*****]', failed: 'refused [*****]' },
     },
     {
@@ -2048,6 +2172,7 @@ function fakeRunner(
     config?: (config: AppConfig) => void;
     env?: (env: NodeJS.ProcessEnv) => void;
     captureCreates?: Array<Record<string, unknown>>;
+    mintRestrictedToken?: SandboxWorkerRunnerDeps['mintRestrictedToken'];
     getPullRequestHead?: SandboxWorkerRunnerDeps['getPullRequestHead'];
     signPullRequestCommits?: SandboxWorkerRunnerDeps['signPullRequestCommits'];
     attach?: (sessionId: string) => Promise<FakeSession | undefined>;
@@ -2091,6 +2216,9 @@ function fakeRunner(
     sandboxReadyRetryDelayMs: () => 0,
     signingRetryDelayMs: 0,
     codexPollIntervalMs: 0,
+    mintRestrictedToken:
+      options.mintRestrictedToken ??
+      (async () => ({ token: 'run-token', expiresAt: '2026-01-01T00:00:00Z' })),
     ...(options.getPullRequestHead ? { getPullRequestHead: options.getPullRequestHead } : {}),
     ...(options.hostCodexAuthSecrets ? { hostCodexAuthSecrets: options.hostCodexAuthSecrets } : {}),
     signPullRequestCommits:

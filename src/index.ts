@@ -92,15 +92,13 @@ const reapSandboxesOnce =
   config.worker.runner === 'tenki'
     ? createTenkiReaper(config, process.env, store).reapOnce
     : undefined;
-const orchestrator = new Orchestrator({
-  config,
-  store,
-  runner,
-  github: new GitHubPullRequests(config, process.env),
-});
+// Share one instance, so the author access it caches serves every delivery.
+const github = new GitHubPullRequests(config, process.env);
+const orchestrator = new Orchestrator({ config, store, runner, github });
 const commands = createEngineCommands({
   config,
   store,
+  github,
   engines: orchestrator,
   delegateTicket: (ticket, ownerLinearUserId) =>
     delegateLinearIssue({ config, env: process.env }, ticket, ownerLinearUserId),

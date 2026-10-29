@@ -43,6 +43,7 @@ import {
   type CommitSigningOutcome,
   CommitSigningRefusal,
   getPullRequestHead,
+  type PullRequestHead,
   signPullRequestCommits,
 } from '../../adapters/github/github-pull-requests.js';
 import { buildCodexConfigToml } from '../../adapters/codex/codex-config.js';
@@ -822,7 +823,11 @@ export class SandboxWorkerRunner implements SandboxRunner {
         type: 'sandbox.fetching_pull_request',
         message: `Fetching PR ${prNumber}`,
       });
-      const headRef = await this.pullRequestHeadRef(repo, prNumber);
+      const head = await this.pullRequestHead(repo, prNumber);
+      if (head?.fromFork) {
+        throw new Error(`PR ${prNumber} comes from a fork, which Jardinero does not work`);
+      }
+      const headRef = head?.headRef;
       if (!headRef) {
         await context.publishEvent({
           type: 'sandbox.pull_request_head_unresolved',
@@ -899,13 +904,15 @@ export class SandboxWorkerRunner implements SandboxRunner {
     }
   }
 
-  // pullRequestHeadRef answers the branch a push has to land on, or nothing when the
-  // lookup fails.
-  private async pullRequestHeadRef(repo: string, prNumber: number): Promise<string | undefined> {
+  // pullRequestHead reads the pull request's head, or nothing when the lookup fails.
+  private async pullRequestHead(
+    repo: string,
+    prNumber: number,
+  ): Promise<PullRequestHead | undefined> {
     const token = this.env[resolveGitHubTokenEnv(this.config, repo)];
     if (!token) return undefined;
     try {
-      return (await this.getPullRequestHead({ repo, pullRequestNumber: prNumber, token })).headRef;
+      return await this.getPullRequestHead({ repo, pullRequestNumber: prNumber, token });
     } catch (error) {
       this.log.warn('pull request lookup failed; pushing to it will not work', {
         repo,

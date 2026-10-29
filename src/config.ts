@@ -132,6 +132,7 @@ export interface AppConfig {
       pollIntervalMin: number;
       pollBranchPrefix: string;
       agentLogin: string;
+      trustedAuthorsOnly: boolean;
       commentReactions: {
         enabled: boolean;
         pickup: ReactionContent;
@@ -394,6 +395,11 @@ export function loadConfig(
           'agent/',
         ),
         agentLogin: stringAt(raw, ['workflows', 'pr_maintainer', 'agent_login'], ''),
+        trustedAuthorsOnly: strictBooleanAt(
+          raw,
+          ['workflows', 'pr_maintainer', 'trusted_authors_only'],
+          false,
+        ),
         commentReactions: {
           enabled: booleanAt(
             raw,

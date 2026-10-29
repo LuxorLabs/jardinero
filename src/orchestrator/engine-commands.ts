@@ -75,6 +75,7 @@ export interface LogReviewScope {
 export interface EngineCommandDeps {
   config: AppConfig;
   store: Store;
+  github: GitHubDeliveryDeps['github'];
   // Typed to the seams the commands reach for, not to the engine classes, so what a
   // command can do to a machine is visible here.
   engines: {
@@ -102,6 +103,7 @@ export function createEngineCommands(deps: EngineCommandDeps): EngineCommands {
         {
           config,
           store,
+          github: deps.github,
           prMaintainer: engines.prMaintainer,
           linearImplementer: engines.linearImplementer,
           fixImplementer: engines.fixImplementer,

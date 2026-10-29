@@ -35,6 +35,8 @@ export interface CommentData extends PullRequestRef {
   isDraft?: boolean;
   isMerged?: boolean;
   authoredByUs: boolean;
+  authorIsTrusted: boolean;
+  fromFork: boolean;
   mentionsUs: boolean;
   reviewThreadId?: string;
   // commentType is where a pickup mark goes; a review body has no endpoint for one.
@@ -219,6 +221,13 @@ export async function onPrComment(
 ): Promise<Error | undefined> {
   // Our own echo. The only thing stopping an endless reply loop.
   if (data.authoredByUs) return undefined;
+
+  // Drop a comment from someone who cannot push when the config asks: anyone who can read
+  // the repository can comment on it.
+  if (engine.config.trustedAuthorsOnly && !data.authorIsTrusted) return undefined;
+
+  // Never work a fork's pull request: its head is code anyone may write.
+  if (data.fromFork) return undefined;
 
   // Tagging the agent on a pull request is how a person hands us one we were not
   // following, whatever state it is in; a merged one has nothing left to work on.

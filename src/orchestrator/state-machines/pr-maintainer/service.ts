@@ -65,6 +65,8 @@ export interface PrMaintainerConfig {
   // maxRepliesPerThread bounds the answers one thread gets; the backstop for a reply loop
   // the self-comment filter misses.
   maxRepliesPerThread: number;
+  // trustedAuthorsOnly lets a comment hand us work only from someone who can push or an App.
+  trustedAuthorsOnly: boolean;
   // checkWaitMs is how long each state waits between periodic checks; a state left out is
   // never checked.
   checkWaitMs: Partial<Record<PrMaintainerState, number>>;

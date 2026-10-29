@@ -13,6 +13,7 @@ import {
   delegateLinearIssue,
   openLinearIssueForRequest,
 } from '../adapters/linear/linear-delegation.js';
+import { GitHubPullRequests } from '../orchestrator/github-pull-requests.js';
 import { Orchestrator } from '../orchestrator/orchestrator.js';
 import { createTestStore } from './store.js';
 
@@ -96,6 +97,7 @@ export async function createHttpFixture(
   const commands = createEngineCommands({
     config,
     store,
+    github: new GitHubPullRequests(config, env, fetchImpl),
     engines: orchestrator,
     delegateTicket: (ticket, ownerLinearUserId) =>
       delegateLinearIssue({ config, env, fetchImpl }, ticket, ownerLinearUserId),
@@ -296,6 +298,7 @@ export async function createAgentsHttpFixture(configure?: (config: AppConfig) =>
   const commands = createEngineCommands({
     config,
     store,
+    github: new GitHubPullRequests(config, env),
     engines: orchestrator,
     delegateTicket: (ticket) => delegateLinearIssue({ config, env }, ticket),
     openTicketForRequest: (request) => openLinearIssueForRequest({ config, env }, request),

@@ -10,12 +10,21 @@ import type { PrMaintainerStateEngineInterface } from '../../orchestrator/state-
 import { arrayValue, objectValue, stringValue } from '../../platform/json.js';
 import type { Store } from '../../store/store.js';
 import { AGENT_PR_COMMENT_MARKER } from '../../workflows/pr/pr-maintainer.js';
+import { isForkPullRequest } from './github-pull-requests.js';
 
 type JsonObject = Record<string, unknown>;
+
+// GitHubDeliveryReader asks GitHub what a delivery leaves out; a read that fails answers no push
+// access and a fork, so it never hands us work.
+export interface GitHubDeliveryReader {
+  authorCanPush(repositoryFullName: string, login: string): Promise<boolean>;
+  isForkPullRequest(repositoryFullName: string, pullRequestNumber: number): Promise<boolean>;
+}
 
 export interface GitHubDeliveryDeps {
   config: AppConfig;
   store: Store;
+  github: GitHubDeliveryReader;
   prMaintainer: PrMaintainerStateEngineInterface;
   linearImplementer: Pick<LinearImplementerStateEngineInterface, 'onPrMerged' | 'onPrClosed'>;
   fixImplementer: Pick<FixImplementerStateEngineInterface, 'onPrMerged' | 'onPrClosed'>;
@@ -85,7 +94,11 @@ async function handlePullRequest(
   const ref = refFor(deps, payload, numberOf(pullRequest.number));
   if (!ref) return { handled: false, reason: 'delivery_without_repository' };
 
-  const facts = { ...ref, headBranch: headBranchOf(pullRequest) };
+  const facts = {
+    ...ref,
+    headBranch: headBranchOf(pullRequest),
+    fromFork: isForkPullRequest(pullRequest),
+  };
 
   switch (stringValue(payload.action)) {
     case 'ready_for_review':
@@ -139,13 +152,27 @@ async function handleComment(
   const ref = refFor(deps, payload, numberOf(pullRequest.number));
   if (!ref) return { handled: false, reason: 'delivery_without_repository' };
 
+  const repositoryFullName = stringValue(objectValue(payload.repository)?.full_name) ?? '';
+
   const comment = objectValue(payload.comment) ?? objectValue(payload.review);
   const body = stringValue(comment?.body);
-  const author = stringValue(objectValue(comment?.user)?.login);
+  const user = objectValue(comment?.user);
+  const author = stringValue(user?.login);
   const authoredByUs = isOurs(deps.config, author, body);
+  // Skip the lookups for our own comments: the machine drops them anyway.
+  const [authorIsTrusted, fromFork] = authoredByUs
+    ? [false, true]
+    : await Promise.all([
+        deps.config.workflows.prMaintainer.trustedAuthorsOnly
+          ? isTrustedAuthor(deps, repositoryFullName, user)
+          : false,
+        isForkPullRequestOf(deps, repositoryFullName, ref.pullRequestNumber, payload),
+      ]);
   await deps.prMaintainer.onPrComment({
     ...ref,
     authoredByUs,
+    authorIsTrusted,
+    fromFork,
     mentionsUs: mentionsUs(deps.config, body),
     isDraft: pullRequest.draft === true,
     isMerged: pullRequest.merged === true || stringValue(pullRequest.merged_at) !== undefined,
@@ -160,6 +187,32 @@ async function handleComment(
         },
   });
   return { handled: true, reason: eventName };
+}
+
+// isTrustedAuthor trusts an App, which only an owner of the repository can install, and a
+// person who can push to it.
+async function isTrustedAuthor(
+  deps: GitHubDeliveryDeps,
+  repositoryFullName: string,
+  user: JsonObject | undefined,
+): Promise<boolean> {
+  if (stringValue(user?.type) === 'Bot') return true;
+  const login = stringValue(user?.login);
+  if (!login) return false;
+  return deps.github.authorCanPush(repositoryFullName, login);
+}
+
+// isForkPullRequestOf reads the head from a delivery that carries the pull request; an
+// issue comment only names it, so GitHub is asked.
+async function isForkPullRequestOf(
+  deps: GitHubDeliveryDeps,
+  repositoryFullName: string,
+  pullRequestNumber: number,
+  payload: JsonObject,
+): Promise<boolean> {
+  const pullRequest = objectValue(payload.pull_request);
+  if (pullRequest) return isForkPullRequest(pullRequest);
+  return deps.github.isForkPullRequest(repositoryFullName, pullRequestNumber);
 }
 
 function headBranchOf(pullRequest: JsonObject): string | undefined {

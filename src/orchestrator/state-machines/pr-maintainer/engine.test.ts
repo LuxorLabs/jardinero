@@ -37,6 +37,7 @@ beforeEach(() => {
     {
       maxAttempts: MAX_ATTEMPTS,
       maxRepliesPerThread: MAX_REPLIES_PER_THREAD,
+      trustedAuthorsOnly: true,
       agentPullRequest: { branchPrefix: 'agent/' },
       checkWaitMs: {},
     },

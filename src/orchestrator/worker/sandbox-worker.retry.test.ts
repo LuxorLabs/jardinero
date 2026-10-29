@@ -1792,9 +1792,11 @@ describe('checking out the pull request a pass continues', () => {
     workflow: 'pr_maintain' | 'linear' | 'fix_implement';
     payload: Record<string, unknown>;
     headRef?: string | Error;
+    fromFork?: boolean;
     wantFetched: boolean;
     wantCheckout?: string;
     wantUnresolvedEvent?: boolean;
+    wantRejected?: string;
   }> = [
     {
       name: 'When maintenance names a pull request then should fetch its head',
@@ -1840,6 +1842,15 @@ describe('checking out the pull request a pass continues', () => {
       wantCheckout: `checkout -B 'pr-4166'`,
       wantUnresolvedEvent: true,
     },
+    {
+      name: 'When the pull request comes from a fork then should fail the run before checking it out',
+      workflow: 'linear',
+      payload: { repo: 'acme/webapp', pr_number: 4166 },
+      headRef: 'feature',
+      fromFork: true,
+      wantFetched: true,
+      wantRejected: 'Error: PR 4166 comes from a fork, which Jardinero does not work',
+    },
   ];
 
   for (const c of cases) {
@@ -1857,13 +1868,20 @@ describe('checking out the pull request a pass continues', () => {
           : {
               getPullRequestHead: async () => {
                 if (c.headRef instanceof Error) throw c.headRef;
-                return { nodeId: 'node-1', draft: true, headRef: c.headRef as string };
+                return {
+                  nodeId: 'node-1',
+                  draft: true,
+                  headRef: c.headRef as string,
+                  fromFork: c.fromFork ?? false,
+                };
               },
             }),
       });
       const task: SandboxTask = { workflow: c.workflow, payload: c.payload, promptOverrides: {} };
 
-      await runner.run(fakeContext(events, new AbortController(), task));
+      const outcome = await runOutcome(
+        runner.run(fakeContext(events, new AbortController(), task)),
+      );
 
       assert.equal(
         events.some((event) => event.type === 'sandbox.fetching_pull_request'),
@@ -1873,6 +1891,7 @@ describe('checking out the pull request a pass continues', () => {
         events.some((event) => event.type === 'sandbox.pull_request_head_unresolved'),
         c.wantUnresolvedEvent === true,
       );
+      assert.equal('rejected' in outcome ? outcome.rejected : undefined, c.wantRejected);
       if (c.wantCheckout) {
         assert.ok(
           commands.some((command) => command.includes(c.wantCheckout!)),
@@ -2060,7 +2079,12 @@ describe('signing the commits a run pushed', () => {
           if (c.gitAuthorName !== undefined) config.worker.gitAuthorName = c.gitAuthorName;
           if (c.gitAuthorEmail !== undefined) config.worker.gitAuthorEmail = c.gitAuthorEmail;
         },
-        getPullRequestHead: async () => ({ nodeId: 'node-1', draft: true, headRef: 'agent/x' }),
+        getPullRequestHead: async () => ({
+          nodeId: 'node-1',
+          draft: true,
+          headRef: 'agent/x',
+          fromFork: false,
+        }),
         signPullRequestCommits: async ({ repo, pullRequestNumber, authorEmail }) => {
           signed.push({ repo, pullRequestNumber, authorEmail });
           const answer = c.signing?.[signed.length - 1] ?? { status: 'already_signed' };

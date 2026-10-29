@@ -356,6 +356,31 @@ describe('buildWorkerPrompt', () => {
   }
 });
 
+describe('a pull request maintained only for trusted authors', () => {
+  const cases = [
+    {
+      name: 'When the payload sets `trusted_authors_only` then should tell the agent to act only on trusted authors',
+      payload: { repo: 'acme/web.app', pr_number: 42, trusted_authors_only: true },
+      want: true,
+    },
+    {
+      name: 'When the payload leaves `trusted_authors_only` out then should not restrict the authors',
+      payload: { repo: 'acme/web.app', pr_number: 42 },
+      want: false,
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, () => {
+      const prompt = buildWorkerPrompt('run-123', task('pr_maintain', c.payload));
+      assert.equal(
+        /Act only on comments, reviews and threads written by a GitHub App/.test(prompt),
+        c.want,
+      );
+    });
+  }
+});
+
 // Three seats can run again over work another pass already did: the maintainer on each new
 // comment, the linear implementer on each revision, the verifier on each judgement.
 describe('the seats that loop read what earlier passes did', () => {

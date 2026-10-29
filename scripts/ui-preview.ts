@@ -295,6 +295,7 @@ if (existingDataDir === undefined) seedInstances();
 const commands = createEngineCommands({
   config,
   store,
+  github: { authorCanPush: async () => false, isForkPullRequest: async () => true },
   engines: orchestrator,
   delegateTicket: (ticket, ownerLinearUserId) =>
     delegateLinearIssue({ config, env: process.env }, ticket, ownerLinearUserId),

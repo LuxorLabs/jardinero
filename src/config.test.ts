@@ -89,6 +89,7 @@ describe('loadConfig', () => {
             pollIntervalMin: 5,
             pollBranchPrefix: 'agent/',
             agentLogin: '',
+            trustedAuthorsOnly: false,
             commentReactions: { enabled: true, pickup: 'eyes', replied: 'rocket' },
             checkWaitMs: {
               prm_pending: 60_000,
@@ -521,9 +522,11 @@ describe('PR maintainer config', () => {
       enabled: false
       pickup: "heart"
       replied: "hooray"
+    trusted_authors_only: true
 `,
     );
 
+    assert.equal(config.workflows.prMaintainer.trustedAuthorsOnly, true);
     assert.equal(config.workflows.prMaintainer.commentReactions.enabled, false);
     assert.equal(config.workflows.prMaintainer.commentReactions.pickup, 'heart');
     assert.equal(config.workflows.prMaintainer.commentReactions.replied, 'hooray');
@@ -531,19 +534,24 @@ describe('PR maintainer config', () => {
 });
 
 describe('PR maintainer config the loader refuses', () => {
-  test('When a comment reaction is not one GitHub accepts then should return error', () => {
-    assert.throws(
-      () =>
-        loadWorkflowConfig(
-          'pr_maintainer',
-          `
-    comment_reactions:
-      pickup: "thumbsup"
-`,
-        ),
-      /Unsupported workflows\.pr_maintainer\.comment_reactions\.pickup/,
-    );
-  });
+  const cases: Array<{ name: string; yaml: string; wantError: RegExp }> = [
+    {
+      name: 'When a comment reaction is not one GitHub accepts then should return error',
+      yaml: '    comment_reactions:\n      pickup: "thumbsup"\n',
+      wantError: /Unsupported workflows\.pr_maintainer\.comment_reactions\.pickup/,
+    },
+    {
+      name: 'When `trusted_authors_only` is not a boolean then should return error',
+      yaml: '    trusted_authors_only: "no"\n',
+      wantError: /workflows\.pr_maintainer\.trusted_authors_only must be true or false/,
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.throws(() => loadWorkflowConfig('pr_maintainer', testCase.yaml), testCase.wantError);
+    });
+  }
 });
 
 describe('Log reviewer config', () => {

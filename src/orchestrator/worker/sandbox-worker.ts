@@ -34,7 +34,10 @@ import {
   validateLogReviewTelemetryAccess,
 } from '../../workflows/log-review/log-review-result.js';
 import { CallContextError, withCallContext } from '../../platform/call-context.js';
-import { forwardHostCodexAuthToSandbox } from '../../adapters/codex/codex-auth.js';
+import {
+  forwardHostCodexAuthToSandbox,
+  hostCodexAuthSecrets,
+} from '../../adapters/codex/codex-auth.js';
 import {
   type CommitSigningOutcome,
   CommitSigningRefusal,
@@ -64,13 +67,14 @@ import {
 } from '../../workflows/side-effects.js';
 import { JARDINERO_SANDBOX_APP, SANDBOX_METADATA } from '../../adapters/tenki/tenki-scope.js';
 import {
+  REDACTED,
   assertExecSucceeded,
   execStderr,
   execStdout,
   normalizeRemotePath,
   remoteJoin,
+  secretRedactor,
   shellQuote,
-  redactSensitiveText,
 } from './sandbox-utils.js';
 
 type PreCodexRetryStage =
@@ -106,6 +110,7 @@ export interface SandboxWorkerRunnerDeps {
   signPullRequestCommits?: typeof signPullRequestCommits;
   signingRetryDelayMs?: number;
   codexPollIntervalMs?: number;
+  hostCodexAuthSecrets?: typeof hostCodexAuthSecrets;
 }
 
 // CODEX_POLL_INTERVAL_MS is how long a detached Codex run goes unread, and so how late its
@@ -153,6 +158,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
   private readonly signPullRequestCommits: typeof signPullRequestCommits;
   private readonly signingRetryDelayMs: number;
   private readonly codexPollIntervalMs: number;
+  private readonly hostCodexAuthSecrets: typeof hostCodexAuthSecrets;
   private readonly log: Logger = logger.child('worker');
 
   constructor(
@@ -165,47 +171,50 @@ export class SandboxWorkerRunner implements SandboxRunner {
     this.signPullRequestCommits = deps.signPullRequestCommits ?? signPullRequestCommits;
     this.signingRetryDelayMs = deps.signingRetryDelayMs ?? SIGNING_RETRY_DELAY_MS;
     this.codexPollIntervalMs = deps.codexPollIntervalMs ?? CODEX_POLL_INTERVAL_MS;
+    this.hostCodexAuthSecrets = deps.hostCodexAuthSecrets ?? hostCodexAuthSecrets;
     this.sandboxReadyRetryDelayMs =
       deps.sandboxReadyRetryDelayMs === undefined
         ? (attempt) => sandboxReadyRetryDelayMs(this.config, attempt)
         : (attempt) => deps.sandboxReadyRetryDelayMs!(attempt);
   }
 
-  run(context: SandboxRunContext): Promise<WorkerResult> {
+  run(poolContext: SandboxRunContext): Promise<WorkerResult> {
     return this.runInSandbox(
-      context,
-      (createOptions, trackSession, terminate) =>
+      poolContext,
+      (context, createOptions, trackSession, terminate) =>
         this.createSession(context, createOptions, trackSession, terminate),
-      (session) => this.runCodex(session, context, this.codexModels(context)),
+      (context, session) => this.runCodex(session, context, this.codexModels(context)),
     );
   }
 
-  resume(context: SandboxRunContext): Promise<WorkerResult> {
+  resume(poolContext: SandboxRunContext): Promise<WorkerResult> {
     return this.runInSandbox(
-      context,
-      (createOptions, trackSession) => this.attachSession(context, createOptions, trackSession),
-      (session) => this.resumeCodex(session, context),
+      poolContext,
+      (context, createOptions, trackSession) =>
+        this.attachSession(context, createOptions, trackSession),
+      (context, session) => this.resumeCodex(session, context),
     );
   }
 
   // runInSandbox holds the session a run opens, runs Codex in it and reads what came out.
   // Once Codex is running it works without us, so a shutdown leaves it to the next process.
   private async runInSandbox(
-    context: SandboxRunContext,
+    poolContext: SandboxRunContext,
     openSession: (
+      context: RunContext,
       createOptions: Record<string, unknown>,
       trackSession: (session: SandboxSession) => void,
       terminate: () => Promise<void>,
     ) => Promise<SandboxSession>,
-    runCodex: (session: SandboxSession) => Promise<CodexRunResult>,
+    runCodex: (context: RunContext, session: SandboxSession) => Promise<CodexRunResult>,
   ): Promise<WorkerResult> {
-    const missing = [resolveGitHubTokenEnv(this.config, this.repoFor(context))];
+    const missing = [resolveGitHubTokenEnv(this.config, this.repoFor(poolContext))];
     if (this.config.worker.codexAuthMode === 'access_token') {
       missing.push(this.config.worker.codexAccessTokenEnv);
     } else if (this.config.worker.codexAuthMode === 'api_key') {
       missing.push(this.config.worker.codexApiKeyEnv);
     }
-    if (context.task.workflow === 'log_review' && this.config.mcp.grafana.enabled) {
+    if (poolContext.task.workflow === 'log_review' && this.config.mcp.grafana.enabled) {
       missing.push(...grafanaMcpRequiredEnvNames(this.config));
     }
     const missingEnv = missing.filter((name) => !this.env[name]);
@@ -216,6 +225,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       );
     }
 
+    const context = redactingContext(poolContext, secretRedactor(this.runSecrets(poolContext)));
     const createOptions = this.createOptions(context);
     const provider = this.provider;
     let session: SandboxSession | undefined;
@@ -259,11 +269,11 @@ export class SandboxWorkerRunner implements SandboxRunner {
     context.signal.addEventListener('abort', abortHandler, { once: true });
 
     try {
-      const opened = await openSession(createOptions, trackSession, terminate);
+      const opened = await openSession(context, createOptions, trackSession, terminate);
       const sandboxSessionId = opened.id;
       releasable = true;
 
-      const result = await runCodex(opened);
+      const result = await runCodex(context, opened);
       for (const event of result.events) {
         const type = codexEventType(event);
         // Coarse thread/turn lifecycle events go on the timeline; per-item details
@@ -288,9 +298,11 @@ export class SandboxWorkerRunner implements SandboxRunner {
       const summary = summarizeResult(result, provider.name);
       const artifact = await context.writeSandboxRunArtifact(
         'codex-result.json',
-        JSON.stringify(redactUnknown(result), null, 2),
+        JSON.stringify(redactUnknown(result, context.redact), null, 2),
       );
-      const structuredOutputText = finalResponseText(result);
+      // Masked again because unescaping the JSON events can reveal a secret the raw output
+      // held escaped.
+      const structuredOutputText = context.redact(finalResponseText(result));
       const noPrParse =
         isImplementationRun(context.task) && !codexFailed
           ? parseFixNoPrOutcome(structuredOutputText)
@@ -326,7 +338,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       const handoffArtifact = handoffExtraction
         ? await context.writeSandboxRunArtifact(
             'implementation-handoffs.json',
-            JSON.stringify(redactUnknown(handoffExtraction), null, 2),
+            JSON.stringify(redactUnknown(handoffExtraction, context.redact), null, 2),
           )
         : undefined;
       if (handoffExtraction) {
@@ -351,7 +363,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       const linearVerificationArtifact = linearVerification
         ? await context.writeSandboxRunArtifact(
             'linear-verification.json',
-            JSON.stringify(redactUnknown(linearVerification), null, 2),
+            JSON.stringify(redactUnknown(linearVerification, context.redact), null, 2),
           )
         : undefined;
       if (linearVerifyParse) {
@@ -399,7 +411,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
       });
       const verificationArtifact = await context.writeSandboxRunArtifact(
         'side-effect-verification.json',
-        JSON.stringify(redactUnknown(verification), null, 2),
+        JSON.stringify(redactUnknown(verification, context.redact), null, 2),
       );
       await terminate();
       await this.signPushedCommits(context, pushedPullRequest(context.task, verification));
@@ -460,12 +472,12 @@ export class SandboxWorkerRunner implements SandboxRunner {
         });
         throw new SandboxRunReleasedError(context.sandboxRun.id);
       }
-      await context.publishEvent({
-        type: 'agent.failed',
-        message: error instanceof Error ? error.message : String(error),
-      });
+      // Masked in place, so the pool still tells a lost run from a failed one by its class.
+      const failure = error instanceof Error ? error : new Error(String(error));
+      failure.message = context.redact(failure.message);
+      await context.publishEvent({ type: 'agent.failed', message: failure.message });
       await terminate();
-      throw error;
+      throw failure;
     } finally {
       context.signal.removeEventListener('abort', abortHandler);
     }
@@ -694,6 +706,23 @@ export class SandboxWorkerRunner implements SandboxRunner {
     return options;
   }
 
+  // runSecrets lists every credential the orchestrator can give a sandbox, so a run's output is
+  // masked by value. Masking one this run did not get is harmless.
+  private runSecrets(context: SandboxRunContext): Array<string | undefined> {
+    const repo = this.repoFor(context);
+    const githubToken = this.env[resolveGitHubTokenEnv(this.config, repo)]!;
+    return [
+      githubToken,
+      // Git sends the token as the base64 of `x-access-token:<token>` in its extraheader.
+      Buffer.from(`x-access-token:${githubToken}`).toString('base64'),
+      this.env[this.config.worker.codexAccessTokenEnv],
+      this.env[this.config.worker.codexApiKeyEnv],
+      ...(this.config.worker.codexAuthMode === 'capsule' ? this.hostCodexAuthSecrets() : []),
+      ...grafanaMcpRequiredEnvNames(this.config).map((name) => this.env[name]),
+      ...resolveWorkerSecretEnvs(this.config, repo).map((name) => this.env[name]),
+    ];
+  }
+
   // Announces a pre-Codex stage on the timeline/log and returns it for the
   // caller's retry-context bookkeeping; the event write is best-effort.
   private async beginStage(
@@ -773,7 +802,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
   // signPushedCommits signs the commits of the pull request a run pushed to; a failure is reported,
   // not raised, and leaves them for the next pass on it.
   private async signPushedCommits(
-    context: SandboxRunContext,
+    context: RunContext,
     pullRequestNumber: number | undefined,
   ): Promise<void> {
     const repo = this.repoFor(context);
@@ -794,7 +823,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
     try {
       outcome = await this.signWithRetries({ repo, pullRequestNumber, token, authorEmail });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = context.redact(error instanceof Error ? error.message : String(error));
       this.log.warn('signing the pull request commits failed', {
         repo,
         pr_number: pullRequestNumber,
@@ -1148,28 +1177,28 @@ export class SandboxWorkerRunner implements SandboxRunner {
   // Streams Codex's --json output to the worker log as it runs, so a stalled tool
   // call shows live, not only in the post-exit result; log-only, no timeline.
   private codexProgressSink(
-    runId: string,
+    context: RunContext,
     tail: OutputTail,
     logged = true,
   ): (output: SandboxExecOutput) => void {
-    const run = runId.slice(0, 8);
+    const run = context.sandboxRun.id.slice(0, 8);
     const stdout = new LineBuffer();
     const stderr = new LineBuffer();
     return (output) => {
       const buffer = output.isStderr ? stderr : stdout;
-      for (const line of buffer.push(output.data, output.isFinal).map(redactSensitiveText)) {
+      for (const line of buffer.push(output.data, output.isFinal).map(context.redact)) {
         tail.push(line);
         if (!logged) continue;
         if (output.isStderr) {
           this.log.debug('codex.stderr', { run, line: truncate(line, 500) });
         } else {
-          this.logCodexProgress(run, line);
+          this.logCodexProgress(run, line, context.redact);
         }
       }
     };
   }
 
-  private logCodexProgress(run: string, line: string): void {
+  private logCodexProgress(run: string, line: string, redact: (text: string) => string): void {
     let event: unknown;
     try {
       event = JSON.parse(line);
@@ -1179,13 +1208,13 @@ export class SandboxWorkerRunner implements SandboxRunner {
     }
     const type = codexEventType(event);
     if (isCodexMilestone(type)) {
-      this.log.info(type, { run, ...codexEventDetail(event) });
+      this.log.info(type, { run, ...codexEventDetail(event, redact) });
       return;
     }
     this.log.debug(type, {
       run,
-      ...codexEventDetail(event),
-      event: truncate(JSON.stringify(redactUnknown(event)), 800),
+      ...codexEventDetail(event, redact),
+      event: truncate(JSON.stringify(redactUnknown(event, redact)), 800),
     });
   }
 
@@ -1202,7 +1231,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
   // a resumed run's first model is already running, so it is followed, not started.
   private async runCodex(
     session: SandboxSession,
-    context: SandboxRunContext,
+    context: RunContext,
     models: string[],
     resumed = false,
   ): Promise<CodexRunResult> {
@@ -1242,7 +1271,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
         session,
         remoteJoin(this.contextDir(), 'codex-last-message.txt'),
       );
-      result = normalizeCodexResult(command, execResult, lastMessage);
+      result = normalizeCodexResult(command, execResult, context.redact, lastMessage);
 
       const failed = typeof result.exitCode === 'number' && result.exitCode !== 0;
       const nextModel = models[attempt + 1];
@@ -1264,10 +1293,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
 
   // resumeCodex follows the Codex run the sandbox already has, with the models the seat
   // still had left behind it.
-  private async resumeCodex(
-    session: SandboxSession,
-    context: SandboxRunContext,
-  ): Promise<CodexRunResult> {
+  private async resumeCodex(session: SandboxSession, context: RunContext): Promise<CodexRunResult> {
     const model = (await this.readCodexFile(session, CODEX_FILES.model)).trim();
     if (!model) throw new SandboxRunLostError('Codex was never started in the sandbox');
     await context.publishEvent({
@@ -1284,7 +1310,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
   // that fails is tried again: only a session that is gone, or the wall clock, ends it.
   private async followCodex(
     session: SandboxSession,
-    context: SandboxRunContext,
+    context: RunContext,
     tail: OutputTail,
     resumed: boolean,
   ): Promise<SandboxExecResult> {
@@ -1292,9 +1318,9 @@ export class SandboxWorkerRunner implements SandboxRunner {
     const encoder = new TextEncoder();
     const stdout = new CodexOutputFile(CODEX_FILES.stdout, false);
     const stderr = new CodexOutputFile(CODEX_FILES.stderr, true);
-    const logged = this.codexProgressSink(context.sandboxRun.id, tail);
+    const logged = this.codexProgressSink(context, tail);
     // Keep what a resumed run printed before the resume out of the log; the tail still has it.
-    let sink = resumed ? this.codexProgressSink(context.sandboxRun.id, tail, false) : logged;
+    let sink = resumed ? this.codexProgressSink(context, tail, false) : logged;
     let current = session;
 
     for (;;) {
@@ -1323,7 +1349,7 @@ export class SandboxWorkerRunner implements SandboxRunner {
         if (context.signal.aborted) throw error;
         this.log.warn('reading the codex run failed; reading it again', {
           sandbox_run_id: context.sandboxRun.id,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: context.redact(error instanceof Error ? error.message : String(error)),
         });
         current = await this.reopenSession(current, context);
       }
@@ -1376,14 +1402,14 @@ export class SandboxWorkerRunner implements SandboxRunner {
 
   // writeOutputTail leaves the end of the output as an artifact. It answers instead of
   // throwing: a post-mortem that fails must not become the run's failure.
-  private async writeOutputTail(context: SandboxRunContext, tail: OutputTail): Promise<void> {
+  private async writeOutputTail(context: RunContext, tail: OutputTail): Promise<void> {
     if (tail.isEmpty()) return;
     try {
       await context.writeSandboxRunArtifact('codex-output-tail.txt', tail.text());
     } catch (error) {
       this.log.warn('could not write the codex output tail', {
         sandbox_run_id: context.sandboxRun.id,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: context.redact(error instanceof Error ? error.message : String(error)),
       });
     }
   }
@@ -1600,32 +1626,58 @@ export function finalAgentMessageText(events: unknown[]): string | undefined {
 }
 
 function normalizeUnknown(value: unknown): Record<string, unknown> {
-  const redacted = redactUnknown(value);
-  if (typeof redacted === 'object' && redacted !== null && !Array.isArray(redacted)) {
-    return redacted as Record<string, unknown>;
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
   }
-  return { value: redacted };
+  return { value };
 }
 
-function redactUnknown(value: unknown, depth = 0): unknown {
-  if (typeof value === 'string') return redactSensitiveText(value);
+function redactUnknown(value: unknown, redact: (text: string) => string, depth = 0): unknown {
+  if (typeof value === 'string') return redact(value);
   if (typeof value !== 'object' || value === null) return value;
   if (value instanceof Uint8Array) return '[binary]';
   if (depth > 8) return '[redacted-depth-limit]';
-  if (Array.isArray(value)) return value.map((item) => redactUnknown(item, depth + 1));
+  if (Array.isArray(value)) return value.map((item) => redactUnknown(item, redact, depth + 1));
 
   const output: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(value)) {
-    output[key] = redactUnknown(nested, depth + 1);
+    output[key] = redactUnknown(nested, redact, depth + 1);
   }
   return output;
+}
+
+// RunContext masks the run's secrets in every event and artifact it records; redact masks
+// whatever else the run reports.
+interface RunContext extends SandboxRunContext {
+  redact(text: string): string;
+}
+
+export function redactingContext(
+  context: SandboxRunContext,
+  redact: (text: string) => string,
+): RunContext {
+  return {
+    ...context,
+    redact,
+    publishEvent: (event) =>
+      context.publishEvent({
+        ...event,
+        message: redactUnknown(event.message, redact) as string | undefined,
+        data: redactUnknown(event.data, redact) as Record<string, unknown> | undefined,
+      }),
+    writeSandboxRunArtifact: (name, content) =>
+      context.writeSandboxRunArtifact(
+        name,
+        typeof content === 'string' ? redact(content) : content,
+      ),
+  };
 }
 
 function safeEventData(value: Record<string, unknown>): Record<string, unknown> {
   return {
     ...value,
-    githubToken: value.githubToken ? '[redacted]' : undefined,
-    env: '[redacted]',
+    githubToken: value.githubToken ? REDACTED : undefined,
+    env: REDACTED,
   };
 }
 
@@ -1773,17 +1825,18 @@ const CAPACITY_REFUSAL = /model is at capacity/i;
 function normalizeCodexResult(
   command: string,
   result: SandboxExecResult,
+  redact: (text: string) => string,
   lastMessage?: string,
 ): CodexRunResult {
-  const stdout = redactSensitiveText(execStdout(result));
-  const stderr = redactSensitiveText(execStderr(result));
+  const stdout = redact(execStdout(result));
+  const stderr = redact(execStderr(result));
   const events = parseJsonLines(stdout);
   return {
     command,
     exitCode: result.exitCode,
     stdout,
     stderr,
-    lastMessage: lastMessage === undefined ? undefined : redactSensitiveText(lastMessage),
+    lastMessage: lastMessage === undefined ? undefined : redact(lastMessage),
     costUsd: extractCostUsd(result, events),
     events,
     raw: result,
@@ -1876,7 +1929,10 @@ export function isCodexMilestone(type: string): boolean {
 
 // Fields that identify a stuck action sit at the top level so the log line is
 // scannable; the command Codex is running is the primary signal for a hang.
-export function codexEventDetail(event: unknown): Record<string, unknown> {
+export function codexEventDetail(
+  event: unknown,
+  redact: (text: string) => string,
+): Record<string, unknown> {
   if (typeof event !== 'object' || event === null || Array.isArray(event)) return {};
   const record = event as Record<string, unknown>;
   const item = record.item;
@@ -1888,10 +1944,10 @@ export function codexEventDetail(event: unknown): Record<string, unknown> {
     if (typeof itemType === 'string' && itemType.length > 0) detail.item = itemType;
   }
   if (typeof source.command === 'string') {
-    detail.command = truncate(redactSensitiveText(source.command), 500);
+    detail.command = truncate(redact(source.command), 500);
   }
   if (typeof source.text === 'string') {
-    detail.text = truncate(redactSensitiveText(source.text), 500);
+    detail.text = truncate(redact(source.text), 500);
   }
   if (typeof source.status === 'string') detail.status = source.status;
   if (typeof source.exit_code === 'number') detail.exit_code = source.exit_code;

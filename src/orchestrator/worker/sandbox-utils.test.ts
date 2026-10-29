@@ -13,6 +13,7 @@ import {
   redactSensitiveText,
   remoteJoin,
   renderShellEnvironment,
+  secretRedactor,
   shellQuote,
   streamToBytes,
   stringOption,
@@ -52,7 +53,7 @@ describe('assertExecSucceeded', () => {
         '',
         'fatal: https://x-access-token:ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl@github.com/acme/repo not found',
       ),
-      want: /step failed with exit code 1: fatal: https:\/\/x-access-token:\[redacted-github-token\]@github\.com\/acme\/repo not found$/,
+      want: /step failed with exit code 1: fatal: https:\/\/x-access-token:\[\*\*\*\*\*\]@github\.com\/acme\/repo not found$/,
     },
     {
       name: 'When the detail is longer than the cap then should truncate it',
@@ -77,17 +78,17 @@ describe('redactSensitiveText', () => {
     {
       name: 'When the text holds a `github_pat_` token then should redact it',
       input: 'GH_TOKEN=github_pat_11ABCDEFG0123456789abc_0123456789abcdefABCDEF rejected',
-      want: 'GH_TOKEN=[redacted-github-token] rejected',
+      want: 'GH_TOKEN=[*****] rejected',
     },
     {
       name: 'When the text holds an installation token then should redact its dotted parts too',
       input: 'token ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl rejected',
-      want: 'token [redacted-github-token] rejected',
+      want: 'token [*****] rejected',
     },
     {
       name: 'When the text holds a `ghp_` token then should redact it',
       input: 'GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 rejected',
-      want: 'GH_TOKEN=[redacted-github-token] rejected',
+      want: 'GH_TOKEN=[*****] rejected',
     },
     {
       name: 'When the text holds no token then should return it unchanged',
@@ -99,6 +100,47 @@ describe('redactSensitiveText', () => {
   for (const testCase of cases) {
     test(testCase.name, () => {
       assert.equal(redactSensitiveText(testCase.input), testCase.want);
+    });
+  }
+});
+
+describe('secretRedactor', () => {
+  const cases: Array<{ name: string; secrets: Array<string | undefined>; want: string }> = [
+    {
+      name: 'When the text holds a secret then should mask each occurrence',
+      secrets: ['age-secret-key-1'],
+      want: 'SUPERAPP_DEV_AGE_KEY=[*****] and [*****] with [*****]',
+    },
+    {
+      name: 'When a secret carries surrounding whitespace then should mask it trimmed',
+      secrets: ['  age-secret-key-1\n'],
+      want: 'SUPERAPP_DEV_AGE_KEY=[*****] and [*****] with [*****]',
+    },
+    {
+      name: 'When a secret spans several lines then should mask each line on its own',
+      secrets: ['# created: 2026-10-28\nage-secret-key-1'],
+      want: 'SUPERAPP_DEV_AGE_KEY=[*****] and [*****] with [*****]',
+    },
+    {
+      name: 'When a secret contains another then should mask the longer one whole',
+      secrets: ['secret-key', 'age-secret-key-1'],
+      want: 'SUPERAPP_DEV_AGE_KEY=[*****] and [*****] with [*****]',
+    },
+    {
+      name: 'When a secret is shorter than `8` characters or missing then should mask only the GitHub token',
+      secrets: ['age-sec', undefined, ''],
+      want: 'SUPERAPP_DEV_AGE_KEY=age-secret-key-1 and age-secret-key-1 with [*****]',
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.equal(
+        secretRedactor(testCase.secrets)(
+          'SUPERAPP_DEV_AGE_KEY=age-secret-key-1 and age-secret-key-1 with ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8',
+        ),
+        testCase.want,
+      );
     });
   }
 });

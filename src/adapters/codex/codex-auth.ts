@@ -35,6 +35,17 @@ export function hostCodexAuthExists(): boolean {
   }
 }
 
+// hostCodexAuthSecrets returns the tokens in the host's auth.json, which capsule mode copies
+// into every sandbox.
+export function hostCodexAuthSecrets(): string[] {
+  try {
+    const snapshot = readHostCodexAuth();
+    return snapshot ? credentialValues(JSON.parse(snapshot.contents)) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function resetCodexAuthCacheForTest(): void {
   hostCodexAuthCache = null;
   pushedRemoteAuthHashes.clear();
@@ -138,6 +149,16 @@ function readHostCodexFile(
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
+}
+
+// credentialValues collects only the strings under token, key or secret fields, so ids and
+// dates in auth.json are not masked.
+function credentialValues(value: unknown, key = ''): string[] {
+  if (typeof value === 'string') return /token|key|secret/i.test(key) ? [value] : [];
+  if (typeof value !== 'object' || value === null) return [];
+  return Object.entries(value).flatMap(([nestedKey, nested]) =>
+    credentialValues(nested, nestedKey),
+  );
 }
 
 async function ensureRemoteDirectory(session: SandboxSession, remotePath: string): Promise<void> {

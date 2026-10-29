@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { loadConfig, type AppConfig } from '../../config.js';
 import type { SandboxRun } from '../../store/types.js';
-import type { SandboxRunContext, SandboxTask } from '../sandbox-pool.js';
+import { type SandboxRunContext, SandboxRunLostError, type SandboxTask } from '../sandbox-pool.js';
 import type {
   SandboxExecOutput,
   SandboxProvider,
@@ -877,10 +877,8 @@ describe('the output tail of a codex run', () => {
         },
       ],
       want: {
-        tail: 'fatal: https://x-access-token:[redacted-github-token]@github.com/acme/repo not found\n',
-        logged: [
-          'fatal: https://x-access-token:[redacted-github-token]@github.com/acme/repo not found',
-        ],
+        tail: 'fatal: https://x-access-token:[*****]@github.com/acme/repo not found\n',
+        logged: ['fatal: https://x-access-token:[*****]@github.com/acme/repo not found'],
       },
     },
     {
@@ -893,8 +891,8 @@ describe('the output tail of a codex run', () => {
         },
       ],
       want: {
-        tail: 'remote: Invalid username or token [redacted-github-token]\n',
-        logged: ['remote: Invalid username or token [redacted-github-token]'],
+        tail: 'remote: Invalid username or token [*****]\n',
+        logged: ['remote: Invalid username or token [*****]'],
       },
     },
     {
@@ -903,8 +901,8 @@ describe('the output tail of a codex run', () => {
         { exitCode: 1, stdout: 'GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 rejected' },
       ],
       want: {
-        tail: 'GH_TOKEN=[redacted-github-token] rejected\n',
-        logged: ['GH_TOKEN=[redacted-github-token] rejected'],
+        tail: 'GH_TOKEN=[*****] rejected\n',
+        logged: ['GH_TOKEN=[*****] rejected'],
       },
     },
     {
@@ -916,8 +914,8 @@ describe('the output tail of a codex run', () => {
         },
       ],
       want: {
-        tail: 'GH_TOKEN=[redacted-github-token] rejected\n',
-        logged: ['GH_TOKEN=[redacted-github-token] rejected'],
+        tail: 'GH_TOKEN=[*****] rejected\n',
+        logged: ['GH_TOKEN=[*****] rejected'],
       },
     },
     {
@@ -967,13 +965,30 @@ describe('the output tail of a codex run', () => {
     const context = fakeContext(events);
     context.writeSandboxRunArtifact = (name) =>
       name === 'codex-output-tail.txt'
-        ? Promise.reject(new Error('the artifacts directory is gone'))
+        ? Promise.reject(
+            new Error(
+              'the artifacts directory is gone for ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8',
+            ),
+          )
         : Promise.resolve(name);
+    const logs = captureLogs(runner);
 
     const result = await runner.run(context);
 
-    assert.equal(result.status, 'failed');
-    assert.equal(result.error, 'codex_exec_failed');
+    assert.deepEqual(
+      {
+        status: result.status,
+        error: result.error,
+        warned: logs
+          .filter((log) => log.message === 'could not write the codex output tail')
+          .map((log) => log.fields?.reason),
+      },
+      {
+        status: 'failed',
+        error: 'codex_exec_failed',
+        warned: ['the artifacts directory is gone for [*****]'],
+      },
+    );
   });
 });
 
@@ -989,7 +1004,7 @@ describe('the summary of a codex run', () => {
       lastMessage:
         'Pushed with https://x-access-token:ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl@github.com/acme/repo',
       codexExecResults: [{ exitCode: 0 }],
-      want: 'Pushed with https://x-access-token:[redacted-github-token]@github.com/acme/repo',
+      want: 'Pushed with https://x-access-token:[*****]@github.com/acme/repo',
     },
     {
       name: 'When the run left no last message and stderr holds a GitHub token then should redact it',
@@ -997,7 +1012,7 @@ describe('the summary of a codex run', () => {
       codexExecResults: [
         { exitCode: 0, stderr: 'GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 rejected' },
       ],
-      want: 'GH_TOKEN=[redacted-github-token] rejected',
+      want: 'GH_TOKEN=[*****] rejected',
     },
   ];
 
@@ -1025,23 +1040,33 @@ describe('following a detached codex run', () => {
     session: FakeSessionOptions;
     attach?: (sessionId: string) => Promise<FakeSession | undefined>;
     startedAt?: number;
-    want: { outcome: RunOutcome; reopened: number; tail: string | undefined };
+    want: { outcome: RunOutcome; reopened: number; tail: string | undefined; warned: string[] };
   }> = [
     {
       name: 'When Codex exits after a few reads then should answer when it exits',
       session: { codexExecResults: [{ exitCode: 0, stdout: 'done' }], codexReadsBeforeExit: 2 },
-      want: { outcome: { status: 'succeeded' }, reopened: 0, tail: undefined },
+      want: { outcome: { status: 'succeeded' }, reopened: 0, tail: undefined, warned: [] },
     },
     {
       name: 'When a read fails and the sandbox is still there then should read again',
-      session: { codexReadErrors: [streamClosed] },
-      want: { outcome: { status: 'succeeded' }, reopened: 1, tail: undefined },
+      session: { codexReadErrors: [new Error('stream closed reading gh-token')] },
+      want: {
+        outcome: { status: 'succeeded' },
+        reopened: 1,
+        tail: undefined,
+        warned: ['stream closed reading [*****]'],
+      },
     },
     {
       name: 'When a read fails and the provider cannot answer then should read the same session again',
       session: { codexReadErrors: [streamClosed] },
       attach: () => Promise.reject(new Error('provider unreachable')),
-      want: { outcome: { status: 'succeeded' }, reopened: 1, tail: undefined },
+      want: {
+        outcome: { status: 'succeeded' },
+        reopened: 1,
+        tail: undefined,
+        warned: ['sandbox run stream closed before exit'],
+      },
     },
     {
       name: 'When a read fails and the sandbox is gone then should keep what it printed and report the run lost',
@@ -1055,6 +1080,7 @@ describe('following a detached codex run', () => {
         outcome: { rejected: 'SandboxRunLostError: Fake sandbox only is gone' },
         reopened: 1,
         tail: 'the last thing it printed\n',
+        warned: ['sandbox run stream closed before exit'],
       },
     },
     {
@@ -1065,6 +1091,7 @@ describe('following a detached codex run', () => {
         outcome: { rejected: 'Error: Codex did not finish within 60s.' },
         reopened: 0,
         tail: undefined,
+        warned: [],
       },
     },
   ];
@@ -1077,6 +1104,7 @@ describe('following a detached codex run', () => {
         attach: c.attach,
       });
       const sandboxRun = { ...fakeSandboxRun(), startedAt: c.startedAt ?? Date.now() };
+      const logs = captureLogs(runner);
 
       const outcome = await runOutcome(
         runner.run(fakeContext([], new AbortController(), fakeTask(), sandboxRun, artifacts)),
@@ -1087,6 +1115,9 @@ describe('following a detached codex run', () => {
           outcome,
           reopened: operations.filter((operation) => operation === 'attach:only').length,
           tail: artifacts.find((artifact) => artifact.name === 'codex-output-tail.txt')?.content,
+          warned: logs
+            .filter((log) => log.message === 'reading the codex run failed; reading it again')
+            .map((log) => log.fields?.reason),
         },
         c.want,
       );
@@ -1421,6 +1452,160 @@ describe('repo secret envs in the sandbox session', () => {
   }
 });
 
+describe('the secrets a run was given', () => {
+  const cases: Array<{
+    name: string;
+    config?: (config: AppConfig) => void;
+    env?: Record<string, string>;
+    printed: string;
+  }> = [
+    {
+      name: 'When the run prints its GitHub token then should mask it',
+      printed: 'leaked gh-token',
+    },
+    {
+      name: 'When the run prints the git extraheader of its GitHub token then should mask it',
+      printed: 'leaked eC1hY2Nlc3MtdG9rZW46Z2gtdG9rZW4=',
+    },
+    {
+      name: 'When the run prints the Codex access token then should mask it',
+      env: { CODEX_ACCESS_TOKEN: 'codex-access-token' },
+      printed: 'leaked codex-access-token',
+    },
+    {
+      name: 'When the run prints the Codex API key then should mask it',
+      printed: 'leaked codex-key',
+    },
+    {
+      name: 'When the run prints the Grafana MCP token then should mask it',
+      config: (config) => {
+        config.mcp.grafana.auth = 'service_account';
+      },
+      env: { GRAFANA_SA_TOKEN: 'grafana-sa-token' },
+      printed: 'leaked grafana-sa-token',
+    },
+    {
+      name: 'When the run prints a repo secret env then should mask it',
+      config: (config) => {
+        config.worker.repos['acme/web.app'] = { secretEnvs: ['SUPERAPP_DEV_AGE_KEY'] };
+      },
+      env: { SUPERAPP_DEV_AGE_KEY: 'age-secret-key-1' },
+      printed: 'leaked age-secret-key-1',
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const events: Array<{ type: string; data?: Record<string, unknown>; message?: string }> = [];
+      const artifacts: Array<{ name: string; content: string }> = [];
+      const session = fakeSession('only', operations, {
+        codexExecResults: [{ exitCode: 1, stdout: c.printed }],
+        readFileContent: '',
+      });
+      const runner = fakeRunner([session], operations, {
+        config: c.config,
+        env: (env) => Object.assign(env, c.env),
+      });
+      const logs = captureLogs(runner);
+
+      const result = await runner.run(
+        fakeContext(events, new AbortController(), fakeTask(), fakeSandboxRun(), artifacts),
+      );
+
+      assert.deepEqual(
+        {
+          summary: result.summary,
+          finished: events.find((event) => event.type === 'agent.finished')?.data?.stdout,
+          tail: artifacts.find((artifact) => artifact.name === 'codex-output-tail.txt')?.content,
+          logged: logs
+            .filter((log) => log.message === 'codex.stdout')
+            .map((log) => log.fields?.line),
+        },
+        {
+          summary: 'leaked [*****] Codex exited with status 1.',
+          finished: 'leaked [*****]\n',
+          tail: 'leaked [*****]\n',
+          logged: ['leaked [*****]'],
+        },
+      );
+    });
+  }
+});
+
+describe('the failure a run throws', () => {
+  const cases: Array<{
+    name: string;
+    codexAuthMode?: AppConfig['worker']['codexAuthMode'];
+    cloneError: Error;
+    want: { rejected: string; failed: string | undefined };
+  }> = [
+    {
+      name: 'When a setup step fails with the GitHub token in its message then should rethrow it masked',
+      cloneError: new Error('clone failed for gh-token'),
+      want: {
+        rejected: 'Error: clone failed for [*****]',
+        failed: 'clone failed for [*****]',
+      },
+    },
+    {
+      name: 'When the failure is a lost run then should keep its class',
+      cloneError: new SandboxRunLostError('sandbox gone holding gh-token'),
+      want: {
+        rejected: 'SandboxRunLostError: sandbox gone holding [*****]',
+        failed: 'sandbox gone holding [*****]',
+      },
+    },
+    {
+      name: 'When the failure is not an `Error` then should rethrow it as one, masked',
+      cloneError: 'refused gh-token' as unknown as Error,
+      want: { rejected: 'Error: refused [*****]', failed: 'refused [*****]' },
+    },
+    {
+      name: 'When Codex auth is `capsule` then should mask the host auth tokens',
+      codexAuthMode: 'capsule',
+      cloneError: new Error('clone saw capsule-access-token'),
+      want: {
+        rejected: 'Error: clone saw [*****]',
+        failed: 'clone saw [*****]',
+      },
+    },
+    {
+      name: 'When Codex auth is not `capsule` then should leave the host auth tokens alone',
+      codexAuthMode: 'api_key',
+      cloneError: new Error('clone saw capsule-access-token'),
+      want: {
+        rejected: 'Error: clone saw capsule-access-token',
+        failed: 'clone saw capsule-access-token',
+      },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const operations: string[] = [];
+      const events: Array<{ type: string; data?: Record<string, unknown>; message?: string }> = [];
+      const session = fakeSession('only', operations, { gitCloneError: c.cloneError });
+      const runner = fakeRunner([session], operations, {
+        config: (config) => {
+          config.worker.codexAuthMode = c.codexAuthMode ?? 'api_key';
+        },
+        hostCodexAuthSecrets: () => ['capsule-access-token'],
+      });
+
+      const outcome = await runOutcome(runner.run(fakeContext(events)));
+
+      assert.deepEqual(
+        {
+          ...outcome,
+          failed: events.find((event) => event.type === 'agent.failed')?.message,
+        },
+        c.want,
+      );
+    });
+  }
+});
+
 describe('sandbox create sizing', () => {
   const RESOURCES = { cpuCores: 8, memoryMb: 16384 };
   const cases: Array<{
@@ -1586,6 +1771,7 @@ describe('signing the commits a run pushed', () => {
       status: string;
       signed: Array<{ repo: string; pullRequestNumber: number; authorEmail: string }>;
       events: string[];
+      warned: string[];
     };
   }> = [
     {
@@ -1595,29 +1781,30 @@ describe('signing the commits a run pushed', () => {
         status: 'succeeded',
         signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
         events: [],
+        warned: [],
       },
     },
     {
       name: 'When maintenance names no pull request then should sign nothing',
       task: maintenanceTask({ repo: 'acme/webapp' }),
-      want: { status: 'succeeded', signed: [], events: [] },
+      want: { status: 'succeeded', signed: [], events: [], warned: [] },
     },
     {
       name: 'When a linear verification names a pull request then should sign nothing',
       task: linearTask({ role: 'verify', pr_number: 4166 }),
-      want: { status: 'succeeded', signed: [], events: [] },
+      want: { status: 'succeeded', signed: [], events: [], warned: [] },
     },
     {
       name: 'When an implementation fails verification then should sign nothing',
       task: linearTask({}),
       finalMessage: 'done',
-      want: { status: 'failed', signed: [], events: [] },
+      want: { status: 'failed', signed: [], events: [], warned: [] },
     },
     {
       name: 'When an implementation declares `no_pr` then should sign nothing',
       task: linearTask({}),
       finalMessage: NO_PR_DECLARATION,
-      want: { status: 'skipped', signed: [], events: [] },
+      want: { status: 'skipped', signed: [], events: [], warned: [] },
     },
     {
       name: 'When an implementation continues a pull request then should sign it',
@@ -1626,24 +1813,35 @@ describe('signing the commits a run pushed', () => {
         status: 'succeeded',
         signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
         events: [],
+        warned: [],
       },
     },
     {
       name: 'When the task names no repository then should sign nothing',
       task: maintenanceTask({ pr_number: 4166 }),
-      want: { status: 'succeeded', signed: [], events: [] },
+      want: { status: 'succeeded', signed: [], events: [], warned: [] },
     },
     {
       name: 'When `worker.git_author_name` is unset then should skip signing',
       task: linearTask({ pr_number: 4166 }),
       gitAuthorName: '  ',
-      want: { status: 'succeeded', signed: [], events: ['github.commits_signing_skipped'] },
+      want: {
+        status: 'succeeded',
+        signed: [],
+        events: ['github.commits_signing_skipped'],
+        warned: [],
+      },
     },
     {
       name: 'When `worker.git_author_email` is unset then should skip signing',
       task: linearTask({ pr_number: 4166 }),
       gitAuthorEmail: '  ',
-      want: { status: 'succeeded', signed: [], events: ['github.commits_signing_skipped'] },
+      want: {
+        status: 'succeeded',
+        signed: [],
+        events: ['github.commits_signing_skipped'],
+        warned: [],
+      },
     },
     {
       name: 'When signing fails once then should try again and report the commits signed',
@@ -1656,12 +1854,17 @@ describe('signing the commits a run pushed', () => {
           { repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' },
         ],
         events: ['github.commits_signed'],
+        warned: [],
       },
     },
     {
       name: 'When signing fails every attempt then should report it and still succeed the run',
       task: linearTask({ pr_number: 4166 }),
-      signing: [new Error('HTTP 502'), new Error('HTTP 502'), new Error('HTTP 502')],
+      signing: [
+        new Error('HTTP 502'),
+        new Error('HTTP 502'),
+        new Error('HTTP 502 for ghs_4127511_eyJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJhIn0.c2ln-bmF0_dXJl'),
+      ],
       want: {
         status: 'succeeded',
         signed: [
@@ -1670,6 +1873,7 @@ describe('signing the commits a run pushed', () => {
           { repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' },
         ],
         events: ['github.commits_signing_failed'],
+        warned: ['HTTP 502 for [*****]'],
       },
     },
     {
@@ -1682,6 +1886,7 @@ describe('signing the commits a run pushed', () => {
         status: 'succeeded',
         signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
         events: ['github.commits_signing_failed'],
+        warned: ['GitHub did not sign the commit re-created for acme/webapp#4166'],
       },
     },
     {
@@ -1692,6 +1897,7 @@ describe('signing the commits a run pushed', () => {
         status: 'succeeded',
         signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
         events: ['github.commits_signed'],
+        warned: [],
       },
     },
     {
@@ -1702,6 +1908,7 @@ describe('signing the commits a run pushed', () => {
         status: 'succeeded',
         signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
         events: ['github.commits_signing_skipped'],
+        warned: [],
       },
     },
     {
@@ -1712,6 +1919,7 @@ describe('signing the commits a run pushed', () => {
         status: 'succeeded',
         signed: [{ repo: 'acme/webapp', pullRequestNumber: 4166, authorEmail: 'agent@acme.test' }],
         events: [],
+        warned: [],
       },
     },
   ];
@@ -1737,6 +1945,8 @@ describe('signing the commits a run pushed', () => {
         },
       });
 
+      const logs = captureLogs(runner);
+
       const result = await runner.run(fakeContext(events, new AbortController(), c.task));
 
       assert.deepEqual(
@@ -1744,6 +1954,9 @@ describe('signing the commits a run pushed', () => {
           status: result.status,
           signed,
           events: events.map((event) => event.type).filter((type) => type.startsWith('github.')),
+          warned: logs
+            .filter((log) => log.message === 'signing the pull request commits failed')
+            .map((log) => log.fields?.error),
         },
         c.want,
       );
@@ -1838,6 +2051,7 @@ function fakeRunner(
     getPullRequestHead?: SandboxWorkerRunnerDeps['getPullRequestHead'];
     signPullRequestCommits?: SandboxWorkerRunnerDeps['signPullRequestCommits'];
     attach?: (sessionId: string) => Promise<FakeSession | undefined>;
+    hostCodexAuthSecrets?: SandboxWorkerRunnerDeps['hostCodexAuthSecrets'];
   } = {},
 ): SandboxWorkerRunner {
   const config = fakeConfig();
@@ -1878,6 +2092,7 @@ function fakeRunner(
     signingRetryDelayMs: 0,
     codexPollIntervalMs: 0,
     ...(options.getPullRequestHead ? { getPullRequestHead: options.getPullRequestHead } : {}),
+    ...(options.hostCodexAuthSecrets ? { hostCodexAuthSecrets: options.hostCodexAuthSecrets } : {}),
     signPullRequestCommits:
       options.signPullRequestCommits ?? (async () => ({ status: 'already_signed' as const })),
   });

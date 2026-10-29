@@ -40,6 +40,7 @@ describe('loadConfig', () => {
         server: { host: '0.0.0.0', port: 3000, publicUrl: '' },
         auth: {
           adminTokenEnv: 'ORCHESTRATOR_ADMIN_TOKEN',
+          proxyJwt: null,
         },
         store: {
           dataPath: path.resolve(root, './data'),
@@ -229,6 +230,114 @@ describe('Server config the loader refuses', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+describe('Auth config', () => {
+  test('When `proxy_jwt` sets every key then should read the block', () => {
+    const config = loadYamlConfig(`
+auth:
+  proxy_jwt:
+    header: X-Pomerium-Jwt-Assertion
+    jwks_url: https://jardinero.example.test/.well-known/pomerium/jwks.json
+    audience: jardinero.example.test
+    issuer: jardinero.example.test
+`);
+
+    assert.deepEqual(config.auth.proxyJwt, {
+      header: 'X-Pomerium-Jwt-Assertion',
+      jwksUrl: 'https://jardinero.example.test/.well-known/pomerium/jwks.json',
+      audience: 'jardinero.example.test',
+      issuer: 'jardinero.example.test',
+    });
+  });
+});
+
+describe('Auth config the loader refuses', () => {
+  const cases: Array<{ name: string; yaml: string; wantError: RegExp }> = [
+    {
+      name: 'When `proxy_jwt` is not an object then should return error',
+      yaml: `
+auth:
+  proxy_jwt: true
+`,
+      wantError: /auth\.proxy_jwt must be an object/,
+    },
+    {
+      name: 'When `proxy_jwt` has no header then should return error',
+      yaml: `
+auth:
+  proxy_jwt:
+    jwks_url: https://jardinero.example.test/.well-known/pomerium/jwks.json
+    audience: jardinero.example.test
+    issuer: jardinero.example.test
+`,
+      wantError: /auth\.proxy_jwt\.header must be a non-empty string/,
+    },
+    {
+      name: 'When `proxy_jwt` has no `jwks_url` then should return error',
+      yaml: `
+auth:
+  proxy_jwt:
+    header: X-Pomerium-Jwt-Assertion
+    audience: jardinero.example.test
+    issuer: jardinero.example.test
+`,
+      wantError: /auth\.proxy_jwt\.jwks_url must be a non-empty string/,
+    },
+    {
+      name: 'When `proxy_jwt` has no audience then should return error',
+      yaml: `
+auth:
+  proxy_jwt:
+    header: X-Pomerium-Jwt-Assertion
+    jwks_url: https://jardinero.example.test/.well-known/pomerium/jwks.json
+    issuer: jardinero.example.test
+`,
+      wantError: /auth\.proxy_jwt\.audience must be a non-empty string/,
+    },
+    {
+      name: 'When `proxy_jwt` has a blank issuer then should return error',
+      yaml: `
+auth:
+  proxy_jwt:
+    header: X-Pomerium-Jwt-Assertion
+    jwks_url: https://jardinero.example.test/.well-known/pomerium/jwks.json
+    audience: jardinero.example.test
+    issuer: "  "
+`,
+      wantError: /auth\.proxy_jwt\.issuer must be a non-empty string/,
+    },
+    {
+      name: 'When the `jwks_url` is not a url then should return error',
+      yaml: `
+auth:
+  proxy_jwt:
+    header: X-Pomerium-Jwt-Assertion
+    jwks_url: not-a-url
+    audience: jardinero.example.test
+    issuer: jardinero.example.test
+`,
+      wantError: /auth\.proxy_jwt\.jwks_url must be an https URL/,
+    },
+    {
+      name: 'When the `jwks_url` is `http` then should return error',
+      yaml: `
+auth:
+  proxy_jwt:
+    header: X-Pomerium-Jwt-Assertion
+    jwks_url: http://jardinero.example.test/.well-known/pomerium/jwks.json
+    audience: jardinero.example.test
+    issuer: jardinero.example.test
+`,
+      wantError: /auth\.proxy_jwt\.jwks_url must be an https URL/,
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      assert.throws(() => loadYamlConfig(testCase.yaml), testCase.wantError);
+    });
+  }
 });
 
 describe('Loki config', () => {

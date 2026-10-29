@@ -10,6 +10,103 @@ const TOKEN_ENV = CONFIG.worker.githubTokenEnv;
 const REPOSITORY = 'acme/web.app';
 const PULL_REQUEST_NUMBER = 4688;
 
+describe('GitHubPullRequests.authorCanPush', () => {
+  const cases: AuthorAccessCase[] = [
+    {
+      name: 'When the answer is still fresh then should answer from memory',
+      asks: [{ atMs: 0 }, { atMs: 60_000, login: 'Lucio' }],
+      answers: [permission('write'), permission('read')],
+      want: { answers: [true, true], fetches: 1 },
+    },
+    {
+      name: 'When the answer is older than five minutes then should ask again',
+      asks: [{ atMs: 0 }, { atMs: 300_000 }],
+      answers: [permission('write'), permission('read')],
+      want: { answers: [true, false], fetches: 2 },
+    },
+    {
+      name: 'When there is no token then should answer no without asking',
+      withToken: false,
+      asks: [{ atMs: 0 }],
+      answers: [permission('write')],
+      want: { answers: [false], fetches: 0 },
+    },
+    {
+      name: 'When GitHub says the author cannot push then should answer no',
+      asks: [{ atMs: 0 }],
+      answers: [permission('read')],
+      want: { answers: [false], fetches: 1 },
+    },
+    {
+      name: 'When GitHub fails then should answer no and ask again next time',
+      asks: [{ atMs: 0 }, { atMs: 0 }],
+      answers: [new Response('nope', { status: 502 }), permission('write')],
+      want: { answers: [false, true], fetches: 2 },
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      let nowMs = 0;
+      const answers = [...c.answers];
+      let fetches = 0;
+      const github = new GitHubPullRequests(
+        CONFIG,
+        env(c.withToken),
+        (() => {
+          fetches += 1;
+          return Promise.resolve(answers.shift());
+        }) as unknown as typeof fetch,
+        () => nowMs,
+      );
+
+      const got: boolean[] = [];
+      for (const ask of c.asks) {
+        nowMs = ask.atMs;
+        got.push(await github.authorCanPush(REPOSITORY, ask.login ?? 'lucio'));
+      }
+
+      assert.deepEqual(got, c.want.answers);
+      assert.equal(fetches, c.want.fetches);
+    });
+  }
+});
+
+describe('GitHubPullRequests.isForkPullRequest', () => {
+  const cases: Array<{ name: string; withToken?: boolean; answer: () => Response; want: boolean }> =
+    [
+      {
+        name: 'When there is no token then should treat it as a fork',
+        withToken: false,
+        answer: () => jsonResponse(pullRequestHead(7)),
+        want: true,
+      },
+      {
+        name: 'When the head is in the repository itself then should say it is not a fork',
+        answer: () => jsonResponse(pullRequestHead(7)),
+        want: false,
+      },
+      {
+        name: 'When the head is in another repository then should say it is a fork',
+        answer: () => jsonResponse(pullRequestHead(8)),
+        want: true,
+      },
+      {
+        name: 'When GitHub fails then should treat it as a fork',
+        answer: () => new Response('nope', { status: 502 }),
+        want: true,
+      },
+    ];
+
+  for (const c of cases) {
+    test(c.name, async () => {
+      const github = new GitHubPullRequests(CONFIG, env(c.withToken), fetchAnswering(c.answer));
+
+      assert.equal(await github.isForkPullRequest(REPOSITORY, PULL_REQUEST_NUMBER), c.want);
+    });
+  }
+});
+
 describe('GitHubPullRequests.readPullRequest', () => {
   const cases: ReadCase[] = [
     {
@@ -267,6 +364,18 @@ function pullRequest(
   };
 }
 
+function permission(value: string): Response {
+  return jsonResponse({ permission: value });
+}
+
+function pullRequestHead(headRepositoryId: number): unknown {
+  return {
+    node_id: 'PR_node',
+    head: { ref: 'feature', repo: { id: headRepositoryId } },
+    base: { repo: { id: 7 } },
+  };
+}
+
 function openImplementationPr(): unknown {
   return {
     number: PULL_REQUEST_NUMBER,
@@ -274,8 +383,17 @@ function openImplementationPr(): unknown {
     html_url: `https://github.com/${REPOSITORY}/pull/${PULL_REQUEST_NUMBER}`,
     title: 'fix: checkout-service null payment handling',
     body: 'Source log review run id: old-run\nService/env: checkout-service / production',
-    head: { ref: 'agent/checkout-service-null-payment' },
+    head: { ref: 'agent/checkout-service-null-payment', repo: { id: 7 } },
+    base: { repo: { id: 7 } },
   };
+}
+
+interface AuthorAccessCase {
+  name: string;
+  withToken?: boolean;
+  asks: Array<{ atMs: number; login?: string }>;
+  answers: Response[];
+  want: { answers: boolean[]; fetches: number };
 }
 
 interface ReadCase {

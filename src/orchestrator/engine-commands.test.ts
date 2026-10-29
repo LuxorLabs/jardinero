@@ -37,6 +37,7 @@ beforeEach(() => {
   commands = createEngineCommands({
     config,
     store,
+    github: { authorCanPush: async () => true, isForkPullRequest: async () => false },
     engines: recordingEngines(),
     delegateTicket: async () => undefined,
     openTicketForRequest: async () => ({ identifier: 'JAR-58', linearIssueId: 'issue-uuid' }),

@@ -25,6 +25,7 @@ export interface PullRequestHead {
   nodeId: string;
   draft: boolean;
   headRef: string;
+  fromFork: boolean;
 }
 
 interface GitHubPrRequestOptions {
@@ -77,7 +78,12 @@ export async function getPullRequestHead(
     throw new Error(`GitHub PR lookup for ${ref} returned no head ref`);
   }
 
-  return { nodeId, draft: parsedBody.draft === true, headRef };
+  return {
+    nodeId,
+    draft: parsedBody.draft === true,
+    headRef,
+    fromFork: isForkPullRequest(parsedBody),
+  };
 }
 
 // markPullRequestReadyForReview flips a draft. Idempotent: a pull request that is
@@ -187,6 +193,7 @@ export async function getPullRequestState(options: {
 export interface OpenPullRequest {
   pullRequestNumber: number;
   headBranch?: string;
+  fromFork: boolean;
   isDraft: boolean;
   title?: string;
   body?: string;
@@ -242,6 +249,7 @@ export async function listOpenPullRequests(options: {
       found.push({
         pullRequestNumber: number,
         headBranch: typeof head?.ref === 'string' ? head.ref : undefined,
+        fromFork: isForkPullRequest(item),
         isDraft: item.draft === true,
         ...(typeof item.title === 'string' ? { title: item.title } : {}),
         ...(typeof item.body === 'string' ? { body: item.body } : {}),
@@ -250,6 +258,18 @@ export async function listOpenPullRequests(options: {
     if (body.length < pageSize) break;
   }
   return found;
+}
+
+// isForkPullRequest reports whether a pull request's head branch lives outside the repository
+// it targets; a deleted fork leaves the head with no repository.
+export function isForkPullRequest(pullRequest: Record<string, unknown>): boolean {
+  const headId = repositoryIdOf(pullRequest.head);
+  return headId === undefined || headId !== repositoryIdOf(pullRequest.base);
+}
+
+function repositoryIdOf(side: unknown): number | undefined {
+  const repo = isPlainObject(side) ? side.repo : undefined;
+  return isPlainObject(repo) && typeof repo.id === 'number' ? repo.id : undefined;
 }
 
 // CommitSigningOutcome is what signing a pull request did: nothing it had to do, the commits it

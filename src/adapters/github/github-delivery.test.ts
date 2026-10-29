@@ -24,12 +24,18 @@ let cleanup: () => void;
 let events: RecordedEvent[];
 let implementerEvents: RecordedEvent[];
 let scans: ScanTarget[];
+let asked: string[];
+let pushers: Set<string>;
+let forkAnswer: boolean;
 
 beforeEach(() => {
   ({ store, cleanup } = createTestStore());
   events = [];
   implementerEvents = [];
   scans = [];
+  asked = [];
+  pushers = new Set();
+  forkAnswer = true;
 });
 
 afterEach(() => {
@@ -69,12 +75,16 @@ describe('handleGitHubDelivery', () => {
       want: { event: 'onPrReopened' },
     },
     {
-      name: 'When the pull request left draft then should report its branch',
+      name: 'When the pull request left draft then should report its branch and where it lives',
       eventName: 'pull_request',
-      payload: pullRequestPayload('ready_for_review', { head: { ref: 'agent/fix-1' } }),
+      payload: pullRequestPayload('ready_for_review', {
+        head: { ref: 'agent/fix-1', repo: { id: 7 } },
+        base: { repo: { id: 7 } },
+      }),
       want: {
         event: 'onPrReadyForReview',
         headBranch: 'agent/fix-1',
+        fromFork: false,
       },
     },
     {
@@ -249,10 +259,9 @@ describe('handleGitHubDelivery', () => {
         assert.equal(events.at(0)?.checksAreRed, c.want.checksAreRed);
       }
       if (c.want.headBranch !== undefined) {
-        assert.equal(
-          (events.at(0)?.ref as { headBranch?: string } | undefined)?.headBranch,
-          c.want.headBranch,
-        );
+        const facts = events.at(0)?.ref as { headBranch?: string; fromFork?: boolean } | undefined;
+        assert.equal(facts?.headBranch, c.want.headBranch);
+        assert.equal(facts?.fromFork, c.want.fromFork);
       }
     });
   }
@@ -266,12 +275,73 @@ describe('handleGitHubDelivery', () => {
         body: 'done',
         user: { login: `${CONFIG.workflows.prMaintainer.agentLogin}[bot]` },
       },
-      want: { authoredByUs: true, mentionsUs: false, comment: false },
+      want: { authoredByUs: true, mentionsUs: false, comment: false, asked: [] },
     },
     {
       name: 'When the body carries our marker then should say the comment is ours',
       comment: { body: `done ${AGENT_PR_COMMENT_MARKER}`, user: { login: 'someone' } },
-      want: { authoredByUs: true, mentionsUs: false, comment: false },
+      want: { authoredByUs: true, mentionsUs: false, comment: false, asked: [] },
+    },
+    {
+      name: 'When `trusted_authors_only` is off then should not ask GitHub who the author is',
+      trustedAuthorsOnly: false,
+      comment: { body: 'note', user: { login: 'someone' } },
+      want: {
+        authoredByUs: false,
+        authorIsTrusted: false,
+        mentionsUs: false,
+        commentType: 'review',
+        asked: [],
+      },
+    },
+    {
+      name: 'When the author is an App then should trust it without asking GitHub',
+      comment: { body: 'note', user: { login: 'tenki-reviewer[bot]', type: 'Bot' } },
+      want: {
+        authoredByUs: false,
+        authorIsTrusted: true,
+        mentionsUs: false,
+        commentType: 'review',
+        asked: [],
+      },
+    },
+    {
+      name: 'When the comment names no author then should not trust it',
+      comment: { body: 'note' },
+      want: { authoredByUs: false, mentionsUs: false, commentType: 'review', asked: [] },
+    },
+    {
+      name: 'When the author can push to the repository then should trust them',
+      comment: { body: 'note', user: { login: 'lucio' } },
+      pushers: ['lucio'],
+      want: {
+        authoredByUs: false,
+        authorIsTrusted: true,
+        mentionsUs: false,
+        commentType: 'review',
+        asked: [`authorCanPush ${REPOSITORY} lucio`],
+      },
+    },
+    {
+      name: 'When the author cannot push to the repository then should not trust them',
+      comment: { body: 'note', user: { login: 'someone' } },
+      want: {
+        authoredByUs: false,
+        authorIsTrusted: false,
+        mentionsUs: false,
+        commentType: 'review',
+      },
+    },
+    {
+      name: 'When a review delivery carries a pull request from the repository itself then should say it is not a fork without asking GitHub',
+      comment: { body: 'note', user: { login: 'someone' } },
+      pullRequest: { head: { repo: { id: 7 } }, base: { repo: { id: 7 } } },
+      want: {
+        authoredByUs: false,
+        fromFork: false,
+        mentionsUs: false,
+        commentType: 'review',
+      },
     },
     {
       name: 'When the body tags the agent then should say it mentions us',
@@ -282,10 +352,20 @@ describe('handleGitHubDelivery', () => {
       want: { authoredByUs: false, mentionsUs: true, commentType: 'review' },
     },
     {
-      name: 'When the comment is on the conversation then should say a mark goes on the issue',
+      name: 'When the comment is on the conversation then should ask GitHub whether it is a fork and say a mark goes on the issue',
       eventName: 'issue_comment',
       comment: { id: 991, body: 'please fix', user: { login: 'someone' } },
-      want: { authoredByUs: false, mentionsUs: false, commentType: 'issue' },
+      fromFork: false,
+      want: {
+        authoredByUs: false,
+        fromFork: false,
+        mentionsUs: false,
+        commentType: 'issue',
+        asked: [
+          `authorCanPush ${REPOSITORY} someone`,
+          `isForkPullRequest ${REPOSITORY} ${PULL_REQUEST_NUMBER}`,
+        ],
+      },
     },
     {
       // A login can carry digits and dashes, so a bare substring would tag us for
@@ -331,18 +411,28 @@ describe('handleGitHubDelivery', () => {
 
   for (const c of commentFactCases) {
     test(c.name, async () => {
-      await handleGitHubDelivery(deps(c.config), {
+      pushers = new Set(c.pushers);
+      forkAnswer = c.fromFork ?? true;
+      const pullRequest = { number: PULL_REQUEST_NUMBER, ...c.pullRequest };
+      const config = structuredClone(c.config ?? CONFIG);
+      config.workflows.prMaintainer.trustedAuthorsOnly = c.trustedAuthorsOnly ?? true;
+      await handleGitHubDelivery(deps(config), {
         eventName: c.eventName ?? 'pull_request_review_comment',
         payload: {
           action: c.eventName === 'pull_request_review' ? 'submitted' : 'created',
           repository: { full_name: REPOSITORY },
-          pull_request: { number: PULL_REQUEST_NUMBER, ...c.pullRequest },
+          ...(c.eventName === 'issue_comment'
+            ? { issue: { ...pullRequest, pull_request: { url: 'https://api.test/x' } } }
+            : { pull_request: pullRequest }),
           comment: { id: 991, ...c.comment },
         },
       });
 
       const data = events.at(0)?.ref as CommentData | undefined;
       assert.equal(data?.authoredByUs, c.want.authoredByUs);
+      assert.equal(data?.authorIsTrusted, c.want.authorIsTrusted ?? false);
+      assert.equal(data?.fromFork, c.want.fromFork ?? true);
+      assert.deepEqual(asked, c.want.asked ?? [`authorCanPush ${REPOSITORY} someone`]);
       assert.equal(data?.mentionsUs, c.want.mentionsUs);
       assert.equal(data?.isDraft, c.want.isDraft ?? false);
       assert.equal(data?.isMerged, c.want.isMerged ?? false);
@@ -615,6 +705,16 @@ function deps(config: AppConfig = CONFIG) {
   return {
     config,
     store,
+    github: {
+      authorCanPush: (repositoryFullName: string, login: string) => {
+        asked.push(`authorCanPush ${repositoryFullName} ${login}`);
+        return Promise.resolve(pushers.has(login));
+      },
+      isForkPullRequest: (repositoryFullName: string, pullRequestNumber: number) => {
+        asked.push(`isForkPullRequest ${repositoryFullName} ${pullRequestNumber}`);
+        return Promise.resolve(forkAnswer);
+      },
+    },
     prMaintainer: recordingPrMaintainer(events),
     linearImplementer: recordingImplementer('linearImplementer', implementerEvents),
     fixImplementer: recordingImplementer('fixImplementer', implementerEvents),
@@ -744,6 +844,7 @@ interface DeliveryCase {
     headCommitSha?: string;
     checksAreRed?: boolean;
     headBranch?: string;
+    fromFork?: boolean;
   };
 }
 
@@ -758,11 +859,17 @@ interface GateCase {
 interface CommentFactCase {
   name: string;
   eventName?: string;
-  comment: { user?: { login: string } } & Record<string, unknown>;
+  comment: { user?: { login: string; type?: string } } & Record<string, unknown>;
   pullRequest?: Record<string, unknown>;
+  pushers?: string[];
+  fromFork?: boolean;
+  trustedAuthorsOnly?: boolean;
   config?: AppConfig;
   want: {
     authoredByUs: boolean;
+    authorIsTrusted?: boolean;
+    fromFork?: boolean;
+    asked?: string[];
     mentionsUs: boolean;
     isDraft?: boolean;
     isMerged?: boolean;

@@ -112,6 +112,7 @@ export class Orchestrator implements WorkflowEngines {
       {
         maxAttempts: config.workflows.prMaintainer.maxPushAttempts,
         maxRepliesPerThread: config.workflows.prMaintainer.maxRepliesPerThread,
+        trustedAuthorsOnly: config.workflows.prMaintainer.trustedAuthorsOnly,
         agentPullRequest: { branchPrefix: config.workflows.prMaintainer.pollBranchPrefix },
         checkWaitMs: config.workflows.prMaintainer.checkWaitMs,
       },

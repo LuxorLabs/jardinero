@@ -13,10 +13,16 @@ const unfingerprinted = {
   title: 'fix: checkout-service payment retries',
   body: 'Source log review run id: old-run\nService/env: checkout-service / production',
   headBranch: 'agent/old-run',
+  fromFork: false,
 };
 
 describe('matchOpenImplementationPr', () => {
   const cases: MatchCase[] = [
+    {
+      name: 'When the pull request comes from a fork then should not match it',
+      prs: [openPr({ fromFork: true })],
+      want: undefined,
+    },
     {
       name: 'When the pull request carries the fingerprint then should match it',
       prs: [openPr()],
@@ -226,6 +232,7 @@ function openPr(overrides: Partial<OpenPullRequestText> = {}): OpenPullRequestTe
       'Fingerprint: checkout-service-null-payment',
     ].join('\n'),
     headBranch: 'agent/checkout-service-null-payment',
+    fromFork: false,
     ...overrides,
   };
 }

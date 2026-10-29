@@ -1,4 +1,7 @@
+import { canPushToRepository } from '../adapters/github/github-collaborators.js';
+import type { GitHubDeliveryReader } from '../adapters/github/github-delivery.js';
 import {
+  getPullRequestHead,
   getPullRequestState,
   listOpenPullRequests,
   markPullRequestReadyForReview,
@@ -6,6 +9,7 @@ import {
 import { postCommentReaction } from '../adapters/github/github-reactions.js';
 import { type AppConfig, resolveGitHubTokenEnv } from '../config.js';
 import { logger } from '../platform/logger.js';
+import { minutes, nowMs } from '../platform/time.js';
 import {
   type ExistingImplementationPr,
   matchOpenImplementationPr,
@@ -20,20 +24,88 @@ import type {
   PullRequestSnapshot,
 } from './state-machines/pr-maintainer/service.js';
 
-// GitHubPullRequests is what the machines ask of GitHub about a pull request. A
-// GitHub it cannot read is answered as open with nothing to do, which leaves the
-// instance where it is; a write it could not make comes back as an error, which is a
-// state the machine can move to.
+// AUTHOR_ACCESS_TTL_MS is how long an author's access is cached, so a permission change takes
+// effect within it.
+const AUTHOR_ACCESS_TTL_MS = minutes(5);
+
+// GitHubPullRequests is what the machines, and the reading of a delivery, ask of GitHub
+// about a pull request. A GitHub it cannot read is answered as open with nothing to do,
+// which leaves the instance where it is; a write it could not make comes back as an
+// error, which is a state the machine can move to.
 export class GitHubPullRequests
-  implements GitHubReader, GitHubWriter, GitHubImplementationPrReader, GitHubCommentWriter
+  implements
+    GitHubReader,
+    GitHubWriter,
+    GitHubImplementationPrReader,
+    GitHubCommentWriter,
+    GitHubDeliveryReader
 {
   private readonly log = logger.child('github-pull-requests');
+  private readonly authorAccess = new Map<string, { canPush: boolean; expiresAtMs: number }>();
 
   constructor(
     private readonly config: AppConfig,
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly now: () => number = nowMs,
   ) {}
+
+  // authorCanPush keeps each answer for a while, because one person writes many comments;
+  // a lookup that failed is not kept, so the next comment asks again.
+  async authorCanPush(repositoryFullName: string, login: string): Promise<boolean> {
+    const key = `${repositoryFullName}:${login}`.toLowerCase();
+    const known = this.authorAccess.get(key);
+    if (known && known.expiresAtMs > this.now()) return known.canPush;
+    const token = this.env[resolveGitHubTokenEnv(this.config, repositoryFullName)];
+    if (!token) {
+      this.cannotAsk('author access', repositoryFullName, login, 'missing_token');
+      return false;
+    }
+    try {
+      const canPush = await canPushToRepository({
+        repo: repositoryFullName,
+        login,
+        token,
+        fetchImpl: this.fetchImpl,
+      });
+      this.authorAccess.set(key, { canPush, expiresAtMs: this.now() + AUTHOR_ACCESS_TTL_MS });
+      return canPush;
+    } catch (error: unknown) {
+      this.cannotAsk(
+        'author access',
+        repositoryFullName,
+        login,
+        error instanceof Error ? error.message : String(error),
+      );
+      return false;
+    }
+  }
+
+  async isForkPullRequest(repositoryFullName: string, pullRequestNumber: number): Promise<boolean> {
+    const subject = `#${pullRequestNumber}`;
+    const token = this.env[resolveGitHubTokenEnv(this.config, repositoryFullName)];
+    if (!token) {
+      this.cannotAsk('head repository', repositoryFullName, subject, 'missing_token');
+      return true;
+    }
+    try {
+      const head = await getPullRequestHead({
+        repo: repositoryFullName,
+        pullRequestNumber,
+        token,
+        fetchImpl: this.fetchImpl,
+      });
+      return head.fromFork;
+    } catch (error: unknown) {
+      this.cannotAsk(
+        'head repository',
+        repositoryFullName,
+        subject,
+        error instanceof Error ? error.message : String(error),
+      );
+      return true;
+    }
+  }
 
   async readPullRequest(
     repositoryFullName: string,
@@ -134,6 +206,19 @@ export class GitHubPullRequests
       reason,
     });
     return undefined;
+  }
+
+  private cannotAsk(
+    question: string,
+    repositoryFullName: string,
+    subject: string,
+    reason: string,
+  ): void {
+    this.log.error(`cannot ask github for the ${question}`, {
+      repository_full_name: repositoryFullName,
+      subject,
+      reason,
+    });
   }
 
   // Open with nothing to act on leaves the instance where it is, which is the only

@@ -6,6 +6,7 @@ import {
   CommitSigningRefusal,
   getPullRequestHead,
   getPullRequestState,
+  isForkPullRequest,
   type OpenPullRequest,
   listOpenPullRequests,
   markPullRequestReadyForReview,
@@ -16,7 +17,7 @@ const REPO = 'acme/webapp';
 const PR_NUMBER = 42;
 
 describe('getPullRequestHead', () => {
-  test('When the pr is a draft then should return its node id, draft flag and head ref', async () => {
+  test('When the pr is a draft then should return its node id, draft flag, head ref and whether it is a fork', async () => {
     const calls: string[] = [];
 
     const head = await getPullRequestHead({
@@ -26,7 +27,12 @@ describe('getPullRequestHead', () => {
       fetchImpl: recordingFetch(calls, prBody({ draft: true })),
     });
 
-    assert.deepEqual(head, { nodeId: 'PR_node', draft: true, headRef: 'agent/branch' });
+    assert.deepEqual(head, {
+      nodeId: 'PR_node',
+      draft: true,
+      headRef: 'agent/branch',
+      fromFork: false,
+    });
     assert.deepEqual(calls, ['https://api.github.com/repos/acme/webapp/pulls/42']);
   });
 
@@ -347,20 +353,43 @@ describe('getPullRequestState', () => {
 describe('listOpenPullRequests', () => {
   const cases: ListCase[] = [
     {
-      name: 'When a pull request is listed then should answer its number and branch',
-      items: [{ number: 1, head: { ref: 'agent/jar-58' } }],
-      want: [{ pullRequestNumber: 1, headBranch: 'agent/jar-58', isDraft: false }],
+      name: 'When a pull request is listed then should answer its number, branch and where it lives',
+      items: [
+        { number: 1, head: { ref: 'agent/jar-58', repo: { id: 7 } }, base: { repo: { id: 7 } } },
+      ],
+      want: [
+        {
+          pullRequestNumber: 1,
+          headBranch: 'agent/jar-58',
+          fromFork: false,
+          isDraft: false,
+        },
+      ],
     },
     {
       // Whether a draft is ours to touch is the machine's call, so it travels as a fact.
       name: 'When a pull request is a draft then should say so',
       items: [{ number: 4, draft: true, head: { ref: 'agent/jar-58' } }],
-      want: [{ pullRequestNumber: 4, headBranch: 'agent/jar-58', isDraft: true }],
+      want: [
+        {
+          pullRequestNumber: 4,
+          headBranch: 'agent/jar-58',
+          fromFork: true,
+          isDraft: true,
+        },
+      ],
     },
     {
       name: 'When an entry carries no head then should answer no branch',
       items: [{ number: 6 }],
-      want: [{ pullRequestNumber: 6, headBranch: undefined, isDraft: false }],
+      want: [
+        {
+          pullRequestNumber: 6,
+          headBranch: undefined,
+          fromFork: true,
+          isDraft: false,
+        },
+      ],
     },
     {
       name: 'When a listed entry has no number then should leave it out',
@@ -374,6 +403,7 @@ describe('listOpenPullRequests', () => {
         {
           pullRequestNumber: 7,
           headBranch: 'agent/jar-58',
+          fromFork: true,
           isDraft: false,
           title: 'fix: x',
           body: 'why x',
@@ -383,7 +413,15 @@ describe('listOpenPullRequests', () => {
     {
       name: 'When the body is null then should leave it out',
       items: [{ number: 8, head: { ref: 'agent/jar-58' }, title: 'fix: x', body: null }],
-      want: [{ pullRequestNumber: 8, headBranch: 'agent/jar-58', isDraft: false, title: 'fix: x' }],
+      want: [
+        {
+          pullRequestNumber: 8,
+          headBranch: 'agent/jar-58',
+          fromFork: true,
+          isDraft: false,
+          title: 'fix: x',
+        },
+      ],
     },
   ];
 
@@ -434,6 +472,37 @@ describe('listOpenPullRequests', () => {
       /failed with HTTP 403/,
     );
   });
+});
+
+describe('isForkPullRequest', () => {
+  const cases: Array<{ name: string; pullRequest: Record<string, unknown>; want: boolean }> = [
+    {
+      name: 'When the head and the base are the same repository then should say it is not a fork',
+      pullRequest: { head: { repo: { id: 7 } }, base: { repo: { id: 7 } } },
+      want: false,
+    },
+    {
+      name: 'When the head is another repository then should say it is a fork',
+      pullRequest: { head: { repo: { id: 8 } }, base: { repo: { id: 7 } } },
+      want: true,
+    },
+    {
+      name: 'When the head has no repository then should say it is a fork',
+      pullRequest: { head: { repo: null }, base: { repo: { id: 7 } } },
+      want: true,
+    },
+    {
+      name: 'When the base has no repository then should say it is a fork',
+      pullRequest: { head: { repo: { id: 7 } }, base: {} },
+      want: true,
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, () => {
+      assert.equal(isForkPullRequest(c.pullRequest), c.want);
+    });
+  }
 });
 
 describe('signPullRequestCommits', () => {
@@ -953,7 +1022,12 @@ describe('signPullRequestCommits', () => {
 });
 
 function prBody(options: { draft: boolean }): Record<string, unknown> {
-  return { node_id: 'PR_node', draft: options.draft, head: { ref: 'agent/branch' } };
+  return {
+    node_id: 'PR_node',
+    draft: options.draft,
+    head: { ref: 'agent/branch', repo: { id: 7 } },
+    base: { repo: { id: 7 } },
+  };
 }
 
 function jsonResponse(body: unknown): Response {

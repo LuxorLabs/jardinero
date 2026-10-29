@@ -1,8 +1,8 @@
 import type { AppConfig } from '../../config.js';
 import type { FixImplementer, PrMaintainer } from '../../store/types.js';
 
-// prMaintainerPayload carries the pull request and how many times the agent may answer
-// one thread; the agent fetches the threads itself.
+// prMaintainerPayload carries the pull request, how many times the agent may answer one
+// thread and whether it takes work only from trusted authors; the agent fetches the threads itself.
 export function prMaintainerPayload(
   instance: PrMaintainer,
   repositoryFullName: string,
@@ -13,6 +13,7 @@ export function prMaintainerPayload(
     pr_number: instance.pullRequestNumber,
     max_replies_per_thread: config.workflows.prMaintainer.maxRepliesPerThread,
     attempt: instance.attemptCount,
+    ...(config.workflows.prMaintainer.trustedAuthorsOnly ? { trusted_authors_only: true } : {}),
   };
 }
 

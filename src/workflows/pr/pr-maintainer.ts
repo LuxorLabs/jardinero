@@ -4,6 +4,7 @@ export const AGENT_PR_COMMENT_MARKER = '<!-- jardinero-pr-maintainer -->';
 
 export interface AgentPullRequestFacts {
   headBranch?: string;
+  fromFork: boolean;
 }
 
 export interface AgentPullRequestRule {
@@ -17,5 +18,6 @@ export function isAgentPullRequest(
   rule: AgentPullRequestRule,
 ): boolean {
   if (!rule.branchPrefix) return false;
+  if (facts.fromFork) return false;
   return facts.headBranch?.startsWith(rule.branchPrefix) ?? false;
 }

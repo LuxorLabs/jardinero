@@ -6,6 +6,7 @@ export interface ExistingImplementationPr {
 export interface OpenPullRequestText {
   pullRequestNumber: number;
   headBranch?: string;
+  fromFork: boolean;
   title?: string;
   body?: string;
 }
@@ -86,6 +87,7 @@ function matchImplementationPr(
   signature: ProblemSignature,
   pr: OpenPullRequestText,
 ): ExistingImplementationPr | undefined {
+  if (pr.fromFork) return undefined;
   const text = prText(pr);
   if (!looksLikeImplementationPr(pr, text)) return undefined;
 

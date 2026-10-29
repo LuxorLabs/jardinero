@@ -20,7 +20,6 @@ describe('prMaintainerPayload', () => {
       },
     },
     {
-      // The agent is told which pass this is so it can say so when it answers.
       name: 'When passes were already spent then should carry how many',
       instance: { attemptCount: 2 },
       want: {
@@ -30,11 +29,24 @@ describe('prMaintainerPayload', () => {
         attempt: 2,
       },
     },
+    {
+      name: 'When the config takes work only from trusted authors then should say so',
+      trustedAuthorsOnly: true,
+      want: {
+        repo: REPOSITORY,
+        pr_number: 4688,
+        max_replies_per_thread: CONFIG.workflows.prMaintainer.maxRepliesPerThread,
+        attempt: 0,
+        trusted_authors_only: true,
+      },
+    },
   ];
 
   for (const c of cases) {
     test(c.name, () => {
-      const payload = prMaintainerPayload(prMaintainer(c.instance), REPOSITORY, CONFIG);
+      const config = structuredClone(CONFIG);
+      config.workflows.prMaintainer.trustedAuthorsOnly = c.trustedAuthorsOnly ?? false;
+      const payload = prMaintainerPayload(prMaintainer(c.instance), REPOSITORY, config);
 
       assert.deepEqual(payload, c.want);
     });
@@ -129,6 +141,7 @@ function fixImplementer(overrides: Partial<FixImplementer> = {}): FixImplementer
 interface PrMaintainerCase {
   name: string;
   instance?: Partial<PrMaintainer>;
+  trustedAuthorsOnly?: boolean;
   want: Record<string, unknown>;
 }
 

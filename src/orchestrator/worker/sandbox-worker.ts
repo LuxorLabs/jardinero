@@ -43,6 +43,7 @@ import {
   type CommitSigningOutcome,
   CommitSigningRefusal,
   getPullRequestHead,
+  type PullRequestHead,
   signPullRequestCommits,
 } from '../../adapters/github/github-pull-requests.js';
 import { buildCodexConfigToml } from '../../adapters/codex/codex-config.js';
@@ -822,16 +823,13 @@ export class SandboxWorkerRunner implements SandboxRunner {
         type: 'sandbox.fetching_pull_request',
         message: `Fetching PR ${prNumber}`,
       });
-      const headRef = await this.pullRequestHeadRef(repo, prNumber);
-      if (!headRef) {
-        await context.publishEvent({
-          type: 'sandbox.pull_request_head_unresolved',
-          message: `Could not resolve the head branch of PR ${prNumber}; a push will not reach it`,
-        });
+      const head = await this.pullRequestHead(repo, prNumber);
+      if (head.fromFork) {
+        throw new Error(`PR ${prNumber} comes from a fork, which Jardinero does not work`);
       }
       const fetchResult = await this.execRequired(
         session,
-        buildAuthenticatedFetchPrCommand({ repoDir, prNumber, headRef }),
+        buildAuthenticatedFetchPrCommand({ repoDir, prNumber, headRef: head.headRef }),
       );
       assertExecSucceeded(fetchResult, `fetch PR ${prNumber}`);
     }
@@ -899,21 +897,12 @@ export class SandboxWorkerRunner implements SandboxRunner {
     }
   }
 
-  // pullRequestHeadRef answers the branch a push has to land on, or nothing when the
-  // lookup fails.
-  private async pullRequestHeadRef(repo: string, prNumber: number): Promise<string | undefined> {
+  // pullRequestHead reads the pull request's head; a run that cannot read it fails, since it could
+  // not tell a fork apart.
+  private async pullRequestHead(repo: string, prNumber: number): Promise<PullRequestHead> {
     const token = this.env[resolveGitHubTokenEnv(this.config, repo)];
-    if (!token) return undefined;
-    try {
-      return (await this.getPullRequestHead({ repo, pullRequestNumber: prNumber, token })).headRef;
-    } catch (error) {
-      this.log.warn('pull request lookup failed; pushing to it will not work', {
-        repo,
-        pr_number: prNumber,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return undefined;
-    }
+    if (!token) throw new Error(`Cannot read PR ${prNumber}: missing github token`);
+    return this.getPullRequestHead({ repo, pullRequestNumber: prNumber, token });
   }
 
   // Resolves the target repo's AGENTS.md/CLAUDE.md into concrete on-disk content

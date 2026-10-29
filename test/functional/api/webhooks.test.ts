@@ -11,8 +11,11 @@ import {
 } from '../../../src/testing/http.js';
 
 describe('POST /webhooks/github', () => {
-  test('When a comment tags the agent then should follow the pull request', async () => {
-    const fixture = await createHttpFixture({ JARDINERO_AGENT_WEBHOOK_SECRET: 'whsecret' });
+  test('When someone who can push tags the agent then should follow the pull request', async () => {
+    const fixture = await createHttpFixture(
+      { JARDINERO_AGENT_WEBHOOK_SECRET: 'whsecret', GITHUB_TOKEN: 'gh_token' },
+      { fetchImpl: githubAnswering({ permission: 'write', headRepositoryId: 7 }) },
+    );
     try {
       const body = JSON.stringify({
         action: 'created',
@@ -23,7 +26,11 @@ describe('POST /webhooks/github', () => {
           user: { login: 'acme-jardinero[bot]' },
           pull_request: { url: 'https://api.github.com/repos/acme/webapp/pulls/3754' },
         },
-        comment: { id: 4242, body: '@acme-jardinero please address this' },
+        comment: {
+          id: 4242,
+          body: '@acme-jardinero please address this',
+          user: { login: 'lucio', type: 'User' },
+        },
       });
       const response = await fetch(`${fixture.baseUrl}/webhooks/github`, {
         method: 'POST',
@@ -79,7 +86,10 @@ describe('POST /webhooks/github', () => {
   });
 
   test('When a bot comments on a pull request nobody follows then should record no ask', async () => {
-    const fixture = await createHttpFixture({ JARDINERO_AGENT_WEBHOOK_SECRET: 'whsecret' });
+    const fixture = await createHttpFixture(
+      { JARDINERO_AGENT_WEBHOOK_SECRET: 'whsecret', GITHUB_TOKEN: 'gh_token' },
+      { fetchImpl: githubAnswering({ permission: 'write', headRepositoryId: 7 }) },
+    );
     try {
       const body = JSON.stringify({
         action: 'created',
@@ -789,4 +799,22 @@ function jsonBody(body: unknown): Response {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function githubAnswering(answer: { permission: string; headRepositoryId: number }): typeof fetch {
+  return ((input: string) => {
+    const body = String(input).endsWith('/permission')
+      ? { permission: answer.permission }
+      : {
+          node_id: 'PR_node',
+          head: { ref: 'feature', repo: { id: answer.headRepositoryId } },
+          base: { repo: { id: 7 } },
+        };
+    return Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+  }) as unknown as typeof fetch;
 }

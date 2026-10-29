@@ -67,6 +67,7 @@ beforeEach(() => {
     {
       maxAttempts: MAX_ATTEMPTS,
       maxRepliesPerThread: MAX_REPLIES_PER_THREAD,
+      trustedAuthorsOnly: true,
       agentPullRequest: { branchPrefix: 'agent/' },
       checkWaitMs: {
         prm_pending: 0,
@@ -201,6 +202,37 @@ describe('onPrComment', () => {
       want: { state: 'prm_waiting' },
     },
     {
+      name: 'When someone who cannot push tags us then should take nothing',
+      authorIsTrusted: false,
+      mentionsUs: true,
+      want: { instanceExists: false },
+    },
+    {
+      name: 'When someone who cannot push comments on a waiting instance then should leave it waiting',
+      from: 'prm_waiting',
+      authorIsTrusted: false,
+      want: { state: 'prm_waiting' },
+    },
+    {
+      name: 'When trusted authors only is off and someone who cannot push tags us then should take the pull request',
+      trustedAuthorsOnly: false,
+      authorIsTrusted: false,
+      mentionsUs: true,
+      want: { state: 'prm_working', startedRuns: 1, attemptCount: 1, pickedUp: true },
+    },
+    {
+      name: 'When a person who can push tags us on a fork pull request then should take nothing',
+      fromFork: true,
+      mentionsUs: true,
+      want: { instanceExists: false },
+    },
+    {
+      name: 'When a fork pull request is already followed then should leave it waiting',
+      from: 'prm_waiting',
+      fromFork: true,
+      want: { state: 'prm_waiting' },
+    },
+    {
       name: 'When there is no instance and the comment does not tag us then should ignore it',
       want: { instanceExists: false },
     },
@@ -280,10 +312,13 @@ describe('onPrComment', () => {
     test(c.name, async () => {
       const instance = c.from ? openInstanceIn(c.from) : undefined;
       if (instance) c.arrange?.(instance);
+      engine.config.trustedAuthorsOnly = c.trustedAuthorsOnly ?? true;
 
       const error = await onPrComment(engine, {
         ...pullRequestRef(),
         authoredByUs: c.authoredByUs ?? false,
+        authorIsTrusted: c.authorIsTrusted ?? true,
+        fromFork: c.fromFork ?? false,
         mentionsUs: c.mentionsUs ?? false,
         reviewThreadId: c.reviewThreadId,
         comment: c.comment ?? {
@@ -474,6 +509,8 @@ describe('The ask a comment records', () => {
     await onPrComment(engine, {
       ...pullRequestRef(),
       authoredByUs: false,
+      authorIsTrusted: true,
+      fromFork: false,
       mentionsUs: true,
       comment: { author: 'lucio', body: '@acme-jardinero look at this', externalId: '4242' },
     });
@@ -1205,7 +1242,7 @@ describe('PrMaintainer entry points release the instance lock', () => {
   const cases: LockCase[] = [
     {
       name: 'When `onPrReadyForReview` runs then should release the lock',
-      act: () => onPrReadyForReview(engine, pullRequestRef()),
+      act: () => onPrReadyForReview(engine, { ...pullRequestRef(), fromFork: false }),
     },
     {
       name: 'When `onPrToFollow` runs then should release the lock',
@@ -1213,12 +1250,18 @@ describe('PrMaintainer entry points release the instance lock', () => {
     },
     {
       name: 'When `onPrDiscovered` runs then should release the lock',
-      act: () => onPrDiscovered(engine, pullRequestRef()),
+      act: () => onPrDiscovered(engine, { ...pullRequestRef(), fromFork: false }),
     },
     {
       name: 'When `onPrComment` runs then should release the lock',
       act: () =>
-        onPrComment(engine, { ...pullRequestRef(), authoredByUs: false, mentionsUs: false }),
+        onPrComment(engine, {
+          ...pullRequestRef(),
+          authoredByUs: false,
+          authorIsTrusted: true,
+          fromFork: false,
+          mentionsUs: false,
+        }),
     },
     {
       name: 'When `onPrCICompleted` runs then should release the lock',
@@ -1284,8 +1327,13 @@ function pullRequestRef(): { repositoryId: string; pullRequestNumber: number } {
   return { repositoryId, pullRequestNumber: PULL_REQUEST_NUMBER };
 }
 
-function ourPullRequest(): { repositoryId: string; pullRequestNumber: number; headBranch: string } {
-  return { ...pullRequestRef(), headBranch: 'agent/fix-1' };
+function ourPullRequest(): {
+  repositoryId: string;
+  pullRequestNumber: number;
+  headBranch: string;
+  fromFork: boolean;
+} {
+  return { ...pullRequestRef(), headBranch: 'agent/fix-1', fromFork: false };
 }
 
 // The pass a comment dispatched has to end before the next comment can dispatch
@@ -1304,6 +1352,8 @@ function comment(fields: { reviewThreadId?: string }): CommentData {
   return {
     ...pullRequestRef(),
     authoredByUs: false,
+    authorIsTrusted: true,
+    fromFork: false,
     mentionsUs: false,
     reviewThreadId: fields.reviewThreadId,
     comment: {
@@ -1498,6 +1548,9 @@ interface CommentCase {
   name: string;
   from?: PrMaintainerState;
   authoredByUs?: boolean;
+  trustedAuthorsOnly?: boolean;
+  authorIsTrusted?: boolean;
+  fromFork?: boolean;
   mentionsUs?: boolean;
   reviewThreadId?: string;
   // What GitHub sent, for a case that turns on the comment rather than on the state.

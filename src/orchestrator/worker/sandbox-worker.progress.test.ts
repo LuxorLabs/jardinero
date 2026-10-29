@@ -7,6 +7,7 @@ import {
   isCodexMilestone,
   parseCodexExitCode,
 } from './sandbox-worker.js';
+import { secretRedactor } from './sandbox-utils.js';
 
 const encoder = new TextEncoder();
 
@@ -139,7 +140,7 @@ describe('codexEventDetail', () => {
         },
       },
       want: {
-        command: 'git push https://x-access-token:[redacted-github-token]@github.com/acme/repo',
+        command: 'git push https://x-access-token:[*****]@github.com/acme/repo',
       },
     },
     {
@@ -148,7 +149,7 @@ describe('codexEventDetail', () => {
         type: 'item.started',
         item: { command: 'export GH_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' },
       },
-      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+      want: { command: 'export GH_TOKEN=[*****]' },
     },
     {
       name: 'When command holds a `gho_` token then should redact it',
@@ -156,7 +157,7 @@ describe('codexEventDetail', () => {
         type: 'item.started',
         item: { command: 'export GH_TOKEN=gho_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' },
       },
-      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+      want: { command: 'export GH_TOKEN=[*****]' },
     },
     {
       name: 'When command holds a `ghu_` token then should redact it',
@@ -164,7 +165,7 @@ describe('codexEventDetail', () => {
         type: 'item.started',
         item: { command: 'export GH_TOKEN=ghu_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' },
       },
-      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+      want: { command: 'export GH_TOKEN=[*****]' },
     },
     {
       name: 'When command holds a `ghr_` token then should redact it',
@@ -172,7 +173,7 @@ describe('codexEventDetail', () => {
         type: 'item.started',
         item: { command: 'export GH_TOKEN=ghr_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' },
       },
-      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+      want: { command: 'export GH_TOKEN=[*****]' },
     },
     {
       name: 'When command holds a `github_pat_` token then should redact it',
@@ -183,15 +184,15 @@ describe('codexEventDetail', () => {
             'export GH_TOKEN=github_pat_11ABCDEFG0123456789abc_0123456789abcdefABCDEF0123456789abcdefABCDEF0123456789',
         },
       },
-      want: { command: 'export GH_TOKEN=[redacted-github-token]' },
+      want: { command: 'export GH_TOKEN=[*****]' },
     },
     {
       name: 'When a token straddles the limit then should redact it before truncating',
       input: {
         type: 'item.started',
-        item: { command: `${'x'.repeat(490)} ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8` },
+        item: { command: `${'x'.repeat(495)} ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8` },
       },
-      want: { command: `${'x'.repeat(490)} [redacted…` },
+      want: { command: `${'x'.repeat(495)} [***…` },
     },
     {
       name: 'When item is an agent message then should surface its text',
@@ -210,7 +211,15 @@ describe('codexEventDetail', () => {
           text: 'Token: ghs_4127511_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQifQ.c2ln-bmF0_dXJl',
         },
       },
-      want: { item: 'agent_message', text: 'Token: [redacted-github-token]' },
+      want: { item: 'agent_message', text: 'Token: [*****]' },
+    },
+    {
+      name: 'When the text holds a secret of the run then should mask it',
+      input: {
+        type: 'item.completed',
+        item: { type: 'agent_message', text: 'Key: age-secret-key-1' },
+      },
+      want: { item: 'agent_message', text: 'Key: [*****]' },
     },
     {
       name: 'When event is not an object then should return no detail',
@@ -221,7 +230,7 @@ describe('codexEventDetail', () => {
 
   for (const c of detailCases) {
     test(c.name, () => {
-      assert.deepEqual(codexEventDetail(c.input), c.want);
+      assert.deepEqual(codexEventDetail(c.input, secretRedactor(['age-secret-key-1'])), c.want);
     });
   }
 });

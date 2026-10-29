@@ -18,6 +18,7 @@ const {
   forwardHostCodexAuthToSandbox,
   hostCodexAuthExists,
   hostCodexAuthPath,
+  hostCodexAuthSecrets,
   resetCodexAuthCacheForTest,
 } = await import('./codex-auth.js');
 
@@ -69,6 +70,42 @@ describe('hostCodexAuthExists', () => {
       testCase.arrange?.();
 
       assert.equal(hostCodexAuthExists(), testCase.want);
+    });
+  }
+});
+
+describe('hostCodexAuthSecrets', () => {
+  const cases: Array<{ name: string; arrange?(): void; want: string[] }> = [
+    {
+      name: 'When there is no host auth then should return none',
+      want: [],
+    },
+    {
+      name: 'When the auth file is not JSON then should return none',
+      arrange: () => writeFileSync(AUTH_PATH, '{"tokens":'),
+      want: [],
+    },
+    {
+      name: 'When the auth carries tokens then should return only the credentials',
+      arrange: () =>
+        writeFileSync(
+          AUTH_PATH,
+          '{"OPENAI_API_KEY":null,"tokens":{"id_token":"id-a","access_token":"access-a","refresh_token":"refresh-a","account_id":"account-a"},"last_refresh":"2026-10-01T00:00:00Z"}',
+        ),
+      want: ['id-a', 'access-a', 'refresh-a'],
+    },
+    {
+      name: 'When the auth carries an API key then should return it',
+      arrange: () => writeFileSync(AUTH_PATH, '{"OPENAI_API_KEY":"sk-test"}'),
+      want: ['sk-test'],
+    },
+  ];
+
+  for (const testCase of cases) {
+    test(testCase.name, () => {
+      testCase.arrange?.();
+
+      assert.deepEqual(hostCodexAuthSecrets(), testCase.want);
     });
   }
 });

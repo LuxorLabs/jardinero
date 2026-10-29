@@ -8,12 +8,32 @@ export function assertExecSucceeded(result: SandboxExecResult, label: string): v
   throw new Error(`${label} failed with exit code ${result.exitCode}${suffix}`);
 }
 
+export const REDACTED = '[*****]';
+
+// Shorter values are skipped because they can match ordinary text by chance.
+const MIN_SECRET_LENGTH = 8;
+
 // redactSensitiveText replaces each GitHub token in full, including the `.<payload>.<signature>`
 // tail of an installation token: its `ghs_<id>_<header>` prefix is predictable.
 export function redactSensitiveText(value: string): string {
   return value
-    .replace(/github_pat_[A-Za-z0-9_]{20,}/g, '[redacted-github-token]')
-    .replace(/\bgh[opsru]_[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/g, '[redacted-github-token]');
+    .replace(/github_pat_[A-Za-z0-9_]{20,}/g, REDACTED)
+    .replace(/\bgh[opsru]_[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/g, REDACTED);
+}
+
+// secretRedactor masks each given secret by its value, on top of the GitHub tokens
+// redactSensitiveText already masks.
+export function secretRedactor(secrets: Array<string | undefined>): (text: string) => string {
+  // Output is masked one line at a time, so each line of a multi-line secret is masked too.
+  const lines = secrets.flatMap((secret = '') => [secret, ...secret.split('\n')]);
+  // Longest first, so a secret that contains another is masked whole.
+  const values = [...new Set(lines.map((line) => line.trim()))]
+    .filter((secret) => secret.length >= MIN_SECRET_LENGTH)
+    .sort((a, b) => b.length - a.length);
+  return (text) =>
+    redactSensitiveText(
+      values.reduce((masked, secret) => masked.replaceAll(secret, REDACTED), text),
+    );
 }
 
 export function execStdout(result: SandboxExecResult): string {

@@ -16,9 +16,13 @@ const MIN_SECRET_LENGTH = 8;
 // redactSensitiveText replaces each GitHub token in full, including the `.<payload>.<signature>`
 // tail of an installation token: its `ghs_<id>_<header>` prefix is predictable.
 export function redactSensitiveText(value: string): string {
-  return value
-    .replace(/github_pat_[A-Za-z0-9_]{20,}/g, REDACTED)
-    .replace(/\bgh[opsru]_[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/g, REDACTED);
+  return (
+    value
+      .replace(/github_pat_[A-Za-z0-9_]{20,}/g, REDACTED)
+      .replace(/\bgh[opsru]_[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/g, REDACTED)
+      // Mask git's extraheader, the base64 of `x-access-token:<token>`, whichever token it holds.
+      .replace(/eC1hY2Nlc3MtdG9rZW46[A-Za-z0-9+/]+=*/g, REDACTED)
+  );
 }
 
 // secretRedactor masks each given secret by its value, on top of the GitHub tokens

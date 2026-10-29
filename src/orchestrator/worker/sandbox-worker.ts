@@ -753,8 +753,6 @@ export class SandboxWorkerRunner implements SandboxRunner {
     const repo = this.repoFor(context);
     return [
       githubToken,
-      // Git sends the token as the base64 of `x-access-token:<token>` in its extraheader.
-      githubToken && Buffer.from(`x-access-token:${githubToken}`).toString('base64'),
       this.env[this.config.worker.codexAccessTokenEnv],
       this.env[this.config.worker.codexApiKeyEnv],
       ...(this.config.worker.codexAuthMode === 'capsule' ? this.hostCodexAuthSecrets() : []),

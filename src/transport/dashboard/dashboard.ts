@@ -53,6 +53,7 @@ import type {
 } from './dashboard-api-types.js';
 import { buildAgentPromptSegments } from '../../workflows/prompts.js';
 import { readJsonObjectBody } from '../request.js';
+import { operatorIdentity } from '../auth.js';
 import type { ApiContext } from '../context.js';
 import { headerValue } from '../request.js';
 import { sendHtml, sendJson } from '../respond.js';
@@ -1336,18 +1337,30 @@ const IDENTITY_HEADERS: Array<{ provider: string; email: string[]; subject: stri
   },
 ];
 
+// dashboardAuditSessionContext trusts only the verified proxy JWT when `auth.proxy_jwt` is set,
+// since the headers below are forgeable by anyone who reaches the process.
 function dashboardAuditSessionContext(request: IncomingMessage): Record<string, unknown> | null {
+  const verified = operatorIdentity(request);
+  if (verified) return auditSession('proxy_jwt', verified.email, verified.subject);
   for (const candidate of IDENTITY_HEADERS) {
     const email = firstHeader(request, candidate.email);
     const subject = firstHeader(request, candidate.subject);
     if (!email && !subject) continue;
-    return {
-      provider: candidate.provider,
-      email: email ?? null,
-      subject: subject ? createHash('sha256').update(subject).digest('hex').slice(0, 16) : null,
-    };
+    return auditSession(candidate.provider, email, subject);
   }
   return null;
+}
+
+function auditSession(
+  provider: string,
+  email: string | null | undefined,
+  subject: string | null | undefined,
+): Record<string, unknown> {
+  return {
+    provider,
+    email: email ?? null,
+    subject: subject ? createHash('sha256').update(subject).digest('hex').slice(0, 16) : null,
+  };
 }
 
 function firstHeader(request: IncomingMessage, names: string[]): string | undefined {

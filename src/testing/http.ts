@@ -37,6 +37,7 @@ export async function createHttpFixture(
     maxConcurrentSandboxes?: number;
     logReviewRepos?: AppConfig['workflows']['logReviewer']['repos'];
     codexAuthMode?: AppConfig['worker']['codexAuthMode'];
+    proxyJwt?: AppConfig['auth']['proxyJwt'];
   } = {},
 ): Promise<HttpFixture> {
   const { store, dataPath: tempDir, cleanup: closeStore } = createTestStore();
@@ -67,6 +68,7 @@ export async function createHttpFixture(
     config.discord.repoChannels = options.discordRepoChannels;
   }
   if (options.people !== undefined) config.people = options.people;
+  if (options.proxyJwt !== undefined) config.auth.proxyJwt = options.proxyJwt;
 
   // Stubs both Linear and GitHub GraphQL so session acks and PR-ready calls
   // resolve without touching the network.

@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { logger } from '../platform/logger.js';
 import { nowMs } from '../platform/time.js';
 import { adminResponse } from './admin/admin.js';
-import { requireAdmin } from './auth.js';
+import { requireAdmin, requireOperator } from './auth.js';
 import { isRewrittenPath, readRawBody } from './request.js';
 import type { ApiContext, ServerContext } from './context.js';
 import {
@@ -101,6 +101,7 @@ async function routeRequest(
   }
 
   if (url.pathname === '/dashboard' || url.pathname.startsWith('/dashboard/')) {
+    if (!(await requireOperator(context, request, response))) return;
     await handleDashboard(context, request, response, url);
     return;
   }

@@ -78,6 +78,14 @@ export interface WorkerRepoTarget {
   secretEnvs?: string[];
 }
 
+// ProxyJwtConfig says where to find, and how to verify, the JWT an authenticating proxy signs.
+export interface ProxyJwtConfig {
+  header: string;
+  jwksUrl: string;
+  audience: string;
+  issuer: string;
+}
+
 export interface AppConfig {
   rootDir: string;
   configPath: string;
@@ -88,6 +96,7 @@ export interface AppConfig {
   };
   auth: {
     adminTokenEnv: string;
+    proxyJwt: ProxyJwtConfig | null;
   };
   store: {
     dataPath: string;
@@ -326,6 +335,7 @@ export function loadConfig(
     },
     auth: {
       adminTokenEnv: stringAt(raw, ['auth', 'admin_token_env'], 'ORCHESTRATOR_ADMIN_TOKEN'),
+      proxyJwt: proxyJwtAt(raw),
     },
     store: {
       dataPath: resolveFromRoot(rootDir, stringAt(raw, ['store', 'data_path'], './data')),
@@ -1057,6 +1067,24 @@ function validateOptionalHttpUrl(value: string, path: string): void {
   } catch {
     throw new Error(`${path} must be a valid http or https URL when set`);
   }
+}
+
+// proxyJwtAt refuses a partial block, so a deployment meant to verify the proxy never boots
+// half configured and open.
+function proxyJwtAt(raw: RawConfig): ProxyJwtConfig | null {
+  const value = valueAt(raw, ['auth', 'proxy_jwt']);
+  if (value === undefined) return null;
+  const block = objectOrEmpty(value, 'auth.proxy_jwt');
+  const config = {
+    header: requiredStringAt(block, 'header', 'auth.proxy_jwt'),
+    jwksUrl: requiredStringAt(block, 'jwks_url', 'auth.proxy_jwt'),
+    audience: requiredStringAt(block, 'audience', 'auth.proxy_jwt'),
+    issuer: requiredStringAt(block, 'issuer', 'auth.proxy_jwt'),
+  };
+  if (!URL.canParse(config.jwksUrl) || new URL(config.jwksUrl).protocol !== 'https:') {
+    throw new Error('auth.proxy_jwt.jwks_url must be an https URL');
+  }
+  return config;
 }
 
 function linearTeamReposAt(raw: RawConfig, keys: string[]): Record<string, LinearTeamRepoConfig> {

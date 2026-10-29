@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { agentKindForTask, taskRepo } from './agents.js';
+import { type AgentKind, agentGitHubPermissions, agentKindForTask, taskRepo } from './agents.js';
+import type { GitHubTokenPermissions } from '../adapters/github/github-app-token.js';
 import type { Workflow } from '../types.js';
 import type { SandboxTask } from '../orchestrator/sandbox-pool.js';
 
@@ -42,6 +43,51 @@ describe('agentKindForTask', () => {
   for (const c of agentKindCases) {
     test(c.name, () => {
       assert.equal(agentKindForTask(c.task), c.want);
+    });
+  }
+});
+
+describe('agentGitHubPermissions', () => {
+  const cases: Array<{
+    name: string;
+    agent: AgentKind;
+    want: GitHubTokenPermissions | undefined;
+  }> = [
+    {
+      name: 'When the agent is `log_reviewer` then should read code and pull requests only',
+      agent: 'log_reviewer',
+      want: { contents: 'read', pull_requests: 'read' },
+    },
+    {
+      name: 'When the agent is `fix_implementer` then should push and write pull requests',
+      agent: 'fix_implementer',
+      want: { contents: 'write', pull_requests: 'write', checks: 'read' },
+    },
+    {
+      name: 'When the agent is `pr_maintainer` then should push and write pull requests',
+      agent: 'pr_maintainer',
+      want: { contents: 'write', pull_requests: 'write', checks: 'read' },
+    },
+    {
+      name: 'When the agent is `linear_implementer` then should push and write pull requests',
+      agent: 'linear_implementer',
+      want: { contents: 'write', pull_requests: 'write', checks: 'read' },
+    },
+    {
+      name: 'When the agent is `linear_verifier` then should read without writing',
+      agent: 'linear_verifier',
+      want: { contents: 'read', pull_requests: 'read', checks: 'read' },
+    },
+    {
+      name: 'When the agent is `request_router` then should get no token',
+      agent: 'request_router',
+      want: undefined,
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, () => {
+      assert.deepEqual(agentGitHubPermissions(c.agent), c.want);
     });
   }
 });

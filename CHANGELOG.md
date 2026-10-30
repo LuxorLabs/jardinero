@@ -1,5 +1,29 @@
 # jardinero
 
+## [0.12.0] - 2026-10-29
+
+### Minor Changes
+
+- [#156](https://github.com/LuxorLabs/jardinero/pull/156) [`175f9e5`](https://github.com/LuxorLabs/jardinero/commit/175f9e5a8137bb5a223ee5cc3c138c1bd370b2e5) Thanks [@luciocorral](https://github.com/luciocorral)! - config: add `worker.prompt_overrides`, which turns off the guidance saved from the dashboard
+
+- [#154](https://github.com/LuxorLabs/jardinero/pull/154) [`66f17e1`](https://github.com/LuxorLabs/jardinero/commit/66f17e11d92cb43efc597ca2b9c118df88883aa0) Thanks [@luciocorral](https://github.com/luciocorral)! - transport: remove the unused `/capsule/*` routes and answer `/setup` only while the deployment is still missing something required
+
+- [#160](https://github.com/LuxorLabs/jardinero/pull/160) [`1402115`](https://github.com/LuxorLabs/jardinero/commit/140211500332ad6a3f4be2921c0e351601347f2a) Thanks [@luciocorral](https://github.com/luciocorral)! - github: never work a fork pull request, and with workflows.pr_maintainer.trusted_authors_only take PR maintenance only from someone who can push or an installed App
+
+- [#158](https://github.com/LuxorLabs/jardinero/pull/158) [`087b8e4`](https://github.com/LuxorLabs/jardinero/commit/087b8e40eca7c500dbd085225931538b92d398e4) Thanks [@luciocorral](https://github.com/luciocorral)! - dashboard: add `auth.proxy_jwt`, which refuses every `/dashboard` request that does not carry a valid JWT signed by the authenticating proxy
+
+### Patch Changes
+
+- [#155](https://github.com/LuxorLabs/jardinero/pull/155) [`05aaeb2`](https://github.com/LuxorLabs/jardinero/commit/05aaeb2da6b855415aaabadacb38d922ee4279e3) Thanks [@luciocorral](https://github.com/luciocorral)! - worker: forward the Codex auth.json into sandboxes without its refresh_token, so a run cannot refresh or revoke the orchestrator's login
+
+- [#153](https://github.com/LuxorLabs/jardinero/pull/153) [`a6d1d06`](https://github.com/LuxorLabs/jardinero/commit/a6d1d06dfc0467e9737c4233c62ef759a7e6f400) Thanks [@luciocorral](https://github.com/luciocorral)! - worker: redact the full GitHub installation token, in the pod logs as well as in run artifacts
+
+- [#157](https://github.com/LuxorLabs/jardinero/pull/157) [`dae7974`](https://github.com/LuxorLabs/jardinero/commit/dae7974815b9d85c74b99095bb04fc91c2ae69d1) Thanks [@luciocorral](https://github.com/luciocorral)! - worker: mask every secret a run was given, by value, in its events, artifacts, output log and result
+
+- [#152](https://github.com/LuxorLabs/jardinero/pull/152) [`1ad8eaf`](https://github.com/LuxorLabs/jardinero/commit/1ad8eaf839c5dd85ae7f1d40b86547c565ecb030) Thanks [@luciocorral](https://github.com/luciocorral)! - transport: refuse a request whose path the URL parser rewrites, so `/webhooks/github/%2e%2e/%2e%2e/dashboard` no longer reaches the dashboard
+
+- [#159](https://github.com/LuxorLabs/jardinero/pull/159) [`3bf8ce0`](https://github.com/LuxorLabs/jardinero/commit/3bf8ce0eb945a5dc3a6eb3d8fb53e55db498d176) Thanks [@luciocorral](https://github.com/luciocorral)! - worker: mint each run's GitHub token with only the permissions its agent needs
+
 ## [0.11.1] - 2026-10-27
 
 ### Patch Changes

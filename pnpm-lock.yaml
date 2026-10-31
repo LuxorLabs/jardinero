@@ -176,8 +176,8 @@ importers:
         specifier: 18.0.8
         version: 18.0.8
       freestyle:
-        specifier: 0.2.17
-        version: 0.2.17
+        specifier: 0.2.20
+        version: 0.2.20
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -1800,8 +1800,8 @@ packages:
   forwarded-parse@2.1.2:
     resolution: {integrity: sha512-alTFZZQDKMporBH77856pXgzhEzaUVmLCDk+egLgIgHst3Tpndzz8MnKe+GzRJRfvVdn69HhpW7cmXzvtLvJAw==}
 
-  freestyle@0.2.17:
-    resolution: {integrity: sha512-SQRRJAP+y56/nIDwmqJG5Y5IqqKYAmABqv/gjyzANy0wUe3cqnV1iD14nU9lQAYWtQ5UCl+lnE38nXZFKO0J9Q==}
+  freestyle@0.2.20:
+    resolution: {integrity: sha512-IElfZHSGQO93RUUd9rqluWF69xyp5Kp0GII3JvrlZJpkZ/2nInFoDkfObOT6e2yyt+2hOdPR75BV9HqNwLCvkA==}
     hasBin: true
 
   fsevents@2.3.3:
@@ -3959,7 +3959,7 @@ snapshots:
 
   forwarded-parse@2.1.2: {}
 
-  freestyle@0.2.17:
+  freestyle@0.2.20:
     dependencies:
       dotenv: 17.4.2
       ws: 8.22.0

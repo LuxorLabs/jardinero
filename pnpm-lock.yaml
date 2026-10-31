@@ -167,8 +167,8 @@ importers:
   .:
     dependencies:
       '@daytona/sdk':
-        specifier: 0.223.1
-        version: 0.223.1(debug@4.4.3)
+        specifier: 0.225.0
+        version: 0.225.0(debug@4.4.3)
       '@tenkicloud/sandbox':
         specifier: 1.4.1
         version: 1.4.1
@@ -475,17 +475,17 @@ packages:
     peerDependencies:
       '@bufbuild/protobuf': ^2.7.0
 
-  '@daytona/analytics-api-client@0.223.1':
-    resolution: {integrity: sha512-LntjeNKKHpjzpCwgGbfYRvQ733b7SLfGpeM5ZTA12YK82YfvssGPDRkfo7xi88ndsbYteE+L9TpqYx3aH3WncA==}
+  '@daytona/analytics-api-client@0.225.0':
+    resolution: {integrity: sha512-zsj9YjBpXmQ2owhJF7+LEpKnekYy9D4wA52U6P7jsB7ng5KeSQ+3+0MFR3Bj3Cy3HIcKNW96e30F6olbiK/q+A==}
 
-  '@daytona/api-client@0.223.1':
-    resolution: {integrity: sha512-p/NaCr3NbKUKPwqDBJBHHvToUMqh7QIyHT5rENzJYSrs9RCMfsifbtTpe0nHyOokfZhIceHWFcOtT2JwJYmSKQ==}
+  '@daytona/api-client@0.225.0':
+    resolution: {integrity: sha512-P0HJOfLc3LGzeRdRhIogaA2q4+Of84UBCMWCFfnDeJ91pxQ4FExJ2KY5uF631MoNx1F+u2tc7fl0z0JuBNa/Uw==}
 
-  '@daytona/sdk@0.223.1':
-    resolution: {integrity: sha512-Ja6bacvUBuODjKcWGczZn6k9w+7veIces4k2tdizPUndj3pjgnHrphq/TbdIvJfKtz91yQ+S4mKoKaeuKQLc7g==}
+  '@daytona/sdk@0.225.0':
+    resolution: {integrity: sha512-PeE4INyipIP6HzSNAZTfR+As2u+rwddCAniCk9a/gEjEh4JpvyCyTNASjikpsTcZSn1XvksmxhxKFodv6x0YYQ==}
 
-  '@daytona/toolbox-api-client@0.223.1':
-    resolution: {integrity: sha512-Sl91T6kLIfilU5njZWGzU8KAeHtOfv6pw6iPO1JmX8UhjqfriOy6exPyCxSiBpmyZsQy0eL80IecdbTZPvnmcQ==}
+  '@daytona/toolbox-api-client@0.225.0':
+    resolution: {integrity: sha512-+LGQtqZTY0SBGMut3bhCPNU/cvfwKQcU1tAoVStZD9mM7EHWPey2TkMF+ZW0Fq2waWPEH2g7JhWWz9YFBUBQeQ==}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -1321,6 +1321,7 @@ packages:
   '@smithy/core@3.35.2':
     resolution: {integrity: sha512-ejTukBuP/Pg3t9N8Ux+0zKsXeHWm7p6W3HbXFOyltKasSxZwCFmvTut7kBdZSCF3m9y1bXXyVu6p2xuMFcsTyQ==}
     engines: {node: '>=18.0.0'}
+    deprecated: Deprecated due to a bug in custom logger data redaction. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/credential-provider-imds@4.5.2':
     resolution: {integrity: sha512-A9uSdn72ozbRUSit0eib0TW7nXuNPlaeM0zcGkJ+nE6tFcSDbnmtwoxbTCFBukVQcszDAyvsd7+rTduPTXpygg==}
@@ -2775,27 +2776,27 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 2.12.1
 
-  '@daytona/analytics-api-client@0.223.1(debug@4.4.3)':
+  '@daytona/analytics-api-client@0.225.0(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/api-client@0.223.1(debug@4.4.3)':
+  '@daytona/api-client@0.225.0(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/sdk@0.223.1(debug@4.4.3)':
+  '@daytona/sdk@0.225.0(debug@4.4.3)':
     dependencies:
       '@aws-sdk/client-s3': 3.1149.0
       '@aws-sdk/lib-storage': 3.1149.0(@aws-sdk/client-s3@3.1149.0)
-      '@daytona/analytics-api-client': 0.223.1(debug@4.4.3)
-      '@daytona/api-client': 0.223.1(debug@4.4.3)
-      '@daytona/toolbox-api-client': 0.223.1(debug@4.4.3)
+      '@daytona/analytics-api-client': 0.225.0(debug@4.4.3)
+      '@daytona/api-client': 0.225.0(debug@4.4.3)
+      '@daytona/toolbox-api-client': 0.225.0(debug@4.4.3)
       '@iarna/toml': 2.2.5
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/exporter-trace-otlp-http': 0.222.0(@opentelemetry/api@1.9.1)
@@ -2823,7 +2824,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@daytona/toolbox-api-client@0.223.1(debug@4.4.3)':
+  '@daytona/toolbox-api-client@0.225.0(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:

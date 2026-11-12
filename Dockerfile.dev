@@ -1,11 +1,10 @@
 # Development image with hot reload. Source is bind-mounted by docker-compose, so
-# this stage only installs deps; `pnpm run dev` reloads on change. NODE_VERSION is
-# pinned to match Dockerfile.prod and .nvmrc.
-ARG NODE_VERSION=24-bookworm-slim
+# this stage only installs deps; `pnpm run dev` reloads on change. The Node image
+# is pinned by version and digest to match Dockerfile.prod and .nvmrc.
 # Must match `packageManager` in package.json.
 ARG PNPM_VERSION=12.15.0
 
-FROM node:${NODE_VERSION}
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 ARG PNPM_VERSION
 ENV NODE_ENV=development
 WORKDIR /app

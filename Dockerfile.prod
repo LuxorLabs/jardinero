@@ -3,7 +3,7 @@
 #
 # NODE_VERSION is pinned so builds are reproducible across devs and CI; bump it
 # here and in .nvmrc together.
-ARG NODE_VERSION=24-bookworm-slim
+ARG NODE_VERSION=24.22.3-bookworm-slim
 # Must match `packageManager` in package.json.
 ARG PNPM_VERSION=12.15.0
 

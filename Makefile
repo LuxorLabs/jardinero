@@ -125,7 +125,7 @@ build-web: ## Build only the dashboard SPA; needed before tests, matches CI
 
 .PHONY: docker-build
 docker-build: ## Build the production image locally
-	docker build -f Dockerfile.prod --build-arg NODE_VERSION=$$(cat .nvmrc)-bookworm-slim --build-arg BUILD_VERSION=$(BUILD_VERSION) -t jardinero-orchestrator:local .
+	docker build -f Dockerfile.prod --build-arg BUILD_VERSION=$(BUILD_VERSION) -t jardinero-orchestrator:local .
 
 .PHONY: docker-run
 docker-run: ## Run the production image locally on :3000; reads .env

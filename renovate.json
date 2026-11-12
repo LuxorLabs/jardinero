@@ -54,7 +54,7 @@
       "enabled": false
     },
     {
-      "description": "Hold Node on major 24; .nvmrc, publish-image.yml, and Dockerfile.prod have to move together.",
+      "description": "Hold Node on major 24; .nvmrc, Dockerfile.prod, and Dockerfile.dev have to move together.",
       "matchPackageNames": ["node"],
       "allowedVersions": "/^24(\\.|-|$)/"
     },

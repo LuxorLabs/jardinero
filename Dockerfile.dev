@@ -1,6 +1,7 @@
 # Development image with hot reload. Source is bind-mounted by docker-compose, so
 # this stage only installs deps; `pnpm run dev` reloads on change. The Node image
-# is pinned by version and digest to match Dockerfile.prod and .nvmrc.
+# is pinned by version and digest; keep the version in step with Dockerfile.prod
+# and .nvmrc.
 # Must match `packageManager` in package.json.
 ARG PNPM_VERSION=12.15.0
 

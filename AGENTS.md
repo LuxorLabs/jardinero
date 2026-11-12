@@ -75,7 +75,7 @@ make check-changeset # fail if no changeset or it is not a single line; skip wit
 
 For dashboard work with hot reload, run `pnpm run dev` (API) and `pnpm run dev:web` (Vite) side by side; the Vite dev server proxies `/dashboard/api` to `:3000`.
 
-Tool versions are pinned so nothing depends on a dev's global environment: the Node major via `.nvmrc` + `engines`, the pnpm version via `packageManager`, exact dependency versions in `package.json` (no `^`/`~`), and deterministic installs from `pnpm-lock.yaml` via `pnpm ci`. Keep it that way when adding dependencies.
+Tool versions are pinned so nothing depends on a dev's global environment: the exact Node version via `.nvmrc` (minimum major in `engines`), the pnpm version via `packageManager`, exact dependency versions in `package.json` (no `^`/`~`), and deterministic installs from `pnpm-lock.yaml` via `pnpm ci`. Keep it that way when adding dependencies.
 
 A dependency's install scripts do not run unless it is listed in `allowBuilds` in `pnpm-workspace.yaml`. Adding a dependency that needs one is a deliberate entry there, not a default.
 

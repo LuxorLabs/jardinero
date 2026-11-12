@@ -1,13 +1,13 @@
 # Production image for the Jardinero HTTP orchestrator. Stage 1 compiles the
 # server and dashboard; stage 2 ships the runtime plus prod dependencies.
 #
-# NODE_VERSION is pinned so builds are reproducible across devs and CI; bump it
-# here and in .nvmrc together.
-ARG NODE_VERSION=24-bookworm-slim
 # Must match `packageManager` in package.json.
 ARG PNPM_VERSION=12.15.0
 
-FROM node:${NODE_VERSION} AS builder
+# The Node image is pinned by version and digest so builds are reproducible
+# across devs and CI. Both stages use the same one; keep its version in step
+# with .nvmrc and Dockerfile.dev.
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS builder
 ARG PNPM_VERSION
 WORKDIR /app
 RUN npm i -g pnpm@${PNPM_VERSION}
@@ -16,7 +16,7 @@ RUN pnpm ci
 COPY . .
 RUN pnpm run build
 
-FROM node:${NODE_VERSION} AS runtime
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS runtime
 ARG PNPM_VERSION
 ENV NODE_ENV=production
 # App version surfaced by the server as the dashboard KPI; passed by CI/Makefile.

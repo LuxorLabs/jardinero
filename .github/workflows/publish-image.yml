@@ -59,7 +59,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get image tags and Node version
+      - name: Get image tags
         env:
           REF_NAME: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}
@@ -81,7 +81,6 @@ jobs:
           fi
           echo "IMAGE_NAME=ghcr.io/${IMAGE_NAME}" | tee -a "$GITHUB_ENV"
           echo "BUILD_VERSION=${BUILD_VERSION}" | tee -a "$GITHUB_ENV"
-          echo "NODE_VERSION=$(cat .nvmrc)-bookworm-slim" | tee -a "$GITHUB_ENV"
           {
             echo "TAGS<<TAGS_EOF"
             echo "$TAGS"
@@ -96,7 +95,6 @@ jobs:
           context: .
           file: ./Dockerfile.prod
           build-args: |
-            NODE_VERSION=${{ env.NODE_VERSION }}
             BUILD_VERSION=${{ env.BUILD_VERSION }}
           tags: ${{ env.TAGS }}
           push: true

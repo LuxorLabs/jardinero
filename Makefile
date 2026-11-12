@@ -1,7 +1,7 @@
 # A Self-Documenting Makefile: http://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
 #
 # Tooling is pinned for reproducibility across devs and CI:
-#   - Node major version: NODE_VERSION below + .nvmrc; run `nvm use`
+#   - Node: exact version in .nvmrc (run `nvm use`); NODE_VERSION below is the minimum major
 #   - pnpm: exact version in the `packageManager` field of package.json
 #   - typescript / biome / vite / tsx: exact versions in package.json devDeps,
 #     installed deterministically from pnpm-lock.yaml by `pnpm ci`
@@ -125,7 +125,7 @@ build-web: ## Build only the dashboard SPA; needed before tests, matches CI
 
 .PHONY: docker-build
 docker-build: ## Build the production image locally
-	docker build -f Dockerfile.prod --build-arg NODE_VERSION=$(NODE_VERSION)-bookworm-slim --build-arg BUILD_VERSION=$(BUILD_VERSION) -t jardinero-orchestrator:local .
+	docker build -f Dockerfile.prod --build-arg BUILD_VERSION=$(BUILD_VERSION) -t jardinero-orchestrator:local .
 
 .PHONY: docker-run
 docker-run: ## Run the production image locally on :3000; reads .env

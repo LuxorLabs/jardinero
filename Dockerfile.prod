@@ -2,7 +2,7 @@
 # server and dashboard; stage 2 ships the runtime plus prod dependencies.
 #
 # Must match `packageManager` in package.json.
-ARG PNPM_VERSION=12.15.0
+ARG PNPM_VERSION=12.17.0
 
 # The Node image is pinned by version and digest so builds are reproducible
 # across devs and CI. Both stages use the same one; keep its version in step

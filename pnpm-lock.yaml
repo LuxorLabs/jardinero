@@ -167,8 +167,8 @@ importers:
   .:
     dependencies:
       '@daytona/sdk':
-        specifier: 0.226.1
-        version: 0.226.1(debug@4.4.3)
+        specifier: 0.227.0
+        version: 0.227.0(debug@4.4.3)
       '@tenkicloud/sandbox':
         specifier: 1.4.1
         version: 1.4.1
@@ -487,17 +487,17 @@ packages:
     peerDependencies:
       '@bufbuild/protobuf': ^2.7.0
 
-  '@daytona/analytics-api-client@0.226.1':
-    resolution: {integrity: sha512-ua2FGL7E0swC2aGn13AjsM0GhRxrO4eK9b/kQGQ2HJJUR9Uf/hZIaMwunCSI/meoPUML/7pboA6HlKxH5vv7lw==}
+  '@daytona/analytics-api-client@0.227.0':
+    resolution: {integrity: sha512-2qej0GL5vyJPI+4UCLl+i9CudEp7p9jifD7qXva0j/1IN8CLBkstjQe8bhwPOvq2zkkzRz5J2P3ySfD8tk7ysg==}
 
-  '@daytona/api-client@0.226.1':
-    resolution: {integrity: sha512-5FYC/KqEc1qq7fxl2j9a1Ialnejp/b8aTTGPu9CIL1Ya29ycT57Y0F/wLIV+jUYMLU3lUmeXt93mzi/34XsU+g==}
+  '@daytona/api-client@0.227.0':
+    resolution: {integrity: sha512-GAR8U2lWckDXZt/3VAGljgErciU67ppb2qACzKFgAR3t78mt2uUfhHPqTWYTe9Y4Rzf5HiGExh9HmBoswQy5hQ==}
 
-  '@daytona/sdk@0.226.1':
-    resolution: {integrity: sha512-5L0Ta4aWI+WRbC2ZyuJVtdOB+RXrteaj1SQY8H2cr4OgdZ1gSAh4qad8b8tkUtT1iCTAyBavvEvvRmKg5OWyKA==}
+  '@daytona/sdk@0.227.0':
+    resolution: {integrity: sha512-KxSKEOew52nUvi+oJIaTOEnDV1MQJ6j6JafmzguD6tKgBhwJM0k9C/jUGwSiksxdjzx5FFr1sSVTwhtd3uZE7Q==}
 
-  '@daytona/toolbox-api-client@0.226.1':
-    resolution: {integrity: sha512-eOZ2n9s4I3Y0XX/eVF6N4AqKjYMF9vxucAEnGZyXq+1EUV1jNSumlLoFuW9su355Mwpqy4CVr/v4lVRjFE9BCg==}
+  '@daytona/toolbox-api-client@0.227.0':
+    resolution: {integrity: sha512-jz31/ctC9NpLRz+n5u8mdNJZk8cXUwjORpkQiaXG7eWtA5RMFDkg6Y4HLc4YX0EJIaXDgLjX04fa9ePBGBuCig==}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -2704,27 +2704,27 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 2.12.1
 
-  '@daytona/analytics-api-client@0.226.1(debug@4.4.3)':
+  '@daytona/analytics-api-client@0.227.0(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/api-client@0.226.1(debug@4.4.3)':
+  '@daytona/api-client@0.227.0(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@daytona/sdk@0.226.1(debug@4.4.3)':
+  '@daytona/sdk@0.227.0(debug@4.4.3)':
     dependencies:
       '@aws-sdk/client-s3': 3.1156.0
       '@aws-sdk/lib-storage': 3.1156.0(@aws-sdk/client-s3@3.1156.0)
-      '@daytona/analytics-api-client': 0.226.1(debug@4.4.3)
-      '@daytona/api-client': 0.226.1(debug@4.4.3)
-      '@daytona/toolbox-api-client': 0.226.1(debug@4.4.3)
+      '@daytona/analytics-api-client': 0.227.0(debug@4.4.3)
+      '@daytona/api-client': 0.227.0(debug@4.4.3)
+      '@daytona/toolbox-api-client': 0.227.0(debug@4.4.3)
       '@iarna/toml': 2.2.5
       '@opentelemetry/api': 1.10.0
       '@opentelemetry/exporter-trace-otlp-http': 0.223.0(@opentelemetry/api@1.10.0)
@@ -2752,7 +2752,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@daytona/toolbox-api-client@0.226.1(debug@4.4.3)':
+  '@daytona/toolbox-api-client@0.227.0(debug@4.4.3)':
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     transitivePeerDependencies:

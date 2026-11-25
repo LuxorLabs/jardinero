@@ -92,8 +92,7 @@
         "/^@radix-ui//",
         "/^lucide-react$/",
         "/^clsx$/",
-        "/^class-variance-authority$/",
-        "/^tailwind-merge$/"
+        "/^class-variance-authority$/"
       ]
     },
     {

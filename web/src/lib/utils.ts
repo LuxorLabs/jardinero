@@ -1,4 +1,4 @@
-import { type ClassValue, clsx } from 'clsx';
+export type ClassValue = string | false | null | undefined;
 
 // Resolves conflicting Tailwind utilities so a later class overrides an earlier
 // one that sets the same property, matching the design's override intent. This
@@ -55,7 +55,7 @@ function groupKey(token: string): string | null {
 }
 
 export function cn(...inputs: ClassValue[]): string {
-  const tokens = clsx(inputs).split(' ').filter(Boolean);
+  const tokens = inputs.filter(Boolean).join(' ').split(' ').filter(Boolean);
   const lastIndexByGroup = new Map<string, number>();
   for (let i = 0; i < tokens.length; i++) {
     const key = groupKey(tokens[i]);

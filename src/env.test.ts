@@ -5,22 +5,34 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 const KEYS = ['ENV_FILE', 'JARDINERO_ENV_TEST_FROM_FILE', 'JARDINERO_ENV_TEST_PRESET'] as const;
+const ORIGINAL_CWD = process.cwd();
 
 let dir = '';
 let importCount = 0;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'jardinero-env-'));
+  process.chdir(dir);
   for (const key of KEYS) delete process.env[key];
 });
 
 afterEach(() => {
   for (const key of KEYS) delete process.env[key];
+  process.chdir(ORIGINAL_CWD);
   rmSync(dir, { recursive: true, force: true });
 });
 
 describe('env file loading at import', () => {
   const cases: EnvCase[] = [
+    {
+      name: 'When `ENV_FILE` is unset then should load `.env` from the working directory',
+      setup: (d) => {
+        writeFileSync(join(d, '.env'), 'JARDINERO_ENV_TEST_FROM_FILE=file\n');
+        return undefined;
+      },
+      preset: 'environment',
+      want: { fromFile: 'file', preset: 'environment' },
+    },
     {
       name: 'When the env file is readable then should load it without overriding a preset variable',
       setup: (d) => {
@@ -51,7 +63,8 @@ describe('env file loading at import', () => {
 
   for (const c of cases) {
     test(c.name, async () => {
-      process.env.ENV_FILE = c.setup(dir);
+      const envFile = c.setup(dir);
+      if (envFile !== undefined) process.env.ENV_FILE = envFile;
       process.env.JARDINERO_ENV_TEST_PRESET = c.preset;
 
       await importEnv();
@@ -75,7 +88,8 @@ async function importEnv(): Promise<void> {
 
 interface EnvCase {
   name: string;
-  setup: (dir: string) => string;
+  // Returns the `ENV_FILE` to set, or undefined to leave it unset.
+  setup: (dir: string) => string | undefined;
   preset: string;
   want: { fromFile: string | undefined; preset: string };
 }

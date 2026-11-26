@@ -88,12 +88,7 @@
     },
     {
       "groupName": "react UI ecosystem",
-      "matchPackageNames": [
-        "/^@radix-ui//",
-        "/^lucide-react$/",
-        "/^clsx$/",
-        "/^class-variance-authority$/"
-      ]
+      "matchPackageNames": ["/^lucide-react$/"]
     },
     {
       "groupName": "tailwind ecosystem",

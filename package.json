@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@daytona/sdk": "0.227.0",
-    "@tenkicloud/sandbox": "1.4.1",
+    "@tenkicloud/sandbox": "1.5.1",
     "freestyle": "0.2.21",
     "yaml": "2.9.1"
   },
